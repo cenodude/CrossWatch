@@ -1,10 +1,12 @@
 /* tests/maintenance-ui.browser.mjs */
 /* CrossWatch - Maintenance layouts, cleanup confirmation and support downloads */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
+import './i18n-browser-setup.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFile, mkdir} from 'node:fs/promises';
 import {chromium} from 'playwright';
+import {englishFrontendSource} from './i18n-test-helper.mjs';
 
 async function fixture(t, theme='', width=1100, empty=false, api=null) {
   const browser=await chromium.launch({headless:true});
@@ -14,7 +16,7 @@ async function fixture(t, theme='', width=1100, empty=false, api=null) {
   const errors=[],requests=[];
   page.on('pageerror',e=>errors.push(e.message));
   t.after(()=>assert.deepEqual(errors,[]));
-  const source=await readFile(new URL('../ui_frontend.py',import.meta.url),'utf8');
+  const source=englishFrontendSource();
   const start=source.lastIndexOf('        <section class="cw-settings-pane cw-page-maintenance"');
   const pane=source.slice(start,source.indexOf('\n        </section>',start)+19);
   let releaseCleanup;
@@ -145,7 +147,7 @@ for(const theme of ['', 'flat-dark','flat-light'])for(const width of [1100,390,3
 
 for(const theme of ['', 'flat-dark','flat-light'])test(`maintenance heading stays below the settings menu ${theme||'original'}`,async t=>{
   const {page}=await fixture(t,theme);
-  const source=await readFile(new URL('../ui_frontend.py',import.meta.url),'utf8');
+  const source=englishFrontendSource();
   const start=source.indexOf('\n<header>');
   const header=source.slice(start,source.indexOf('</header>',start)+9).replace(/__CW_[A-Z_]+__/g,'');
   await page.evaluate(markup=>{
@@ -353,9 +355,9 @@ test('opening maintenance shows dated history without replaying completed jobs o
   },at);
   await page.waitForFunction(()=>!document.querySelector('#cxm-cache-count').textContent.includes('not loaded'));
   assert.equal(await page.locator('#cxm-status').isHidden(),true);
-  const date=await page.evaluate(at=>new Date(at).toLocaleString(),at);
+  const date=await page.evaluate(at=>new Date(at).toLocaleString(window.CW?.I18n?.locale),at);
   assert.equal(await page.locator('[data-pane="quick"] [data-op="playing"] .task-status').textContent(),`Last run: Completed · ${date}`);
-  const checkDate=await page.evaluate(at=>new Date(at-1000).toLocaleString(),at);
+  const checkDate=await page.evaluate(at=>new Date(at-1000).toLocaleString(window.CW?.I18n?.locale),at);
   assert.equal(await page.locator('[data-pane="quick"] [data-op="database-health"] .task-status').textContent(),`Last run: Completed · ${checkDate}`);
   assert.equal(await page.locator('#cxm-last-maintenance').textContent(),`Last maintenance: ${date} · Completed`);
   assert.equal(requests.filter(r=>r.url.pathname==='/api/maintenance/jobs/current').length,1);

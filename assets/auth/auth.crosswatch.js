@@ -2,6 +2,8 @@
 // CrossWatch - Local Tracker authentication UI
 // Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 (function (w, d) {
+  const T = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.t?.(key, vars) ?? key;
+  const TH = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.html?.(key, vars) ?? key;
   const Shared = w.CW && w.CW.AuthShared;
   if (!Shared) return;
 
@@ -26,7 +28,7 @@
     selectId: "crosswatch_instance",
     storageKey: "cw.ui.crosswatch.auth.instance.v1",
     instanceProvider: "crosswatch",
-    title: "Select which CrossWatch Local Tracker instance this config applies to.",
+    title: T("connections.auth.cw.selectInstance"),
   });
 
   function selectedInstance() {
@@ -98,7 +100,7 @@
       sel.innerHTML = "";
       const latest = d.createElement("option");
       latest.value = "latest";
-      latest.textContent = "Latest (default)";
+      latest.textContent = T("connections.auth.cw.latest");
       sel.appendChild(latest);
       groups[feature].forEach((name) => {
         const opt = d.createElement("option");
@@ -112,7 +114,7 @@
     });
   }
 
-  function setAuthStatus(text = "Connected", ok = true) {
+  function setAuthStatus(text = T("connections.auth.connected"), ok = true) {
     const msg = $("cw_tracker_auth_msg");
     if (!msg) return;
     msg.textContent = text;
@@ -138,7 +140,7 @@
       const sel = $(`cw_tracker_restore_${feature}`);
       if (sel) sel.dataset.wanted = txt(merged[`restore_${feature}`]) || "latest";
     });
-    if ((merged || {}).connected === true) setAuthStatus("Connected", true);
+    if ((merged || {}).connected === true) setAuthStatus(T("connections.auth.connected"), true);
     else setAuthStatus("", true);
     await loadSnapshotOptions();
     try { w.CW?.ProvidersUI?.refreshAuthPresentation?.(false); } catch {}
@@ -170,18 +172,18 @@
           const res = await fetch(`/api/crosswatch/connect?instance=${encodeURIComponent(inst)}`, { method: "POST", cache: "no-store" });
           const data = await res.json().catch(() => ({}));
           if (!res.ok || data?.ok === false) {
-            setAuthStatus("Connection failed", false);
-            Shared.showConnectionWarning?.(data?.error || "Could not connect CrossWatch Local Tracker.");
+            setAuthStatus(T("connections.auth.connectionFailed"), false);
+            Shared.showConnectionWarning?.(data?.error || T("connections.auth.cw.connectFailed"));
             return;
           }
-          setAuthStatus("Connected", true);
+          setAuthStatus(T("connections.auth.connected"), true);
           try { w.invalidateConfigCache?.(); } catch {}
           try { d.dispatchEvent(new CustomEvent("config-saved", { bubbles: true })); } catch {}
           try { w.dispatchEvent(new CustomEvent("auth-changed")); } catch {}
           await hydrate().catch(() => {});
         } catch {
-          setAuthStatus("Connection failed", false);
-          Shared.showConnectionWarning?.("Could not connect CrossWatch Local Tracker.");
+          setAuthStatus(T("connections.auth.connectionFailed"), false);
+          Shared.showConnectionWarning?.(T("connections.auth.cw.connectFailed"));
         } finally {
           connect.disabled = false;
           connect.removeAttribute("aria-busy");
@@ -193,7 +195,7 @@
       del.__cwTrackerWired = true;
       del.addEventListener("click", async () => {
         if (selectedInstance() !== "default") {
-          Shared.showConnectionWarning?.("Use the instance trash button to delete CrossWatch instances.");
+          Shared.showConnectionWarning?.(T("connections.auth.cw.useTrash"));
           return;
         }
         try {
@@ -201,8 +203,8 @@
           const data = await res.json().catch(() => ({}));
           if (!res.ok || data?.ok === false) {
             const msg = data?.error === "profiles_exist"
-              ? "Remove the additional instances before deleting the main connection."
-              : data?.message || data?.error || "Could not delete CrossWatch connection.";
+              ? T("connections.auth.cw.removeExtra")
+              : data?.message || data?.error || T("connections.auth.cw.deleteFailed");
             Shared.showConnectionWarning?.(msg);
             return;
           }
@@ -211,7 +213,7 @@
           try { w.dispatchEvent(new CustomEvent("auth-changed")); } catch {}
           setTimeout(() => w.CW?.ProvidersUI?.refreshAuthPresentation?.(true), 250);
         } catch (e) {
-          Shared.showConnectionWarning?.("Could not delete CrossWatch connection.");
+          Shared.showConnectionWarning?.(T("connections.auth.cw.deleteFailed"));
         }
       });
     }

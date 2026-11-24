@@ -2,10 +2,12 @@
 /* CrossWatch - Mobile sync status, help and pair navigation regressions */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 
+import './i18n-browser-setup.mjs';
 import test from "node:test";
 import assert from "node:assert/strict";
 import {readFile, mkdir} from "node:fs/promises";
 import {chromium} from "playwright";
+import {englishFrontendSource} from './i18n-test-helper.mjs';
 
 const sheets = ["fonts/material-symbols-rounded.css", "themes/tokens.css", "css/base.css", "crosswatch.css", "css/layout.css", "css/components.css", "css/pages.css", "css/page-theme.css", "ui-shell.css"];
 const themes = {
@@ -22,7 +24,7 @@ async function open(t, theme, width = 390) {
   const errors = [];
   page.on("pageerror", error => errors.push(error.message));
   t.after(() => assert.deepEqual(errors, []));
-  const frontend = await readFile(new URL("../ui_frontend.py", import.meta.url), "utf8");
+  const frontend = englishFrontendSource();
   const navigation = await page.evaluate(source => {
     const doc = new DOMParser().parseFromString(source, "text/html");
     return [...doc.scripts].map(script => script.textContent).filter(script => script.startsWith("(()=>{const panes=") || script.startsWith("(()=>{const scrollTo="));

@@ -1,6 +1,8 @@
 /* assets/js/editor.js */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 (function () {
+  const T = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.t?.(key, vars) ?? key;
+  const TH = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.html?.(key, vars) ?? key;
   const PAGE_SIZE_OPTIONS = [50, 100, 150, 200];
   const DEFAULT_PAGE_SIZE = 50;
   const MOBILE_PAGE_SIZE_OPTIONS = [10, 20, 50];
@@ -13,18 +15,18 @@
   const MIN_COLUMN_WIDTHS = { key: 96, type: 116, title: 220, year: 84, id: 120, imdb: 130, tvdb: 110, trakt: 110, simkl: 110, anilist: 110, extra: 180 };
   const MAX_COLUMN_WIDTHS = { key: 340, type: 240, title: 760, year: 180, id: 280, imdb: 280, tvdb: 240, trakt: 240, simkl: 240, anilist: 240, extra: 560 };
   const COLUMN_META = {
-    key: { icon: "key", label: "Key" },
-    type: { icon: "category", label: "Type" },
-    title: { icon: "title", label: "Title", required: true },
-    year: { icon: "event", label: "Year" },
-    id: { icon: "fingerprint", label: "IDs" },
+    key: { icon: "key", label: T("editor.col.key") },
+    type: { icon: "category", label: T("editor.col.type") },
+    title: { icon: "title", label: T("editor.col.title"), required: true },
+    year: { icon: "event", label: T("editor.col.year") },
+    id: { icon: "fingerprint", label: T("editor.col.ids") },
     imdb: { icon: "tag", label: "IMDb" },
     tvdb: { icon: "dns", label: "TVDB" },
     trakt: { icon: "confirmation_number", label: "Trakt" },
     simkl: { icon: "hub", label: "SIMKL" },
     anilist: { icon: "animation", label: "AniList" },
-    extra: { icon: "tune", label: "Extra" },
-    status: { icon: "flag", label: "Status" },
+    extra: { icon: "tune", label: T("editor.col.extra") },
+    status: { icon: "flag", label: T("editor.col.status") },
   };
   const SIMPLE_COLUMNS = ["type", "title", "year", "extra"];
   const ALL_PROVIDERS = "__all__";
@@ -194,7 +196,7 @@
   }
   restoreUIState();
 
-  host.innerHTML = `<div class="cw-root"><div class="cw-topline cw-page-hero cw-page-hero-editor" data-hero-icon="edit_note"><div class="cw-head-copy cw-page-hero-copy"><div class="cw-page-hero-kicker">EDITOR</div><div class="cw-title-row"><div><div class="cw-title cw-page-hero-title">Editor</div><div class="cw-sub cw-page-hero-sub">Fix, add or remove what CrossWatch syncs</div></div></div></div><div class="cw-editor-hero-summary cw-page-hero-actions" id="cw-hero-summary" aria-label="Editor summary"><div class="cw-editor-hero-seg"><strong id="cw-pill-source">Current</strong><span>source</span></div><div class="cw-editor-hero-seg"><strong id="cw-pill-kind">Watchlist</strong><span>view</span></div><div class="cw-editor-hero-seg cw-editor-hero-count"><strong id="cw-pill-count">0</strong><span>rows</span></div><div class="cw-editor-hero-seg cw-editor-hero-sync"><span>Synced</span><strong id="cw-pill-sync">never</strong></div><button id="cw-reload" class="cw-editor-refresh" type="button" title="Refresh editor data" aria-label="Refresh editor data"><span class="material-symbols-rounded" aria-hidden="true">refresh</span></button></div></div><div class="cw-wrap"><div class="cw-main"><div class="cw-controls cw-page-toolbar"><input id="cw-filter" class="cw-input" placeholder="Filter by key / title / id..."><span class="cw-status-text" id="cw-status"></span><label class="cw-page-size-control" for="cw-page-size"><span>Rows</span><select id="cw-page-size" class="cw-select"><option value="50">50</option><option value="100">100</option><option value="150">150</option><option value="200">200</option></select></label><div class="cw-controls-spacer"></div><div class="cw-selection-bar" id="cw-bulk" role="group" aria-label="Selected editor rows" hidden><span class="cw-selection-count" id="cw-bulk-count" aria-live="polite"></span><button id="cw-bulk-remove" class="cw-selection-button is-danger" type="button"></button><button id="cw-bulk-restore" class="cw-selection-button is-good" type="button"></button><button id="cw-bulk-clear" class="cw-selection-button" type="button">Clear</button></div><button id="cw-add" class="cw-btn" type="button">Add row</button><button id="cw-save" class="cw-btn primary" type="button">Save changes</button></div><div class="cw-table-wrap cw-page-table" id="cw-table-wrap"><div class="cw-table-scroll"><table class="cw-table"><thead><tr><th style="width:34px"><input id="cw-select-page" class="cw-checkbox" type="checkbox" title="Select page"></th><th class="cw-action-head" style="width:46px"></th><th class="cw-col-key sortable" style="width:12%" data-sort="key">Key</th><th class="cw-col-type sortable" style="width:13%" data-sort="type">Type</th><th class="cw-col-title sortable" style="width:33%" data-sort="title">Title</th><th class="cw-col-year" style="width:84px">Year</th><th class="cw-col-id cw-col-id-a" style="width:12%" id="cw-col-id-a">TMDB</th><th class="cw-col-extra sortable" style="width:260px" data-sort="extra">Extra</th></tr></thead><tbody id="cw-tbody"></tbody></table></div></div><div class="cw-pager" id="cw-pager" style="display:none"><button id="cw-prev" class="cw-btn" type="button">Previous</button><span id="cw-page-info" class="cw-page-info"></span><button id="cw-next" class="cw-btn" type="button">Next</button></div><div class="cw-empty" id="cw-empty" role="status" style="display:none"><span class="material-symbols-rounded cw-empty-icon" aria-hidden="true">table_rows</span><div class="cw-empty-text">Nothing to show here. Try another list or provider, or use Quick add.</div></div></div><aside class="cw-side"><div class="ins-card cw-page-panel"><div class="ins-row"><div class="ins-kv" style="width:100%"><label>Source</label><select id="cw-source" class="cw-select"><option value="state">Current State</option></select><label>List</label><select id="cw-kind" class="cw-select"><option value="watchlist">Watchlist</option><option value="history">History</option><option value="ratings">Ratings</option><option value="progress">Progress</option></select><label id="cw-pair-label" style="display:none">Pair</label><select id="cw-pair" class="cw-select" style="display:none"></select><label id="cw-snapshot-label">Snapshot</label><select id="cw-snapshot" class="cw-select"><option value="">Latest</option></select><label id="cw-instance-label" style="display:none">Instance</label><select id="cw-instance" class="cw-select" style="display:none"><option value="default">Default</option></select><div id="cw-instance-shared" class="cw-shared-note" role="note" style="display:none"></div></div></div><div class="ins-row"><div class="ins-kv" style="width:100%"><div class="field-label">Types</div><div id="cw-type-filter" class="cw-type-filter"><button type="button" data-type="movie" class="cw-type-chip active">Movies</button><button type="button" data-type="show" class="cw-type-chip active">Shows</button><button type="button" data-type="anime" class="cw-type-chip active">Anime</button><button type="button" data-type="season" class="cw-type-chip active">Seasons</button><button type="button" data-type="episode" class="cw-type-chip active">Episodes</button><button type="button" id="cw-blocked-only" class="cw-type-chip">Blocked</button></div></div></div><div class="ins-row" id="cw-state-bulk" style="display:none"><details class="cw-collapse" id="cw-bulk-details" style="width:100%"><summary style="cursor:pointer;font-weight:700;user-select:none">Block rules</summary><div style="display:flex;flex-direction:column;gap:8px;width:100%;margin-top:10px"><select id="cw-bulk-type" class="cw-select" style="width:100%"></select><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><button id="cw-bulk-block-type" class="cw-btn danger" type="button" style="flex:1 1 0;min-width:120px">Block all</button><button id="cw-bulk-unblock-type" class="cw-btn" type="button" style="flex:1 1 0;min-width:120px">Unblock all</button></div><div class="cw-status-text">Current State only &middot; affects baseline items</div></div></details></div><div class="ins-row" id="cw-import-row" style="display:none"><details class="cw-collapse" id="cw-import-details" style="width:100%"><summary style="cursor:pointer;font-weight:700;user-select:none">Debug settings</summary><div style="display:flex;flex-direction:column;gap:10px;width:100%;margin-top:10px"><div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center"><select id="cw-import-provider" class="cw-select" style="flex:1;min-width:200px"></select><select id="cw-import-instance" class="cw-select" style="min-width:180px"></select><select id="cw-import-mode" class="cw-select" style="min-width:180px"><option value="replace">Replace baseline</option><option value="merge">Merge (keep old)</option></select></div><div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center"><label id="cw-import-watchlist-wrap" style="display:flex;gap:6px;align-items:center;font-size:12px;width:auto;margin:0"><input id="cw-import-watchlist" class="cw-checkbox" type="checkbox" checked>Watchlist </label><label id="cw-import-history-wrap" style="display:flex;gap:6px;align-items:center;font-size:12px;width:auto;margin:0"><input id="cw-import-history" class="cw-checkbox" type="checkbox" checked>History </label><label id="cw-import-ratings-wrap" style="display:flex;gap:6px;align-items:center;font-size:12px;width:auto;margin:0"><input id="cw-import-ratings" class="cw-checkbox" type="checkbox" checked>Ratings </label><label id="cw-import-progress-wrap" style="display:flex;gap:6px;align-items:center;font-size:12px;width:auto;margin:0"><input id="cw-import-progress-cb" class="cw-checkbox" type="checkbox" checked>Progress </label><span style="flex:1 1 auto"></span><button id="cw-import-run" class="cw-btn sm" type="button">Refresh baseline</button></div><div id="cw-import-progress" style="display:none"><div class="cw-progress"><span></span></div><div class="cw-status-text" id="cw-import-progress-text" style="margin-top:6px"></div></div></div></details></div></div><div class="ins-card cw-page-panel"><div class="ins-row" style="align-items:center"><div class="ins-icon"><span class="material-symbol">insights</span></div><div class="ins-title" style="margin-right:auto">Pulse</div><span class="cw-tag" id="cw-tag-status"><span class="cw-tag-dot"></span><span id="cw-tag-label">Idle</span></span></div><div class="ins-row"><div class="ins-metrics"><div class="metric-row"><div class="metric"><span class="material-symbol">view_list</span><div><div class="m-val" id="cw-summary-total">0</div><div class="m-lbl">Total rows</div></div></div><div class="metric"><span class="material-symbol">visibility</span><div><div class="m-val" id="cw-summary-visible">0</div><div class="m-lbl">Rows visible</div></div></div></div><div class="metric-divider"></div><div class="metric-row"><div class="metric"><span class="material-symbol">movie</span><div><div class="m-val" id="cw-summary-movies">0</div><div class="m-lbl">Movies</div></div></div><div class="metric"><span class="material-symbol">monitoring</span><div><div class="m-val" id="cw-summary-shows">0</div><div class="m-lbl">Shows</div></div></div><div class="metric"><span class="material-symbol">layers</span><div><div class="m-val" id="cw-summary-seasons">0</div><div class="m-lbl">Seasons</div></div></div><div class="metric"><span class="material-symbol">live_tv</span><div><div class="m-val" id="cw-summary-episodes">0</div><div class="m-lbl">Episodes</div></div></div></div><div class="metric-divider"></div><div class="metric-row"><div class="metric"><span class="material-symbol">description</span><div><div class="m-val" id="cw-summary-state-files">0</div><div class="m-lbl">State files</div></div></div><div class="metric"><span class="material-symbol">folder_copy</span><div><div class="m-val" id="cw-summary-snapshots">0</div><div class="m-lbl">Snapshots</div></div></div></div><div id="cw-state-hint" class="cw-state-hint" style="display:none"><strong>No sync state found.</strong> Run a CrossWatch sync once to generate it.</div></div></div></div><div class="ins-card cw-page-panel" id="cw-backup-card"><div class="ins-row"><div class="ins-icon"><span class="material-symbol">backup</span></div><div class="ins-title">Archive</div></div><div class="ins-row"><div class="ins-kv" style="width:100%"><label>Export / Import</label><div class="cw-backup-actions"><button id="cw-download" class="cw-btn" type="button">Download ZIP</button><button id="cw-upload" class="cw-btn" type="button">Import file</button><input id="cw-upload-input" type="file" accept=".zip,.json" style="display:none"></div></div></div></div><div class="ins-card cw-page-panel" id="cw-state-backup-card"><div class="ins-row"><div class="ins-icon"><span class="material-symbol">backup</span></div><div class="ins-title">Policy backup</div></div><div class="ins-row"><div class="ins-kv" style="width:100%"><label>Export / Import</label><div class="cw-backup-actions"><button id="cw-state-download" class="cw-btn" type="button">Download JSON</button><button id="cw-state-upload" class="cw-btn" type="button">Import file</button><input id="cw-state-upload-input" type="file" accept=".json" style="display:none"></div></div></div></div></aside></div></div>`;
+  host.innerHTML = `<div class="cw-root"><div class="cw-topline cw-page-hero cw-page-hero-editor" data-hero-icon="edit_note"><div class="cw-head-copy cw-page-hero-copy"><div class="cw-page-hero-kicker">${TH("editor.kicker")}</div><div class="cw-title-row"><div><div class="cw-title cw-page-hero-title">${TH("editor.title")}</div><div class="cw-sub cw-page-hero-sub">${TH("editor.subtitle")}</div></div></div></div><div class="cw-editor-hero-summary cw-page-hero-actions" id="cw-hero-summary" aria-label="${TH("editor.summaryLabel")}"><div class="cw-editor-hero-seg"><strong id="cw-pill-source">${TH("editor.hero.current")}</strong><span>${TH("editor.hero.source")}</span></div><div class="cw-editor-hero-seg"><strong id="cw-pill-kind">${TH("editor.kind.watchlist")}</strong><span>${TH("editor.hero.view")}</span></div><div class="cw-editor-hero-seg cw-editor-hero-count"><strong id="cw-pill-count">0</strong><span>${TH("editor.hero.rows")}</span></div><div class="cw-editor-hero-seg cw-editor-hero-sync"><span>${TH("editor.synced")}</span><strong id="cw-pill-sync">${TH("playlists.neverLower")}</strong></div><button id="cw-reload" class="cw-editor-refresh" type="button" title="${TH("editor.refresh")}" aria-label="${TH("editor.refresh")}"><span class="material-symbols-rounded" aria-hidden="true">refresh</span></button></div></div><div class="cw-wrap"><div class="cw-main"><div class="cw-controls cw-page-toolbar"><input id="cw-filter" class="cw-input" placeholder="${TH("editor.filterPlaceholder")}"><span class="cw-status-text" id="cw-status"></span><label class="cw-page-size-control" for="cw-page-size"><span>${TH("editor.rows")}</span><select id="cw-page-size" class="cw-select"><option value="50">50</option><option value="100">100</option><option value="150">150</option><option value="200">200</option></select></label><div class="cw-controls-spacer"></div><div class="cw-selection-bar" id="cw-bulk" role="group" aria-label="${TH("editor.selectedRows")}" hidden><span class="cw-selection-count" id="cw-bulk-count" aria-live="polite"></span><button id="cw-bulk-remove" class="cw-selection-button is-danger" type="button"></button><button id="cw-bulk-restore" class="cw-selection-button is-good" type="button"></button><button id="cw-bulk-clear" class="cw-selection-button" type="button">${TH("editor.clear")}</button></div><button id="cw-add" class="cw-btn" type="button">${TH("editor.addRow")}</button><button id="cw-save" class="cw-btn primary" type="button">${TH("editor.saveChanges")}</button></div><div class="cw-table-wrap cw-page-table" id="cw-table-wrap"><div class="cw-table-scroll"><table class="cw-table"><thead><tr><th style="width:34px"><input id="cw-select-page" class="cw-checkbox" type="checkbox" title="${TH("editor.selectPage")}"></th><th class="cw-action-head" style="width:46px"></th><th class="cw-col-key sortable" style="width:12%" data-sort="key">${TH("editor.col.key")}</th><th class="cw-col-type sortable" style="width:13%" data-sort="type">${TH("editor.col.type")}</th><th class="cw-col-title sortable" style="width:33%" data-sort="title">${TH("editor.col.title")}</th><th class="cw-col-year" style="width:84px">${TH("editor.col.year")}</th><th class="cw-col-id cw-col-id-a" style="width:12%" id="cw-col-id-a">TMDB</th><th class="cw-col-extra sortable" style="width:260px" data-sort="extra">${TH("editor.col.extra")}</th></tr></thead><tbody id="cw-tbody"></tbody></table></div></div><div class="cw-pager" id="cw-pager" style="display:none"><button id="cw-prev" class="cw-btn" type="button">${TH("editor.previous")}</button><span id="cw-page-info" class="cw-page-info"></span><button id="cw-next" class="cw-btn" type="button">${TH("editor.next")}</button></div><div class="cw-empty" id="cw-empty" role="status" style="display:none"><span class="material-symbols-rounded cw-empty-icon" aria-hidden="true">table_rows</span><div class="cw-empty-text">${TH("editor.emptyHint")}</div></div></div><aside class="cw-side"><div class="ins-card cw-page-panel"><div class="ins-row"><div class="ins-kv" style="width:100%"><label>${TH("editor.source")}</label><select id="cw-source" class="cw-select"><option value="state">${TH("editor.currentState")}</option></select><label>${TH("editor.list")}</label><select id="cw-kind" class="cw-select"><option value="watchlist">${TH("editor.kind.watchlist")}</option><option value="history">${TH("editor.kind.history")}</option><option value="ratings">${TH("editor.kind.ratings")}</option><option value="progress">${TH("editor.kind.progress")}</option></select><label id="cw-pair-label" style="display:none">${TH("editor.pair")}</label><select id="cw-pair" class="cw-select" style="display:none"></select><label id="cw-snapshot-label">${TH("editor.snapshot")}</label><select id="cw-snapshot" class="cw-select"><option value="">${TH("editor.latest")}</option></select><label id="cw-instance-label" style="display:none">${TH("editor.instance")}</label><select id="cw-instance" class="cw-select" style="display:none"><option value="default">${TH("editor.default")}</option></select><div id="cw-instance-shared" class="cw-shared-note" role="note" style="display:none"></div></div></div><div class="ins-row"><div class="ins-kv" style="width:100%"><div class="field-label">${TH("editor.types")}</div><div id="cw-type-filter" class="cw-type-filter"><button type="button" data-type="movie" class="cw-type-chip active">${TH("editor.type.movies")}</button><button type="button" data-type="show" class="cw-type-chip active">${TH("editor.type.shows")}</button><button type="button" data-type="anime" class="cw-type-chip active">${TH("editor.type.anime")}</button><button type="button" data-type="season" class="cw-type-chip active">${TH("editor.type.seasons")}</button><button type="button" data-type="episode" class="cw-type-chip active">${TH("editor.type.episodes")}</button><button type="button" id="cw-blocked-only" class="cw-type-chip">${TH("editor.blocked")}</button></div></div></div><div class="ins-row" id="cw-state-bulk" style="display:none"><details class="cw-collapse" id="cw-bulk-details" style="width:100%"><summary style="cursor:pointer;font-weight:700;user-select:none">${TH("editor.blockRules")}</summary><div style="display:flex;flex-direction:column;gap:8px;width:100%;margin-top:10px"><select id="cw-bulk-type" class="cw-select" style="width:100%"></select><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><button id="cw-bulk-block-type" class="cw-btn danger" type="button" style="flex:1 1 0;min-width:120px">${TH("editor.blockAll")}</button><button id="cw-bulk-unblock-type" class="cw-btn" type="button" style="flex:1 1 0;min-width:120px">${TH("editor.unblockAll")}</button></div><div class="cw-status-text">${TH("editor.stateOnlyHint")}</div></div></details></div><div class="ins-row" id="cw-import-row" style="display:none"><details class="cw-collapse" id="cw-import-details" style="width:100%"><summary style="cursor:pointer;font-weight:700;user-select:none">${TH("editor.debug")}</summary><div style="display:flex;flex-direction:column;gap:10px;width:100%;margin-top:10px"><div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center"><select id="cw-import-provider" class="cw-select" style="flex:1;min-width:200px"></select><select id="cw-import-instance" class="cw-select" style="min-width:180px"></select><select id="cw-import-mode" class="cw-select" style="min-width:180px"><option value="replace">${TH("editor.replaceBaseline")}</option><option value="merge">${TH("editor.mergeKeep")}</option></select></div><div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center"><label id="cw-import-watchlist-wrap" style="display:flex;gap:6px;align-items:center;font-size:12px;width:auto;margin:0"><input id="cw-import-watchlist" class="cw-checkbox" type="checkbox" checked>${TH("editor.kind.watchlist")} </label><label id="cw-import-history-wrap" style="display:flex;gap:6px;align-items:center;font-size:12px;width:auto;margin:0"><input id="cw-import-history" class="cw-checkbox" type="checkbox" checked>${TH("editor.kind.history")} </label><label id="cw-import-ratings-wrap" style="display:flex;gap:6px;align-items:center;font-size:12px;width:auto;margin:0"><input id="cw-import-ratings" class="cw-checkbox" type="checkbox" checked>${TH("editor.kind.ratings")} </label><label id="cw-import-progress-wrap" style="display:flex;gap:6px;align-items:center;font-size:12px;width:auto;margin:0"><input id="cw-import-progress-cb" class="cw-checkbox" type="checkbox" checked>${TH("editor.kind.progress")} </label><span style="flex:1 1 auto"></span><button id="cw-import-run" class="cw-btn sm" type="button">${TH("editor.refreshBaseline")}</button></div><div id="cw-import-progress" style="display:none"><div class="cw-progress"><span></span></div><div class="cw-status-text" id="cw-import-progress-text" style="margin-top:6px"></div></div></div></details></div></div><div class="ins-card cw-page-panel"><div class="ins-row" style="align-items:center"><div class="ins-icon"><span class="material-symbol">insights</span></div><div class="ins-title" style="margin-right:auto">${TH("editor.pulse")}</div><span class="cw-tag" id="cw-tag-status"><span class="cw-tag-dot"></span><span id="cw-tag-label">${TH("editor.idle")}</span></span></div><div class="ins-row"><div class="ins-metrics"><div class="metric-row"><div class="metric"><span class="material-symbol">view_list</span><div><div class="m-val" id="cw-summary-total">0</div><div class="m-lbl">${TH("editor.totalRows")}</div></div></div><div class="metric"><span class="material-symbol">visibility</span><div><div class="m-val" id="cw-summary-visible">0</div><div class="m-lbl">${TH("editor.rowsVisible")}</div></div></div></div><div class="metric-divider"></div><div class="metric-row"><div class="metric"><span class="material-symbol">movie</span><div><div class="m-val" id="cw-summary-movies">0</div><div class="m-lbl">${TH("editor.type.movies")}</div></div></div><div class="metric"><span class="material-symbol">monitoring</span><div><div class="m-val" id="cw-summary-shows">0</div><div class="m-lbl">${TH("editor.type.shows")}</div></div></div><div class="metric"><span class="material-symbol">layers</span><div><div class="m-val" id="cw-summary-seasons">0</div><div class="m-lbl">${TH("editor.type.seasons")}</div></div></div><div class="metric"><span class="material-symbol">live_tv</span><div><div class="m-val" id="cw-summary-episodes">0</div><div class="m-lbl">${TH("editor.type.episodes")}</div></div></div></div><div class="metric-divider"></div><div class="metric-row"><div class="metric"><span class="material-symbol">description</span><div><div class="m-val" id="cw-summary-state-files">0</div><div class="m-lbl">${TH("editor.stateFiles")}</div></div></div><div class="metric"><span class="material-symbol">folder_copy</span><div><div class="m-val" id="cw-summary-snapshots">0</div><div class="m-lbl">${TH("editor.snapshots")}</div></div></div></div><div id="cw-state-hint" class="cw-state-hint" style="display:none"><strong>${TH("editor.noState")}</strong> ${TH("editor.noStateHint")}</div></div></div></div><div class="ins-card cw-page-panel" id="cw-backup-card"><div class="ins-row"><div class="ins-icon"><span class="material-symbol">backup</span></div><div class="ins-title">${TH("editor.archive")}</div></div><div class="ins-row"><div class="ins-kv" style="width:100%"><label>${TH("editor.exportImport")}</label><div class="cw-backup-actions"><button id="cw-download" class="cw-btn" type="button">${TH("editor.downloadZip")}</button><button id="cw-upload" class="cw-btn" type="button">${TH("editor.importFile")}</button><input id="cw-upload-input" type="file" accept=".zip,.json" style="display:none"></div></div></div></div><div class="ins-card cw-page-panel" id="cw-state-backup-card"><div class="ins-row"><div class="ins-icon"><span class="material-symbol">backup</span></div><div class="ins-title">${TH("editor.policyBackup")}</div></div><div class="ins-row"><div class="ins-kv" style="width:100%"><label>${TH("editor.exportImport")}</label><div class="cw-backup-actions"><button id="cw-state-download" class="cw-btn" type="button">${TH("editor.downloadJson")}</button><button id="cw-state-upload" class="cw-btn" type="button">${TH("editor.importFile")}</button><input id="cw-state-upload-input" type="file" accept=".json" style="display:none"></div></div></div></div></aside></div></div>`;
 
   editorChrome.wireStaticLabels(host);
   editorChrome.prepareMobileFilters(host);
@@ -203,7 +205,7 @@
   editorChrome.ensureFieldNames(host);
   const initialKindSel = host.querySelector("#cw-kind");
   if (initialKindSel && !initialKindSel.querySelector('option[value="collection"]')) {
-    initialKindSel.appendChild(new Option("Collections", "collection"));
+    initialKindSel.appendChild(new Option(T("editor.collections"), "collection"));
   }
   const initialImportProgressWrap = host.querySelector("#cw-import-progress-wrap");
   if (initialImportProgressWrap && !host.querySelector("#cw-import-collection-wrap")) {
@@ -215,7 +217,7 @@
     input.className = "cw-checkbox";
     input.type = "checkbox";
     input.checked = true;
-    label.append(input, document.createTextNode("Collections "));
+    label.append(input, document.createTextNode(`${T("editor.collections")} `));
     initialImportProgressWrap.insertAdjacentElement("afterend", label);
   }
 
@@ -315,8 +317,8 @@
   columnsBtn.id = "cw-columns-btn";
   columnsBtn.className = "cw-btn cw-columns-btn";
   columnsBtn.type = "button";
-  columnsBtn.title = "Columns";
-  columnsBtn.setAttribute("aria-label", "Columns");
+  columnsBtn.title = T("editor.columns");
+  columnsBtn.setAttribute("aria-label", T("editor.columns"));
   columnsBtn.innerHTML = `<span class="material-symbols-rounded" aria-hidden="true">view_column</span>`;
   pageSizeSel?.closest(".cw-page-size-control")?.insertAdjacentElement("afterend", columnsBtn);
 
@@ -324,8 +326,8 @@
   wideBtn.id = "cw-wide-btn";
   wideBtn.className = "cw-btn cw-wide-btn";
   wideBtn.type = "button";
-  wideBtn.title = "Wide view";
-  wideBtn.setAttribute("aria-label", "Wide view");
+  wideBtn.title = T("editor.wide");
+  wideBtn.setAttribute("aria-label", T("editor.wide"));
   wideBtn.innerHTML = `<span class="material-symbols-rounded" aria-hidden="true">fullscreen</span>`;
   columnsBtn.insertAdjacentElement("afterend", wideBtn);
 
@@ -338,27 +340,27 @@
   bulkVisibleBtn.className = "cw-selection-button";
   bulkVisibleBtn.type = "button";
   bulkVisibleBtn.id = "cw-bulk-visible";
-  bulkVisibleBtn.innerHTML = `<span class="material-symbols-rounded" aria-hidden="true">visibility</span><span>Visible</span>`;
+  bulkVisibleBtn.innerHTML = `<span class="material-symbols-rounded" aria-hidden="true">visibility</span><span>${TH("editor.visible")}</span>`;
   const bulkAllBtn = document.createElement("button");
   bulkAllBtn.className = "cw-selection-button";
   bulkAllBtn.type = "button";
   bulkAllBtn.id = "cw-bulk-all";
-  bulkAllBtn.innerHTML = `<span class="material-symbols-rounded" aria-hidden="true">checklist</span><span>All results</span>`;
+  bulkAllBtn.innerHTML = `<span class="material-symbols-rounded" aria-hidden="true">checklist</span><span>${TH("editor.allResults")}</span>`;
 
   const advancedBtn = document.createElement("button");
   advancedBtn.id = "cw-advanced-toggle";
   advancedBtn.className = "cw-btn cw-advanced-toggle";
   advancedBtn.type = "button";
-  advancedBtn.innerHTML = `<span class="material-symbols-rounded" aria-hidden="true">tune</span><span>Advanced</span>`;
+  advancedBtn.innerHTML = `<span class="material-symbols-rounded" aria-hidden="true">tune</span><span>${TH("editor.advanced")}</span>`;
   wideBtn.insertAdjacentElement("afterend", advancedBtn);
 
   const quickAddBtn = document.createElement("button");
   quickAddBtn.id = "cw-editor-quick-add";
   quickAddBtn.className = "cw-btn primary";
   quickAddBtn.type = "button";
-  quickAddBtn.setAttribute('aria-label', 'Quick add');
-  quickAddBtn.title = "Mark watched, add to a watchlist or rate a title";
-  quickAddBtn.innerHTML = `<span class="material-symbols-rounded" aria-hidden="true">add_circle</span><span>Quick add</span>`;
+  quickAddBtn.setAttribute('aria-label', T("editor.quickAdd"));
+  quickAddBtn.title = T("editor.quickAddHint");
+  quickAddBtn.innerHTML = `<span class="material-symbols-rounded" aria-hidden="true">add_circle</span><span>${TH("editor.quickAdd")}</span>`;
   (bulkWrap || addBtn)?.insertAdjacentElement(bulkWrap ? "afterend" : "beforebegin", quickAddBtn);
 
   const changeBar = document.createElement("div");
@@ -366,7 +368,7 @@
   changeBar.className = "cw-change-bar";
   changeBar.setAttribute("role", "status");
   changeBar.hidden = true;
-  changeBar.innerHTML = `<span class="material-symbols-rounded" aria-hidden="true">edit_note</span><div class="cw-change-copy"><strong>Unsaved changes</strong><span id="cw-change-note"></span></div><button id="cw-discard" class="cw-btn" type="button">Discard</button>`;
+  changeBar.innerHTML = `<span class="material-symbols-rounded" aria-hidden="true">edit_note</span><div class="cw-change-copy"><strong>${TH("editor.unsaved")}</strong><span id="cw-change-note"></span></div><button id="cw-discard" class="cw-btn" type="button">${TH("editor.discard")}</button>`;
   const discardBtn = changeBar.querySelector("#cw-discard");
   const changeNote = changeBar.querySelector("#cw-change-note");
   if (saveBtn) changeBar.appendChild(saveBtn);
@@ -438,11 +440,11 @@
   const typeAllBtn = document.createElement("button");
   typeAllBtn.id = "cw-type-all";
   typeAllBtn.type = "button";
-  typeAllBtn.textContent = "All";
+  typeAllBtn.textContent = T("editor.all");
   if (typeFilterWrap) {
     const typeBar = document.createElement("div");
     typeBar.className = "cw-type-bar";
-    typeBar.setAttribute("aria-label", "Filter by type");
+    typeBar.setAttribute("aria-label", T("editor.filterType"));
     const typeRow = typeFilterWrap.closest(".ins-row");
     host.querySelector(".cw-controls")?.appendChild(typeBar);
     typeFilterWrap.className = "cw-type-filter";
@@ -483,9 +485,9 @@
       sortFirstValues: [ALL_PROVIDERS],
       className: "cw-editor-icon-select",
       getOptionData: (value, option) => {
-        if (value === ALL_PROVIDERS) return { label: "All providers", icons: [], disabled: false };
+        if (value === ALL_PROVIDERS) return { label: T("editor.allProviders"), icons: [], disabled: false };
         const key = providerKey(value);
-        const label = providerLabel(value, option?.textContent || value || "Select");
+        const label = providerLabel(value, option?.textContent || value || T("editor.select"));
         const icon = providerMeta.logLogoPath?.(key) || providerMeta.logoPath?.(key) || providerMeta.logLogoPath?.(value) || providerMeta.logoPath?.(value) || "";
         return {
           label,
@@ -542,7 +544,7 @@
         const provider = ep.provider || option?.dataset?.provider || "";
         const providerText = providerLabel(provider, provider || "");
         const playlist = ep.playlist_name || ep.playlist_id || "";
-        const label = ep.name || ep.id || option?.textContent || value || "Endpoint";
+        const label = ep.name || ep.id || option?.textContent || value || T("editor.endpoint");
         const note = [providerText, playlist && playlist !== label ? playlist : ""].filter(Boolean).join(" - ");
         const icon = providerMeta.logLogoPath?.(provider) || providerMeta.logoPath?.(provider) || "";
         return {
@@ -675,7 +677,7 @@
     if (instanceLabel) instanceLabel.style.display = show ? "" : "none";
     if (instanceSel) instanceSel.style.display = show ? "" : "none";
     if (show) {
-      state.instance = renderInstanceOptions(instanceSel, [{ id: "default", label: "Default accounts" }, ...profiles], data.profile || "default");
+      state.instance = renderInstanceOptions(instanceSel, [{ id: "default", label: T("editor.defaultAccounts") }, ...profiles], data.profile || "default");
     } else {
       syncProfileIconSelect(instanceSel, false);
     }
@@ -696,10 +698,10 @@
   }
 
   function syncHeaderPills(visible, total) {
-    const srcMap = { state: "Current", playlist: "Playlist" };
-    const kindMap = { watchlist: "Watchlist", history: "History", ratings: "Ratings", progress: "Progress", collection: "Collections", playlist: "Playlist" };
-    if (pillSource) pillSource.textContent = srcMap[state.source] || "Source";
-    if (pillKind) pillKind.textContent = state.source === "playlist" ? "Playlist" : (kindMap[state.kind] || "Kind");
+    const srcMap = { state: T("editor.hero.current"), playlist: T("editor.playlist") };
+    const kindMap = { watchlist: T("editor.kind.watchlist"), history: T("editor.kind.history"), ratings: T("editor.kind.ratings"), progress: T("editor.kind.progress"), collection: T("editor.collections"), playlist: T("editor.playlist") };
+    if (pillSource) pillSource.textContent = srcMap[state.source] || T("editor.source");
+    if (pillKind) pillKind.textContent = state.source === "playlist" ? T("editor.playlist") : (kindMap[state.kind] || T("editor.kindFallback"));
     const all = typeof total === "number" ? total : ((state.rows && state.rows.length) || 0);
     const vis = typeof visible === "number" ? visible : all;
     if (pillCount) pillCount.textContent = all ? (vis !== all ? `${vis}/${all}` : `${all}`) : "0";
@@ -707,15 +709,15 @@
   }
 
   function fmtSyncTime(value) {
-    if (!value) return "not yet";
+    if (!value) return T("snapshots.notYet");
     const diff = Math.max(0, Date.now() - Number(value));
     const mins = Math.floor(diff / 60000);
-    if (mins < 1) return "just now";
-    if (mins < 60) return `${mins} min ago`;
+    if (mins < 1) return T("playlists.ago.justNow");
+    if (mins < 60) return T("playlists.ago.minutes", {count: mins});
     const hours = Math.floor(mins / 60);
-    if (hours < 24) return `${hours}h ago`;
+    if (hours < 24) return T("playlists.ago.hours", {count: hours});
     const days = Math.floor(hours / 24);
-    return `${days} day${days === 1 ? "" : "s"} ago`;
+    return T("playlists.ago.days", {count: days});
   }
 
   function setStatus(message) {
@@ -737,11 +739,11 @@
   }
 
   if (filterInput) {
-    filterInput.placeholder = "Filter by title / S01 / S01E02 / id...";
+    filterInput.placeholder = T("editor.filterEpisodes");
     if (state.filter) filterInput.value = state.filter;
   }
 
-  const KIND_LABELS = { watchlist: "Watchlist", history: "History", ratings: "Ratings", progress: "Progress", collection: "Collections" };
+  const KIND_LABELS = { watchlist: T("editor.kind.watchlist"), history: T("editor.kind.history"), ratings: T("editor.kind.ratings"), progress: T("editor.kind.progress"), collection: T("editor.collections") };
 
   function syncKindUI() {
     if (!kindSel) return;
@@ -778,8 +780,8 @@
   function syncChangeBar() {
     changeBar.hidden = !state.hasChanges;
     changeNote.textContent = state.source === "playlist"
-      ? "Save to update this playlist."
-      : "Saved changes are used from the next sync.";
+      ? T("editor.savePlaylist")
+      : T("editor.savedNextSync");
   }
 
   function columnShown(column) {
@@ -788,8 +790,8 @@
 
   function syncAdvancedUI() {
     host.classList.toggle("cw-editor-simple", !state.advanced);
-    advancedBtn.innerHTML = `<span class="material-symbols-rounded" aria-hidden="true">${state.advanced ? "view_agenda" : "tune"}</span><span>${state.advanced ? "Simple" : "Advanced"}</span>`;
-    advancedBtn.title = state.advanced ? "Back to the simple view" : "Show keys, IDs and maintenance tools";
+    advancedBtn.innerHTML = `<span class="material-symbols-rounded" aria-hidden="true">${state.advanced ? "view_agenda" : "tune"}</span><span>${state.advanced ? TH("editor.simple") : T("editor.advanced")}</span>`;
+    advancedBtn.title = state.advanced ? T("editor.backSimple") : T("editor.showKeys");
   }
 
   function sendRow(row, target) {
@@ -840,8 +842,8 @@
   function columnLabel(column) {
     if (column === "id") return isAnilistMode() ? "MAL" : "TMDB";
     if (column === "extra") {
-      const labels = { history: "Watched on", ratings: "Rating", progress: "Progress", collection: "Collected on" };
-      return (state.source !== "playlist" && labels[state.kind]) || "Details";
+      const labels = { history: T("editor.watchedOn"), ratings: T("editor.rating"), progress: T("editor.kind.progress"), collection: T("editor.collectedOn") };
+      return (state.source !== "playlist" && labels[state.kind]) || T("editor.details");
     }
     return (COLUMN_META[column] && COLUMN_META[column].label) || column;
   }
@@ -957,7 +959,7 @@
     const active = !!state.wideView;
     host.classList.toggle("cw-editor-wide", active);
     wideBtn.classList.toggle("active", active);
-    wideBtn.title = active ? "Exit wide view" : "Wide view";
+    wideBtn.title = active ? T("editor.exitWide") : T("editor.wide");
     wideBtn.setAttribute("aria-label", wideBtn.title);
     const icon = wideBtn.querySelector(".material-symbols-rounded");
     if (icon) icon.textContent = active ? "fullscreen_exit" : "fullscreen";
@@ -1018,7 +1020,7 @@
       th.appendChild(handle);
     }
     handle.dataset.column = column;
-    handle.title = `Resize ${columnLabel(column)}`;
+    handle.title = T("editor.cols.resize", {name: columnLabel(column)});
     handle.onpointerdown = ev => startColumnResize(ev, column, th);
     handle.ondblclick = ev => {
       ev.preventDefault();
@@ -1115,7 +1117,7 @@
     const customOrder = orderedColumns().join("|") !== DEFAULT_COLUMN_ORDER.join("|");
     const customWidths = COLUMN_KEYS.some(k => columnWidth(k) !== DEFAULT_COLUMN_WIDTHS[k]);
     columnsBtn.classList.toggle("active", customVisibility || customOrder || customWidths);
-    columnsBtn.title = hiddenCount > 0 ? `Columns (${hiddenCount} hidden)` : customOrder || customWidths ? "Columns (custom layout)" : "Columns";
+    columnsBtn.title = hiddenCount > 0 ? T("editor.cols.hidden", {count: hiddenCount}) : customOrder || customWidths ? T("editor.cols.custom") : T("editor.columns");
     COLUMN_KEYS.forEach(k => {
       if (isRequiredColumn(k)) state.columnVisibility[k] = true;
       else if (typeof state.columnVisibility[k] !== "boolean") state.columnVisibility[k] = DEFAULT_COLUMN_VISIBILITY[k] !== false;
@@ -1163,7 +1165,7 @@
       }))
       .filter(x => x.id);
 
-    if (!norm.length) norm.push({ id: "default", label: "Default" });
+    if (!norm.length) norm.push({ id: "default", label: T("editor.default") });
 
     const ids = norm.map(x => x.id);
     let next = String(current || "");
@@ -1179,13 +1181,13 @@
   async function loadInstanceOptions(provider, selectEl, current) {
     if (!selectEl) return "default";
     if (!provider) {
-      return renderInstanceOptions(selectEl, [{ id: "default", label: "Default" }], current);
+      return renderInstanceOptions(selectEl, [{ id: "default", label: T("editor.default") }], current);
     }
     try {
       const data = await fetchJSON(`/api/provider-instances/${encodeURIComponent(provider)}`);
       return renderInstanceOptions(selectEl, Array.isArray(data) ? data : [], current);
     } catch (_) {
-      return renderInstanceOptions(selectEl, [{ id: "default", label: "Default" }], current);
+      return renderInstanceOptions(selectEl, [{ id: "default", label: T("editor.default") }], current);
     }
   }
 
@@ -1255,18 +1257,18 @@
       btn.title = label;
       btn.setAttribute("aria-label", label);
     };
-    setAction(bulkSendBtn, "send", "Send");
+    setAction(bulkSendBtn, "send", T("editor.send"));
     const picked = (state.rows || []).filter(row => state.selected.has(row._rid));
     bulkRemoveBtn.style.display = !isMergedView() && picked.some(row => !row.deleted) ? "" : "none";
     bulkRestoreBtn.style.display = !isMergedView() && picked.some(row => row.deleted) ? "" : "none";
     if (isPolicySource()) {
-      setAction(bulkRemoveBtn, "block", "Block");
-      setAction(bulkRestoreBtn, "undo", "Unblock");
+      setAction(bulkRemoveBtn, "block", T("editor.block"));
+      setAction(bulkRestoreBtn, "undo", T("editor.unblock"));
     } else {
-      setAction(bulkRemoveBtn, "delete", "Delete");
-      setAction(bulkRestoreBtn, "restore_from_trash", "Restore");
+      setAction(bulkRemoveBtn, "delete", T("editor.deleteAction"));
+      setAction(bulkRestoreBtn, "restore_from_trash", T("editor.restore"));
     }
-    setAction(bulkClearBtn, "close", "Clear");
+    setAction(bulkClearBtn, "close", T("editor.clear"));
     bulkVisibleBtn.disabled = !state.pageRids?.length;
     bulkAllBtn.disabled = !applyFilter(state.rows || []).length;
   }
@@ -1334,7 +1336,7 @@
       sendQuery: profile ? `user_profile=${encodeURIComponent(profile)}` : "",
       sendNotes: Object.fromEntries((merged ? state.mergedTargets || [] : [])
         .filter(target => (target.shared_with || []).length)
-        .map(target => [`${target.provider}:${target.instance}`, `Shared by ${target.shared_with.join(", ")}`])),
+        .map(target => [`${target.provider}:${target.instance}`, T("editor.sharedBy", {names: target.shared_with.join(", ")})])),
       sendScope: merged && profile ? new Set((state.mergedTargets || []).filter(target => target.can_send).map(target => `${target.provider}:${target.instance}`)) : null,
       selectedRowsForSend,
       rowToSendItem,
@@ -1384,9 +1386,9 @@
       markChanged();
       renderRows();
       const verb = flag
-        ? isPolicySource() ? "Blocked" : "Deleted"
-        : isPolicySource() ? "Unblocked" : "Restored";
-      setStatusSticky(`${verb} ${changed} item${changed === 1 ? "" : "s"}`, 3000);
+        ? isPolicySource() ? T("editor.blocked") : T("editor.deleted")
+        : isPolicySource() ? T("editor.status.unblocked") : T("editor.restored");
+      setStatusSticky(T("editor.verbItems", {verb, count: changed}), 3000);
     }
   }
 
@@ -1408,7 +1410,7 @@
       markChanged();
       renderRows();
       setStatusSticky(
-        `${flag ? "Blocked" : "Unblocked"} ${changed} ${t} item${changed === 1 ? "" : "s"}`,
+        T("editor.verbTypeItems", {verb: flag ? T("editor.status.blocked") : T("editor.status.unblocked"), count: changed, type: t}),
         3500
       );
     }
@@ -1433,7 +1435,7 @@
 
   function markChanged() {
     state.hasChanges = true;
-    setTag("warn", "Unsaved changes");
+    setTag("warn", T("editor.unsaved"));
   }
 
   let activePopup = null;
@@ -1518,7 +1520,7 @@
       const done = document.createElement('button');
       done.type = 'button';
       done.className = 'cw-btn';
-      done.textContent = 'Done';
+      done.textContent = T("editor.done");
       done.addEventListener('click', doClose);
       if (![...pop.querySelectorAll('button')].some(button => /^(Close|Done)$/.test(button.textContent.trim()))) pop.append(done);
       pop.addEventListener('close', () => { if (activePopup === popupState) closePopup(); anchor.focus({preventScroll:true}); }, {once:true});
@@ -1629,7 +1631,7 @@
   function renderColumnPopupContents(pop) {
     if (!pop || !pop.classList || !pop.classList.contains("cw-columns-pop")) return;
     pop.textContent = "";
-    appendPopupTitle(pop, "Columns");
+    appendPopupTitle(pop, T("editor.columns"));
     const list = document.createElement("div");
     list.className = "cw-column-popup-list";
     const order = orderedColumns();
@@ -1644,7 +1646,7 @@
       toggle.className = "cw-type-chip cw-column-toggle";
       toggle.dataset.column = column;
       toggle.disabled = isRequiredColumn(column);
-      toggle.title = isRequiredColumn(column) ? `${columnLabel(column)} is always shown` : `Show ${columnLabel(column)}`;
+      toggle.title = isRequiredColumn(column) ? T("editor.cols.alwaysShown", {name: columnLabel(column)}) : T("editor.cols.show", {name: columnLabel(column)});
       toggle.innerHTML = `<span class="material-symbol cw-type-icon" aria-hidden="true">${meta.icon}</span><span>${columnLabel(column)}</span>`;
       toggle.addEventListener("click", () => toggleColumnVisibility(column));
 
@@ -1652,7 +1654,7 @@
       left.type = "button";
       left.className = "cw-column-move";
       left.disabled = idx === 0;
-      left.title = `Move ${columnLabel(column)} left`;
+      left.title = T("editor.cols.moveLeft", {name: columnLabel(column)});
       left.setAttribute("aria-label", left.title);
       left.innerHTML = `<span class="material-symbols-rounded" aria-hidden="true">keyboard_arrow_left</span>`;
       left.addEventListener("click", ev => {
@@ -1664,7 +1666,7 @@
       right.type = "button";
       right.className = "cw-column-move";
       right.disabled = idx === order.length - 1;
-      right.title = `Move ${columnLabel(column)} right`;
+      right.title = T("editor.cols.moveRight", {name: columnLabel(column)});
       right.setAttribute("aria-label", right.title);
       right.innerHTML = `<span class="material-symbols-rounded" aria-hidden="true">keyboard_arrow_right</span>`;
       right.addEventListener("click", ev => {
@@ -1679,8 +1681,8 @@
     });
     pop.appendChild(list);
     appendPopupActions(pop, [
-      { label: "Reset", onClick: () => resetColumnLayout(pop) },
-      { label: "Close", kind: "primary", onClick: closePopup },
+      { label: T("editor.reset"), onClick: () => resetColumnLayout(pop) },
+      { label: T("editor.close"), kind: "primary", onClick: closePopup },
     ]);
     syncColumnVisibilityUI();
     positionPopup(pop, columnsBtn);
@@ -1714,8 +1716,8 @@
   function extraCorrectionStatus(row, promoted) {
     if (!isPolicySource() || !row || !isExtraKindEditable()) return "";
     const label = manualCorrectionKindLabel();
-    if (promoted) return `A local ${label} correction was created. Save changes to use it on the next sync.`;
-    if (row._origin === "manual") return `Updated local ${label} correction. Save changes to use it on the next sync.`;
+    if (promoted) return T("editor.correction.created", {kind: label});
+    if (row._origin === "manual") return T("editor.correction.updated", {kind: label});
     return "";
   }
 
@@ -1744,12 +1746,12 @@
     const clash = (state.rows || []).some(
       r => r !== row && !r.deleted && String(r.key || "").toLowerCase() === key.toLowerCase() && !groupPart(r)
     );
-    if (clash) return "A row for that item already exists.";
+    if (clash) return T("editor.exists");
 
     if (row._origin === "baseline") {
       row.deleted = true;
       state.rows.unshift(buildManualRow(corrected, key, row.key));
-      setStatusSticky("The original item was blocked and a corrected local item was added.", 6000);
+      setStatusSticky(T("editor.originalBlocked"), 6000);
     } else {
       applyManualRow(row, corrected, key);
       setStatusSticky(sameMessage, 5000);
@@ -1786,13 +1788,13 @@
 
   async function saveMappingFix() {
     await saveState();
-    if (!state.hasChanges) window.cxToast?.("Fix saved. It is used from the next sync.");
+    if (!state.hasChanges) window.cxToast?.(T("editor.fixSaved"));
   }
 
   async function openMappingProvider(row, target) {
     if (state.loading || state.saving || state.mappingEditing) return;
     if (state.hasChanges) {
-      setStatusSticky("Save or discard Editor changes before choosing a mapping provider.", 6000);
+      setStatusSticky(T("editor.saveBeforeMapping"), 6000);
       return;
     }
     const previous = {...state, typeFilter:{...state.typeFilter}};
@@ -1806,15 +1808,15 @@
       syncSourceUI();
       await loadSnapshots();
       if (state.snapshot !== target.provider || state.instance !== (target.instance || "default")) {
-        throw new Error("This provider account is no longer available in the Editor.");
+        throw new Error(T("editor.accountGone"));
       }
       await loadState();
-      if (state.loadError) throw new Error("Could not load this provider. Refresh and try again.");
+      if (state.loadError) throw new Error(T("editor.loadProviderFailed"));
       if (filterInput) filterInput.value = state.filter;
       syncTypeFilterUI();
       persistUIState();
       renderRows();
-      setStatusSticky("Choose the mapping icon beside the item to create or edit its mapping.", 6000);
+      setStatusSticky(T("editor.chooseMappingIcon"), 6000);
     } catch (error) {
       Object.assign(state, previous);
       syncSourceUI(); rebuildSnapshots();
@@ -1831,15 +1833,15 @@
       const targets = (row.presence || []).map(entry => state.mergedTargets?.[entry[0]])
         .filter(target => target && target.verified !== false);
       openPopup(anchor, (pop, close) => {
-        appendPopupTitle(pop, "Choose a mapping provider");
+        appendPopupTitle(pop, T("editor.chooseMappingProvider"));
         const note = document.createElement("p");
         note.textContent = targets.length
-          ? "Open this provider’s items, then use the row’s mapping icon to create or edit a mapping."
-          : "No confirmed provider has this item. Select a provider in the Editor to create a mapping.";
+          ? T("editor.openProviderHint")
+          : T("editor.noConfirmedProvider");
         pop.appendChild(note);
         const select = document.createElement("select");
         select.className = "cw-select";
-        select.setAttribute("aria-label", "Mapping provider account");
+        select.setAttribute("aria-label", T("editor.mappingAccount"));
         targets.forEach((target, index) => {
           const option = document.createElement("option");
           option.value = String(index);
@@ -1848,8 +1850,8 @@
         });
         if (targets.length) pop.appendChild(select);
         appendPopupActions(pop, [
-          {label:"Cancel", onClick:close},
-          ...(targets.length ? [{label:"Open provider", kind:"primary", onClick:() => {
+          {label:T("editor.cancel"), onClick:close},
+          ...(targets.length ? [{label:T("editor.openProvider"), kind:"primary", onClick:() => {
             const target = targets[Number(select.value)];
             close(); openMappingProvider(row, target);
           }}] : []),
@@ -1871,9 +1873,9 @@
   function renderLockedPopup(pop, close) {
     const status = document.createElement("div");
     status.className = "cw-search-status";
-    status.textContent = "Baseline title and ID fields are read-only. Use Extra for a local value correction, or block the row to exclude it.";
+    status.textContent = T("editor.readOnlyHint");
     pop.appendChild(status);
-    appendPopupActions(pop, [{ label: "Close", kind: "primary", onClick: close }]);
+    appendPopupActions(pop, [{ label: T("editor.close"), kind: "primary", onClick: close }]);
   }
 
   function finishExtraChange(row, displayEl, close) {
@@ -2078,7 +2080,7 @@
       if (typeof mod.openModal === "function") await mod.openModal("editor-raw", props);
     } catch (err) {
       console.error("editor raw modal failed", err);
-      setStatusSticky("Could not open record details.", 3500);
+      setStatusSticky(T("editor.openDetailsFailed"), 3500);
     }
   }
 
@@ -2144,7 +2146,7 @@
       );
     }
     if (s && s.name) return s.name;
-    return "Snapshot";
+    return T("editor.snapshot");
   }
 
   function playlistEndpointLabel(ep) {
@@ -2494,7 +2496,7 @@ if (importProviderSel) {
   on(addBtn, "click", addRow);
   on(saveBtn, "click", saveState);
   on(discardBtn, "click", async () => {
-    if (!(await (window.CW?.MobileUI?.ask || window.confirm)("Discard all unsaved changes?"))) return;
+    if (!(await (window.CW?.MobileUI?.ask || window.confirm)(T("editor.discardAll")))) return;
     state.hasChanges = false;
     clearSelection();
     await loadState();
@@ -2502,7 +2504,7 @@ if (importProviderSel) {
   on(advancedBtn, "click", async () => {
     const resetScope = state.advanced && !!state.mappingPair;
     if (resetScope && state.hasChanges) {
-      window.cxToast?.("Save or discard your changes before leaving Advanced.");
+      window.cxToast?.(T("editor.leaveAdvanced"));
       return;
     }
     state.advanced = !state.advanced;
@@ -2522,7 +2524,7 @@ if (importProviderSel) {
     window.openManualWatchedModal(action ? { action } : {});
   });
   window.addEventListener("cw:manual-watched-saved", () => {
-    if (editorIsVisible()) window.cxToast?.("Sent to your providers. The Editor shows it after the next sync.");
+    if (editorIsVisible()) window.cxToast?.(T("editor.sentProviders"));
   });
 
   window.addEventListener("beforeunload", e => {
@@ -2531,12 +2533,12 @@ if (importProviderSel) {
     e.returnValue = "";
   });
 
-  on(stateDownloadBtn, "click", () => downloadFile("/api/editor/state/manual/export", "crosswatch-state-policy.json", "Policy export downloaded"));
+  on(stateDownloadBtn, "click", () => downloadFile("/api/editor/state/manual/export", "crosswatch-state-policy.json", T("editor.policyDownloaded")));
 
   bindFileImport(stateUploadBtn, stateUploadInput, "/api/editor/state/manual/import?mode=merge", async data => {
-    const msg = "Imported " + (listParts(data, [["providers", "provider"], ["blocks", "block"], ["adds", "add"]]).join(", ") || "policy");
+    const msg = T("editor.imported", {what: listParts(data, [["providers", "provider"], ["blocks", "block"], ["adds", "add"]]).join(", ") || T("editor.policy")});
     if (window.cxToast) window.cxToast(msg);
-    setTag("warn", "Imported");
+    setTag("warn", T("editor.importedTag"));
     await loadSnapshots();
     await loadState();
   });
@@ -2545,7 +2547,7 @@ if (importProviderSel) {
   async function openRecoveredHistory() {
     const receipt = window.CW?.pendingRecovery;
     if (!recoveryReady || !receipt || state.loading || state.saving) return;
-    if (state.hasChanges && !(await (window.CW?.MobileUI?.ask || window.confirm)("Discard unsaved Editor changes and open recovered history?"))) return;
+    if (state.hasChanges && !(await (window.CW?.MobileUI?.ask || window.confirm)(T("editor.discardRecovered")))) return;
     window.CW.pendingRecovery = null;
     try {
       state.source = "state"; state.snapshot = "CROSSWATCH"; state.instance = receipt.instance;
@@ -2556,15 +2558,15 @@ if (importProviderSel) {
       await loadSnapshots(); await loadState();
       if (state.loadError) throw new Error(state.loadError);
       if (state.source !== "state" || state.snapshot !== "CROSSWATCH" || state.instance !== receipt.instance || state.kind !== "history") {
-        throw new Error("The imported tracker instance is unavailable. Select it in the Editor to review your history.");
+        throw new Error(T("editor.trackerUnavailable"));
       }
       const keys = new Set(receipt.keys);
       state.selected = new Set(state.rows.filter(row => keys.has(row.key) && !row.deleted).map(row => row._rid));
       state.page = 0;
       renderRows(); syncBulkBar();
       const count = state.selected.size;
-      setStatus(`${count} recovered history row${count === 1 ? "" : "s"} selected. Send this selection to a provider when ready.`);
-    } catch (error) { setStatus(error.message || "Could not open recovered history."); }
+      setStatus(T("editor.recoveredSelected", {count}));
+    } catch (error) { setStatus(error.message || T("editor.openRecoveredFailed")); }
   }
   window.addEventListener("cw:open-recovery", openRecoveredHistory);
 
@@ -2583,8 +2585,8 @@ if (importProviderSel) {
     setTag(
       "warn",
       state.source === "state"
-        ? "Loading current state..."
-        : "Loading playlist endpoint..."
+        ? T("editor.loadingState")
+        : T("editor.loadingPlaylist")
     );
     await loadSnapshots();
     await loadState();

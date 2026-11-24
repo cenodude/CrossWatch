@@ -1,6 +1,9 @@
 /* assets/js/editor/episode-alignment.js */
 /* CrossWatch - Episode matching review for one show in a History sync pair */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
+const I18N = () => globalThis.window?.CW?.I18n || globalThis.window?.__cwI18n;
+const T = (key, vars) => I18N()?.t?.(key, vars) ?? key;
+const TH = (key, vars) => I18N()?.html?.(key, vars) ?? key;
 const esc = value => String(value ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const code = item => `S${String(item.season).padStart(2,"0")}E${String(item.episode).padStart(2,"0")}`;
 
@@ -17,9 +20,9 @@ export async function openEpisodeAlignment(trigger, {pairId, showIds, onSaved} =
   const dialog = document.createElement("dialog");
   dialog.className = "eg-dialog cw-page-panel";
   dialog.setAttribute("aria-labelledby", "episode-alignment-title");
-  dialog.innerHTML = `<div class="eg-head"><div><h2 id="episode-alignment-title">Fix matching</h2><p>See how both providers have this show and confirm the proposed fixes.</p></div><button type="button" class="eg-close" data-close aria-label="Close matching review"><span class="material-symbols-rounded" aria-hidden="true">close</span></button></div>
-    <div class="eg-body"><p class="eg-status" role="status">Comparing watched episodes…</p><p class="eg-error" role="alert"></p><div data-review></div></div>
-    <footer class="eg-footer"><div><button type="button" data-close>Cancel</button><button type="button" class="eg-primary" data-save disabled>Save fixes</button></div></footer>`;
+  dialog.innerHTML = `<div class="eg-head"><div><h2 id="episode-alignment-title">${TH("editor.align.title")}</h2><p>${TH("editor.align.sub")}</p></div><button type="button" class="eg-close" data-close aria-label="${TH("editor.align.close")}"><span class="material-symbols-rounded" aria-hidden="true">close</span></button></div>
+    <div class="eg-body"><p class="eg-status" role="status">${TH("editor.align.comparing")}</p><p class="eg-error" role="alert"></p><div data-review></div></div>
+    <footer class="eg-footer"><div><button type="button" data-close>${TH("editor.align.cancel")}</button><button type="button" class="eg-primary" data-save disabled>${TH("editor.align.saveFixes")}</button></div></footer>`;
   document.body.append(dialog);
   const $ = selector => dialog.querySelector(selector);
   const controller = new AbortController();
@@ -29,7 +32,7 @@ export async function openEpisodeAlignment(trigger, {pairId, showIds, onSaved} =
     const response = await fetch(`/api/editor/episode-alignment${path}`, {method:"POST", credentials:"same-origin", cache:"no-store",
       signal:controller.signal, headers:{"Content-Type":"application/json"}, body:JSON.stringify(body)});
     const data = await response.json();
-    if (!response.ok) throw new Error(typeof data.detail === "string" ? data.detail : "The matching review could not be completed.");
+    if (!response.ok) throw new Error(typeof data.detail === "string" ? data.detail : T("editor.align.failed"));
     return data;
   };
   const name = side => window.CW?.ProviderMeta?.label?.(proposal[side].provider) || proposal[side].provider;
@@ -39,40 +42,40 @@ export async function openEpisodeAlignment(trigger, {pairId, showIds, onSaved} =
     const list = (side, keys) => keys.map(key => code(sides[side].get(key))).join(" + ");
     const chosen = selection(proposal, picks, unchecked, confirmed);
     const matches = new Map(proposal.rows.filter(row => row.source && row.target).map(row => [row.source.key, row.target]));
-    const note = {missing_key:"Add a TMDb metadata key in Settings to get suggestions for split episodes, including season finales.",
-      no_tmdb_id:"This show has no TMDb ID, so split episodes cannot be suggested.",
-      unavailable:"TMDb could not be reached, so split episode suggestions are limited."}[proposal.metadata] || "";
-    const season = number => `season ${number}`;
+    const note = {missing_key:T("editor.align.missingKey"),
+      no_tmdb_id:T("editor.align.noTmdb"),
+      unavailable:T("editor.align.unavailable")}[proposal.metadata] || "";
+    const season = number => T("editor.align.season", {n: String(number)});
     const finding = proposal.diagnosis === "layout"
-      ? `These providers organise this show differently: ${proposal.layout.map(part => `${name("source")} ${season(part.source_season)} matches ${name("target")} ${season(part.target_season)} (${part.episodes} episode${part.episodes === 1 ? "" : "s"})`).join("; ")}. The fixes below move those episodes to the matching season.`
-      : proposal.diagnosis === "numbering" ? "The episode numbers are out of step between the providers." : "";
+      ? T("editor.align.layout", {parts: proposal.layout.map(part => T("editor.align.layoutPart", {source: name("source"), sourceSeason: season(part.source_season), target: name("target"), targetSeason: season(part.target_season), count: part.episodes})).join("; ")})
+      : proposal.diagnosis === "numbering" ? T("editor.align.numbering") : "";
     const checked = (proposal.sources || []).map(source => source.ok
-      ? `${source.label}: ${source.title || "found"}${source.seasons.length ? `, ${source.seasons.length} season${source.seasons.length === 1 ? "" : "s"} (${source.seasons.map(part => part[1]).join(", ")} episodes)` : ""}`
-      : `${source.label}: not found`).join(" · ");
+      ? `${source.label}: ${source.title || T("editor.align.found")}${source.seasons.length ? `, ${T("editor.align.seasons", {count: source.seasons.length, episodes: source.seasons.map(part => part[1]).join(", ")})}` : ""}`
+      : `${source.label}: ${T("editor.align.notFound")}`).join(" · ");
     const groups = proposal.groups.map((group, index) => {
       const pick = picks[index] ?? group.suggested ?? "none";
       const other = group.split === "source" ? "target" : "source";
       const orphan = group.orphans.map(key => code(sides[group.split].get(key))).join(", ");
       const option = (value, title, detail) => `<label class="eg-scrobble"><input type="radio" name="alignment-group-${index}" value="${value}" data-group="${index}" ${pick === value ? "checked" : ""}><span><strong>${esc(title)}</strong><small>${esc(detail)}</small></span></label>`;
-      return `<section class="eg-saved"><div class="eg-saved-head"><h3>${esc(name(group.split))} ${esc(orphan)} has no match on ${esc(name(other))}</h3></div>
+      return `<section class="eg-saved"><div class="eg-saved-head"><h3>${TH("editor.align.noMatch", {name: name(group.split), episodes: orphan, other: name(other)})}</h3></div>
         ${Object.entries(group.options).map(([where, value]) => option(where,
-          `Combine: ${name("source")} ${list("source", value.source)} ↔ ${name("target")} ${list("target", value.target)}`,
+          T("editor.align.combine", {source: name("source"), sourceList: list("source", value.source), target: name("target"), targetList: list("target", value.target)}),
           [...value[group.split].map(key => sides[group.split].get(key).title), where === group.suggested ? group.reason : ""].filter(Boolean).join(" · "))).join("")}
-        ${option("none", "Leave it alone", "Do not create an episode group here.")}</section>`;
+        ${option("none", T("editor.align.leave"), T("editor.align.noGroup"))}</section>`;
     }).join("");
-    const corrections = proposal.corrections.length ? `<section class="eg-saved"><div class="eg-saved-head"><h3>Shifted episodes</h3><span class="eg-muted">${chosen.corrections.length} selected</span></div>${proposal.corrections.map(item => {
+    const corrections = proposal.corrections.length ? `<section class="eg-saved"><div class="eg-saved-head"><h3>${TH("editor.align.shifted")}</h3><span class="eg-muted">${TH("editor.align.selected", {count: chosen.corrections.length})}</span></div>${proposal.corrections.map(item => {
       const from = sides.source.get(item.key), covered = chosen.covered.has(item.key);
       const ticked = item.doubt ? confirmed.has(item.key) : !unchecked.has(item.key);
-      const detail = covered ? "Handled by the episode group above." : item.reason ? `${item.reason} Select only if these are the same episode.` : item.doubt
-        ? `Titles differ: “${from.title}” on ${name("source")}, “${matches.get(item.key)?.title || ""}” on ${name("target")}. One provider may have a wrong episode ID. Select only if these are the same episode.`
+      const detail = covered ? T("editor.align.handled") : item.reason ? `${item.reason} ${T("editor.align.sameOnly")}` : item.doubt
+        ? T("editor.align.titlesDiffer", {from: from.title, source: name("source"), to: matches.get(item.key)?.title || "", target: name("target")})
         : from.title;
-      return `<label class="eg-scrobble"><input type="checkbox" data-correction="${esc(item.key)}" ${item.doubt ? "data-doubt" : ""} ${covered ? "disabled" : ticked ? "checked" : ""}><span><strong>${esc(name("source"))} ${esc(code(from))} → ${esc(name("target"))} ${esc(code(item))}${item.doubt ? " · check this one" : ""}</strong><small>${esc(detail)}</small></span></label>`;
+      return `<label class="eg-scrobble"><input type="checkbox" data-correction="${esc(item.key)}" ${item.doubt ? "data-doubt" : ""} ${covered ? "disabled" : ticked ? "checked" : ""}><span><strong>${esc(name("source"))} ${esc(code(from))} → ${esc(name("target"))} ${esc(code(item))}${item.doubt ? ` · ${TH("editor.align.checkThis")}` : ""}</strong><small>${esc(detail)}</small></span></label>`;
     }).join("")}</section>` : "";
-    const all = `<details class="eg-help"><summary>All watched episodes (${proposal.rows.length})</summary><ul>${proposal.rows.map(row =>
+    const all = `<details class="eg-help"><summary>${TH("editor.align.allWatched", {count: proposal.rows.length})}</summary><ul>${proposal.rows.map(row =>
       `<li>${esc(row.source ? `${code(row.source)} ${row.source.title}` : "—")} ↔ ${esc(row.target ? `${code(row.target)} ${row.target.title}` : "—")}${row.status === "same" ? "" : ` (${esc(row.status)})`}</li>`).join("")}</ul></details>`;
-    $("[data-review]").innerHTML = `${checked ? `<p class="eg-hint">Checked ${esc(checked)}</p>` : ""}${finding ? `<p class="eg-empty">${esc(finding)}</p>` : ""}${note && proposal.diagnosis !== "layout" ? `<p class="eg-hint">${esc(note)}</p>` : ""}${groups}${corrections}${groups || corrections || finding ? "" : '<p class="eg-empty">The watched episodes of this show already line up between both providers.</p>'}${all}`;
+    $("[data-review]").innerHTML = `${checked ? `<p class="eg-hint">${TH("editor.align.checked", {what: checked})}</p>` : ""}${finding ? `<p class="eg-empty">${esc(finding)}</p>` : ""}${note && proposal.diagnosis !== "layout" ? `<p class="eg-hint">${esc(note)}</p>` : ""}${groups}${corrections}${groups || corrections || finding ? "" : '<p class="eg-empty">' + TH("editor.align.lineUp") + '</p>'}${all}`;
     $("[data-save]").disabled = busy || !(chosen.groups.length || chosen.corrections.length);
-    $("[data-save]").textContent = chosen.groups.length || chosen.corrections.length ? `Save ${chosen.groups.length + chosen.corrections.length} fixes` : "Save fixes";
+    $("[data-save]").textContent = chosen.groups.length || chosen.corrections.length ? T("editor.align.saveN", {count: chosen.groups.length + chosen.corrections.length}) : T("editor.align.saveFixes");
   };
   dialog.addEventListener("change", event => {
     const input = event.target;

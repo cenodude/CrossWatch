@@ -5,6 +5,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import vm from "node:vm";
+import './i18n-vm-setup.mjs';
 
 const read = (path) => readFileSync(new URL(`../assets/${path}`, import.meta.url), "utf8");
 

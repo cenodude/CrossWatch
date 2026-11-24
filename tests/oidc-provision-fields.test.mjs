@@ -5,9 +5,11 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {readFileSync} from "node:fs";
 import vm from "node:vm";
+import './i18n-vm-setup.mjs';
+import {englishFrontendSource} from './i18n-test-helper.mjs';
 
 const source = readFileSync(new URL("../assets/helpers/settings-ui.js", import.meta.url), "utf8");
-const markup = readFileSync(new URL("../ui_frontend.py", import.meta.url), "utf8");
+const markup = englishFrontendSource();
 const start = source.indexOf("function cwAppAuthOidcProvisionFields()");
 const end = source.indexOf("async function cwAppAuthOidcRefreshStatus()", start);
 assert.ok(start >= 0 && end > start);

@@ -1,5 +1,7 @@
 // auth.trakt.js
 (function () {
+  const T = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.t?.(key, vars) ?? key;
+  const TH = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.html?.(key, vars) ?? key;
   if (window._traktPatched) return;
   window._traktPatched = true;
 
@@ -13,7 +15,7 @@
     selectId: "trakt_instance",
     storageKey: "cw.ui.trakt.auth.instance.v1",
     panelSelector: '#sec-trakt .cw-meta-provider-panel[data-provider="trakt"], .cw-meta-provider-panel[data-provider="trakt"]',
-    title: "Select which Trakt account this config applies to.",
+    title: T("connections.auth.gen.selectAccount", {provider: "Trakt"}),
   });
   function _notify(msg) { Shared.notify(msg); }
   function _el(id) { return Shared.el(id); }
@@ -120,8 +122,8 @@
       var msg = _el('trakt_msg');
       if (!msg) return;
       try { Shared.setConnectLocked(["btn-connect-trakt", "btn-trakt-restart"], !!traktConnected && !traktAuthError); } catch (_) {}
-      if (traktConnected && traktAuthError) return Shared.setStatusPill(msg, "warn", "Trakt login expired - reconnect");
-      if (traktConnected) return Shared.setStatusPill(msg, "ok", "Connected");
+      if (traktConnected && traktAuthError) return Shared.setStatusPill(msg, "warn", T("connections.auth.gen.loginExpired", {provider: "Trakt"}));
+      if (traktConnected) return Shared.setStatusPill(msg, "ok", T("connections.auth.connected"));
       return Shared.setStatusPill(msg, null);
     } catch (_) {}
   }
@@ -190,7 +192,7 @@
   window.copyTraktRedirect = async function () {
     var code = document.getElementById("trakt_redirect_uri_preview");
     var text = (code && code.textContent ? code.textContent : "urn:ietf:wg:oauth:2.0:oob").trim();
-    await Shared.copyText(text, _el("btn-copy-trakt-redirect"), { successMessage: "Redirect URL copied" });
+    await Shared.copyText(text, _el("btn-copy-trakt-redirect"), { successMessage: T("connections.auth.trakt.redirectCopied") });
   };
 
   var TRK_ICON_COPY = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>';
@@ -215,7 +217,7 @@
     var el = _el("trakt_qc_timer"); if (!el) return;
     var left = Math.max(0, Math.round((trqcDeadline - Date.now()) / 1000));
     var mm = Math.floor(left / 60), ss = String(left % 60).padStart(2, "0");
-    el.textContent = left > 0 ? ("Expires in " + mm + ":" + ss) : "";
+    el.textContent = left > 0 ? T("connections.auth.expiresIn", {time: mm + ":" + ss}) : "";
   }
   function trqcStop() {
     if (trqcTimer) { clearInterval(trqcTimer); trqcTimer = null; }
@@ -226,14 +228,14 @@
   function trqcTimeout() {
     if (trqcTimer) { clearInterval(trqcTimer); trqcTimer = null; }
     trqcDeadline = 0;
-    var st = _el("trakt_qc_status"); if (st) st.textContent = "Link code expired. Restart to try again.";
+    var st = _el("trakt_qc_status"); if (st) st.textContent = T("connections.auth.codeExpiredRestart");
     var el = _el("trakt_qc_timer"); if (el) el.textContent = "";
     trqcShowRestart();
   }
   function trqcShowCode(code, secondsLeft) {
     var pinEl = _el("trakt_pin"); if (pinEl) pinEl.value = code || "";
     var codeEl = _el("trakt_qc_code"); if (codeEl) codeEl.textContent = code || "------";
-    var st = _el("trakt_qc_status"); if (st) st.textContent = "Waiting for authorization…";
+    var st = _el("trakt_qc_status"); if (st) st.textContent = T("connections.auth.waitingAuth");
     trqcDeadline = Date.now() + (Math.max(30, Number(secondsLeft) || 300) * 1000);
     trqcSetState(true);
     trqcUpdateTimer();
@@ -245,10 +247,10 @@
     if (!code || code === "------") return;
     var ok = false;
     ok = (await window.cwCopyText?.(code)) === true;
-    if (!ok) { _notify("Copy failed"); return; }
-    btn.classList.add("copied"); btn.innerHTML = TRK_ICON_CHECK; btn.title = "Copied!";
+    if (!ok) { _notify(T("connections.auth.copyFailed")); return; }
+    btn.classList.add("copied"); btn.innerHTML = TRK_ICON_CHECK; btn.title = T("connections.auth.copiedBang");
     if (trqcCopyRevert) clearTimeout(trqcCopyRevert);
-    trqcCopyRevert = setTimeout(function () { btn.classList.remove("copied"); btn.innerHTML = TRK_ICON_COPY; btn.title = "Copy code"; }, 1400);
+    trqcCopyRevert = setTimeout(function () { btn.classList.remove("copied"); btn.innerHTML = TRK_ICON_COPY; btn.title = T("connections.auth.copyCode"); }, 1400);
   }
   function wireTraktQc() {
     var copy = _el("trakt_qc_copy");
@@ -304,10 +306,10 @@
   async function flushTraktCreds() {
     try {
       await traktDeleteToken();
-      _notify('Trakt cleared for this instance');
+      _notify(T("connections.auth.gen.clearedInstance", {provider: "Trakt"}));
     } catch (e) {
       console.warn("flushTraktCreds failed", e);
-      _notify("Wissen mislukt");
+      _notify(T("connections.auth.clearFailed"));
     }
   }
 
@@ -349,7 +351,7 @@
   }
 
   function openTraktPopup() {
-    return Shared.openWaitWindow("Trakt", "Requesting your Trakt code...", "TRAKT");
+    return Shared.openWaitWindow("Trakt", T("connections.auth.gen.requestingYourCode", {provider: "Trakt"}), "TRAKT");
   }
 
   function navigateTraktPopup(win, url) {
@@ -371,7 +373,7 @@
     if (method === "app") {
       var cid = _readSecretField(_el("trakt_client_id"));
       var secret = _readSecretField(_el("trakt_client_secret"));
-      if (!cid.hasValue) { _notify("Enter your Trakt Client ID"); return; }
+      if (!cid.hasValue) { _notify(T("connections.auth.gen.enterClientId", {provider: "Trakt"})); return; }
       if (cid.value) payload.client_id = cid.value;
       if (secret.value) payload.client_secret = secret.value;
     }
@@ -391,7 +393,7 @@
     } catch (e) {
       console.warn("[trakt] pin fetch failed", e);
       try { if (win && !win.closed) win.close(); } catch (_) {}
-      _notify("Failed to request code");
+      _notify(T("connections.auth.requestFailed"));
       if (connectBtn) { connectBtn.disabled = false; connectBtn.classList.remove("busy"); }
       return;
     }
@@ -401,7 +403,7 @@
       console.warn("[trakt] pin error payload", data);
       const status = (data && data.status) ? ` (HTTP ${data.status})` : "";
       const body   = (data && data.body) ? `: ${String(data.body).slice(0, 180)}` : "";
-      _notify(((data && data.error) || "Code request failed") + status + body);
+      _notify(((data && data.error) || T("connections.auth.codeRequestFailed")) + status + body);
       try { if (win && !win.closed) win.close(); } catch (_) {}
       if (connectBtn) { connectBtn.disabled = false; connectBtn.classList.remove("busy"); }
       return;
@@ -413,14 +415,14 @@
 
     var helpEl = _el("trakt_qc_help");
     if (helpEl) helpEl.textContent = win
-      ? "Opening auth.trakt.tv/activate — enter this code there and approve CrossWatch."
-      : "Open auth.trakt.tv/activate and enter this code to approve CrossWatch.";
+      ? T("connections.auth.trakt.opening")
+      : T("connections.auth.trakt.open");
 
     trqcShowCode(code, secs);
     try { startTraktTokenPoll(trqcDeadline); } catch (_) {}
 
     if (!Shared.showWaitCode(win, { key: "TRAKT", label: "Trakt", code: code, url: url, navigate: navigateTraktPopup })) {
-      _notify("Popup blocked - open auth.trakt.tv/activate and enter the code.");
+      _notify(T("connections.auth.trakt.popup"));
     }
 
     if (connectBtn) { connectBtn.disabled = false; connectBtn.classList.remove("busy"); }
@@ -445,12 +447,12 @@
       if (r.ok && (j.ok !== false)) {
         _setVal('trakt_pin',''); setTraktSuccess(false);
         try { var ce = _el('trakt_qc_code'); if (ce) ce.textContent = '------'; } catch (_) {}
-        if (msg) msg.textContent = 'Disconnected';
+        if (msg) msg.textContent = T("connections.auth.disconnected");
       } else {
-        if (msg) { msg.classList.add('warn'); msg.textContent = 'Could not remove token.'; }
+        if (msg) { msg.classList.add('warn'); msg.textContent = T("connections.auth.removeTokenFailed"); }
       }
     } catch (_) {
-      if (msg) { msg.classList.add('warn'); msg.textContent = 'Error removing token.'; }
+      if (msg) { msg.classList.add('warn'); msg.textContent = T("connections.auth.removeTokenError"); }
     } finally {
       if (btn) { btn.disabled = false; btn.classList.remove('busy'); }
     }

@@ -2,6 +2,8 @@
 /* Extracted watchlist preview/wall UI from core.js */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 (function () {
+  const T = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.t?.(key, vars) ?? key;
+  const TH = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.html?.(key, vars) ?? key;
   const authSetupPending = () => window.cwIsAuthSetupPending?.() === true;
   const isTV = window.isTV || ((v) => /^(tv|show|shows|series|season|episode|anime)$/i.test(String(v || "")));
   let wallReqSeq = 0;
@@ -166,9 +168,9 @@
     const delta = Math.max(1, Math.floor(Date.now() / 1000) - ts);
     const units = [["y", 31536000], ["mo", 2592000], ["w", 604800], ["d", 86400], ["h", 3600], ["m", 60]];
     for (const [name, seconds] of units) {
-      if (delta >= seconds) return `${Math.floor(delta / seconds)}${name} ago`;
+      if (delta >= seconds) return T("library.wall.ago", {value: `${Math.floor(delta / seconds)}${name}`});
     }
-    return `${delta}s ago`;
+    return T("library.wall.ago", {value: `${delta}s`});
   }
 
   function updateEdges() {
@@ -317,8 +319,7 @@
 
   function countLabel(total, noun) {
     const n = Number(total || 0);
-    const label = n === 1 ? noun : `${noun}s`;
-    return `${Number.isFinite(n) ? n : 0} ${label}`;
+    return T(`library.wall.count.${noun}`, {count: Number.isFinite(n) ? n : 0});
   }
 
   function setWatchlistCount(total) {
@@ -353,11 +354,11 @@
 
   function mediaLabelOf(item, meta = null) {
     const resolved = String(meta?.resolved_type || "").toLowerCase();
-    if (resolved === "movie") return "Movie";
+    if (resolved === "movie") return T("library.wall.movie");
     const raw = String(item?.type || item?.entity || item?.media_type || "").toLowerCase();
-    if (raw === "movie") return "Movie";
-    if (raw === "anime") return resolved === "show" ? "Show" : "Anime";
-    return "Show";
+    if (raw === "movie") return T("library.wall.movie");
+    if (raw === "anime") return resolved === "show" ? T("library.wall.show") : T("library.wall.anime");
+    return T("library.wall.show");
   }
 
   function tmdbIdOf(item, meta = null) {
@@ -425,7 +426,7 @@
       id: "cw-wall-preview-detail",
       variant: "watchlist",
       tabScope: document.documentElement?.dataset?.cwPage === "hub" ? "" : "main",
-      label: "Watchlist preview details",
+      label: T("library.wall.detailsLabel"),
       width: "min(860px,calc(100vw - 32px))",
       onClose: closePreviewDrawer,
       onTrailer: () => { void window.CW?.Trailer?.openFor(previewItem, previewMeta); },
@@ -471,12 +472,12 @@
       : Number.isFinite(rawScore) ? rawScore / 10 : null;
 
     return {
-      title: item?.title || meta?.title || "Unknown title",
+      title: item?.title || meta?.title || T("library.wall.unknown"),
       year: "",
       isMovie,
       chips,
       overview: meta?.overview || meta?.detail?.overview || meta?.detail?.tagline
-        || (loading ? "Loading details..." : "No description available."),
+        || (loading ? T("library.wall.loadingDetails") : T("library.wall.noDescription")),
       poster: artUrl(item, "w342") || "/assets/img/placeholder_poster.svg?v=2",
       posterHref: tmdbUrl(item, meta),
       backdrop: backdropUrl(item, meta),
@@ -538,8 +539,8 @@
     row.classList.add("hidden");
     row.closest(".wall-wrap")?.classList.add("is-empty");
     msg.innerHTML = `
-      <strong>${esc(text && text !== "No items to show yet." ? text : "No watchlist items yet")}</strong>
-      <small>Synced watchlist titles will appear here.</small>`;
+      <strong>${esc(text && text !== T("library.wall.noItems") ? text : T("library.wall.noWatchlist"))}</strong>
+      <small>${TH("library.wall.synced")}</small>`;
     msg.classList.add("is-empty");
     msg.classList.remove("hidden");
     window.dispatchEvent(new CustomEvent("cw:watchlist-widget-state", { detail: { empty: true, count: 0 } }));
@@ -621,7 +622,7 @@
   function sourceRouteTitle(item) {
     const labels = sourceRowsForItem(item).slice(0, 8).map((row) => providerInstanceLabel(row.provider, row.instance));
     if (!labels.length) return "";
-    return labels.length > 1 ? `Sources: ${labels.join(" -> ")}` : `Source: ${labels[0]}`;
+    return labels.length > 1 ? T("library.wall.sources", {list: labels.join(" -> ")}) : T("library.wall.source", {name: labels[0]});
   }
 
   function providerIconMarkup(name) {
@@ -633,7 +634,7 @@
     const isSquare = /\.png(?:[?#]|$)/i.test(src);
     const shell = `display:inline-flex;align-items:center;justify-content:center;border-radius:999px;border:1px solid rgba(${rgb},.22);background:rgba(${rgb},.11);box-shadow:inset 0 1px 0 rgba(255,255,255,.04),0 8px 20px rgba(0,0,0,.18);backdrop-filter:blur(10px) saturate(120%);-webkit-backdrop-filter:blur(10px) saturate(120%);`;
     return src
-      ? `<span style="${shell}width:28px;height:28px;padding:0 5px;"><img src="${esc(src)}" alt="${esc(label)} logo" style="display:block;width:auto;height:${isSquare ? "19px" : "16px"};max-width:${isSquare ? "19px" : "20px"};object-fit:contain;filter:brightness(1.05)"></span>`
+      ? `<span style="${shell}width:28px;height:28px;padding:0 5px;"><img src="${esc(src)}" alt="${TH("editor.sendModal.logo", {name: label})}" style="display:block;width:auto;height:${isSquare ? "19px" : "16px"};max-width:${isSquare ? "19px" : "20px"};object-fit:contain;filter:brightness(1.05)"></span>`
       : `<span aria-label="${esc(label)}" style="${shell}min-width:28px;height:28px;padding:0 7px;font-size:11px;font-weight:800;line-height:1;color:rgba(245,248,255,.88);">${esc(shortLabel)}</span>`;
   }
 
@@ -653,7 +654,7 @@
   function renderWall(row, msg, items, lastSyncEpoch, { preserveIfSame = false, total = null } = {}) {
     let wallItems = Array.isArray(items) ? items.slice() : [];
     if (!wallItems.length) {
-      setWallEmpty(row, msg, "No items to show yet.");
+      setWallEmpty(row, msg, T("library.wall.noItems"));
       return false;
     }
 
@@ -702,7 +703,7 @@
       link.target = "_blank";
       link.rel = "noopener";
       link.style.cursor = "pointer";
-      link.setAttribute("aria-label", `Show details for ${item.title || "this item"}`);
+      link.setAttribute("aria-label", T("library.wall.showDetails", {title: item.title || T("library.wall.thisItem")}));
       link.dataset.type = item.type || "";
       link.dataset.tmdb = String(item.tmdb);
       link.dataset.key = item.key || "";
@@ -762,11 +763,11 @@
 
       const cap = document.createElement("div");
       cap.className = "cap";
-      const typeLabel = isTV(item.type || item.entity || item.media_type) ? (epLabel || "TV Series") : "Movie";
-      const compactMeta = [typeLabel, item.year || "", timeLabel ? `updated ${timeLabel}` : ""].filter(Boolean).join(" - ");
+      const typeLabel = isTV(item.type || item.entity || item.media_type) ? (epLabel || T("library.wall.tvSeries")) : T("library.wall.movie");
+      const compactMeta = [typeLabel, item.year || "", timeLabel ? T("library.wall.updated", {when: timeLabel}) : ""].filter(Boolean).join(" - ");
       const horizontalMeta = [typeLabel, item.year || ""].filter(Boolean).join(" \u2022 ");
       const stackedMeta = [typeLabel, item.year || ""].filter(Boolean).join(" - ");
-      const stackedUpdated = timeLabel ? `<small class="wl-meta-stacked-updated">${esc(`updated ${timeLabel}`)}</small>` : "";
+      const stackedUpdated = timeLabel ? `<small class="wl-meta-stacked-updated">${TH("library.wall.updated", {when: timeLabel})}</small>` : "";
       cap.innerHTML = `
         <strong>${esc(item.title || "")}</strong>
         <small class="wl-meta-compact">${esc(compactMeta)}</small>
@@ -780,7 +781,7 @@
     }
 
     if (!renderedCount) {
-      setWallEmpty(row, msg, "No items to show yet.");
+      setWallEmpty(row, msg, T("library.wall.noItems"));
       return false;
     }
 
@@ -816,7 +817,7 @@
       if (cached?.items?.length) {
         renderCachedPreview({ preserveIfSame: true });
       } else {
-        msg.textContent = "Loading...";
+        msg.textContent = T("library.wall.loading");
         msg.classList.remove("is-empty");
         msg.classList.remove("hidden");
         row.closest(".wall-wrap")?.classList.remove("is-empty");
@@ -855,14 +856,14 @@
         return renderWall(row, msg, cached.items, cached.last_sync_epoch || 0, { preserveIfSame: true, total: cached.total ?? null });
       }
       if (data?.missing_tmdb_key) { clearWallCache(); hidePreviewCard(card, row, msg); return false; }
-      if (!data?.ok) { msg.textContent = data?.error || "No state data found."; return false; }
+      if (!data?.ok) { msg.textContent = data?.error || T("library.wall.noState"); return false; }
 
       let items = Array.isArray(data.items) ? data.items.slice() : [];
       if (!items.length) items = (data.items || []).filter((it) => String(it?.status || "").toLowerCase() === "both");
       window._lastSyncEpoch = data.last_sync_epoch || null;
       if (!items.length) {
         clearWallCache();
-        setWallEmpty(row, msg, "No items to show yet.");
+        setWallEmpty(row, msg, T("library.wall.noItems"));
         markPreviewClean(refreshVersion);
         return true;
       }
@@ -879,7 +880,7 @@
         row.classList.add("hidden");
         msg.classList.remove("hidden");
       }
-      msg.textContent = "Failed to load preview.";
+      msg.textContent = T("library.wall.failed");
       return renderedWall;
     }
   }
@@ -988,7 +989,7 @@
       const rendered = hasRenderedWall(row);
       if (msg && !window.wallLoaded && !rendered) {
         if (!renderCachedPreview({ preserveIfSame: true })) {
-          msg.textContent = "Loading...";
+          msg.textContent = T("library.wall.loading");
           msg.classList.remove("hidden");
         }
       }
@@ -1028,7 +1029,7 @@
     const msg = document.getElementById("wall-msg");
     if (card && row && msg && isOnMain() && !profileWatchlistWidgetHidden()) {
       card.classList.remove("hidden");
-      setWallEmpty(row, msg, "No items to show yet.");
+      setWallEmpty(row, msg, T("library.wall.noItems"));
       return true;
     }
     try { window.dispatchEvent(new CustomEvent("cw:watchlist-widget-state", { detail: { empty: true, count: 0 } })); } catch {}

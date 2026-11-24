@@ -3,6 +3,8 @@
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 
 (() => {
+  const T = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.t?.(key, vars) ?? key;
+  const TH = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.html?.(key, vars) ?? key;
   const cfg = window._cfgCache;
   const key = cfg?.tmdb?.api_key;
   const hasTmdb = typeof key === "string" ? key.trim().length > 0 : !!key;
@@ -191,7 +193,7 @@
     }
     if (typeof x.display_title === "string" && x.display_title.trim()) return x.display_title.trim();
     if (type === "season") {
-      const seasonLabel = rawTitle || (toInt(x.season) != null ? `Season ${toInt(x.season)}` : "");
+      const seasonLabel = rawTitle || (toInt(x.season) != null ? T("common.media.seasonN", { n: String(toInt(x.season)) }) : "");
       return show && seasonLabel ? `${show} - ${seasonLabel}` : show || seasonLabel || "item";
     }
     if ((type === "show" || type === "anime") && show && looksLikeIdLabel(rawTitle)) return show;
@@ -278,7 +280,7 @@
   const ensureSpotsModal = () => {
     if (spotsModal) return spotsModal;
     spotsModal = Object.assign(document.createElement("div"), { id: "ux-spots-modal", className: "ux-spots-modal hidden" });
-    spotsModal.innerHTML = `<div class="ux-spots-backdrop"></div><div class="ux-spots-card"><div class="ux-spots-h"><div class="ux-spots-title"></div><button class="ux-spots-close" aria-label="Close">✕</button></div><div class="ux-spots-body"></div></div>`;
+    spotsModal.innerHTML = `<div class="ux-spots-backdrop"></div><div class="ux-spots-card"><div class="ux-spots-h"><div class="ux-spots-title"></div><button class="ux-spots-close" aria-label="${TH("common.actions.close")}">✕</button></div><div class="ux-spots-body"></div></div>`;
     document.body.appendChild(spotsModal);
     const close = () => spotsModal?.classList.add("hidden");
     spotsModal.querySelector(".ux-spots-close").onclick = close;
@@ -290,13 +292,13 @@
   const openSpotsModal = (label, buckets) => {
     const modal = ensureSpotsModal();
     const body = modal.querySelector(".ux-spots-body");
-    const meta = { add: ["t-add", "Added", "mdi mdi-plus"], rem: ["t-rem", "Removed", "mdi mdi-delete-outline"], upd: ["t-upd", "Updated", "mdi mdi-sync"] };
+    const meta = { add: ["t-add", T("dashboard.stats.added"), "mdi mdi-plus"], rem: ["t-rem", T("dashboard.stats.removed"), "mdi mdi-delete-outline"], upd: ["t-upd", T("dashboard.spots.updated"), "mdi mdi-sync"] };
     const stampOf = (it) => !it || typeof it === "string" ? 0 : parseTs(it.added_at ?? it.listed_at ?? it.watched_at ?? it.rated_at ?? it.last_watched_at ?? it.user_rated_at ?? it.ts ?? it.seen_ts ?? it.ingested_ts ?? it.sync_ts ?? 0);
     const all = ["add", "rem", "upd"].flatMap((kind) => (buckets[kind] || []).map((it) => typeof it === "object" && it ? { ...it, __kind: kind } : { title: it, __kind: kind }));
     const rows = all.sort((a, b) => stampOf(b) - stampOf(a)).slice(0, 25);
     const hasRem = (buckets.rem || []).length > 0;
     const columns = hasRem ? [rows.filter((it) => it.__kind !== "rem"), rows.filter((it) => it.__kind === "rem")] : [rows.filter((it) => it.__kind !== "rem")];
-    const mkCol = (items) => !items.length ? `<div class="muted small">No items.</div>` : items.map((it) => {
+    const mkCol = (items) => !items.length ? `<div class="muted small">${TH("dashboard.spots.noItems")}</div>` : items.map((it) => {
       const [cls, text, icon] = meta[it.__kind] || meta.add;
       const d = stampOf(it) ? new Date(stampOf(it)).toLocaleDateString() : "";
       return `<div class="ux-sec-row"><span class="tag ${cls}"><i class="${icon}"></i> ${text}</span><span class="ux-title">${esc(titleOf(it))}</span>${d ? `<span class="ux-date">${d}</span>` : ""}</div>`;
@@ -309,7 +311,7 @@
 
   const createSpotRow = (kind, text) => {
     const row = Object.assign(document.createElement("div"), { className: "spot" });
-    row.innerHTML = `<span class="tag ${kind === "add" ? "t-add" : kind === "rem" ? "t-rem" : "t-upd"}">${kind === "add" ? "Added" : kind === "rem" ? "Removed" : "Updated"}</span><span></span>`;
+    row.innerHTML = `<span class="tag ${kind === "add" ? "t-add" : kind === "rem" ? "t-rem" : "t-upd"}">${TH(kind === "add" ? "dashboard.main.added" : kind === "rem" ? "dashboard.main.removed" : "dashboard.main.updated")}</span><span></span>`;
     row.lastChild.textContent = text;
     return row;
   };
@@ -336,7 +338,7 @@
     const hiddenCount = orderedFeats(true).filter((feat) => feat.layout.hidden).length + (window.CW?.DashboardWidgets?.hiddenCount?.() || 0);
     const unhideAll = hubLayoutHost.querySelector("[data-layout-action='show-all']");
     if (unhideAll) {
-      const label = hiddenCount ? `Unhide ${hiddenCount} hidden block${hiddenCount === 1 ? "" : "s"}` : "No hidden blocks";
+      const label = hiddenCount ? T("dashboard.layout.unhide", { count: hiddenCount }) : T("dashboard.layout.noHidden");
       unhideAll.disabled = hiddenCount === 0;
       unhideAll.title = label;
       unhideAll.setAttribute("aria-label", label);
@@ -352,18 +354,18 @@
     if (!actions) return;
     const refreshBtn = document.getElementById("btn-status-refresh");
     const wrap = Object.assign(document.createElement("div"), { className: "cw-hub-layout-strip" });
-    wrap.setAttribute("aria-label", "Hidden Sync Hub blocks");
+    wrap.setAttribute("aria-label", T("dashboard.layout.hiddenBlocks"));
     wrap.innerHTML = `
-      <button type="button" class="iconbtn cw-hub-layout-toggle" title="Sync Hub tools" aria-label="Sync Hub tools" aria-expanded="false">
+      <button type="button" class="iconbtn cw-hub-layout-toggle" title="${TH("dashboard.layout.tools")}" aria-label="${TH("dashboard.layout.tools")}" aria-expanded="false">
         <span class="material-symbols-rounded" aria-hidden="true">dashboard_customize</span>
       </button>
-      <div class="cw-hub-layout-actions" aria-label="Sync Hub tools actions">
-        <button type="button" class="iconbtn cw-hub-refresh-proxy" title="Re-check status" aria-label="Refresh status"></button>
-        <button type="button" class="iconbtn cw-hub-unhide-all" data-layout-action="show-all" title="No hidden blocks" aria-label="Unhide all blocks" disabled>
+      <div class="cw-hub-layout-actions" aria-label="${TH("dashboard.layout.toolsActions")}">
+        <button type="button" class="iconbtn cw-hub-refresh-proxy" title="${TH("dashboard.status.recheck")}" aria-label="${TH("dashboard.status.refresh")}"></button>
+        <button type="button" class="iconbtn cw-hub-unhide-all" data-layout-action="show-all" title="${TH("dashboard.layout.noHidden")}" aria-label="${TH("dashboard.layout.unhideAll")}" disabled>
           <span class="material-symbols-rounded" aria-hidden="true">visibility</span>
         </button>
       </div>
-      <span class="cw-hub-refresh-status" role="status" hidden>Checking providers…</span>
+      <span class="cw-hub-refresh-status" role="status" hidden>${TH("dashboard.status.checkingEllipsis")}</span>
     `;
     actions.insertBefore(wrap, refreshBtn || null);
     hubLayoutHost = wrap;
@@ -402,7 +404,7 @@
       return node;
     };
     const controls = Object.assign(document.createElement("div"), { className: "lane-controls" });
-    const drag = iconButton("drag_indicator", `Drag to reorder ${feat.label}`, "lane-drag");
+    const drag = iconButton("drag_indicator", T("dashboard.layout.dragLane", { name: feat.label }), "lane-drag");
     drag.setAttribute("draggable", "true");
     drag.addEventListener("dragstart", (ev) => {
       dragLaneKey = feat.key;
@@ -419,9 +421,9 @@
     });
 
     const size = feat.layout.size === "large" ? "small" : "large";
-    const resize = iconButton(feat.layout.size === "large" ? "view_compact" : "view_agenda", `Make ${feat.label} ${size}`);
+    const resize = iconButton(feat.layout.size === "large" ? "view_compact" : "view_agenda", T(size === "large" ? "dashboard.layout.makeLarge" : "dashboard.layout.makeSmall", { name: feat.label }));
     resize.addEventListener("click", (ev) => { ev.stopPropagation(); patchLayout(feat.key, { size }); });
-    const hide = iconButton("visibility_off", `Hide ${feat.label}`);
+    const hide = iconButton("visibility_off", T("dashboard.layout.hideLane", { name: feat.label }));
     hide.addEventListener("click", (ev) => { ev.stopPropagation(); patchLayout(feat.key, { hidden: true }); });
     controls.append(drag, resize, hide);
     return controls;
@@ -479,14 +481,14 @@
 
       const chipState = laneState(feat.key);
       const header = Object.assign(document.createElement("div"), { className: "lane-h" });
-      header.innerHTML = `<div class="lane-ico"><span class="material-symbols-rounded material-symbol" aria-hidden="true">${feat.icon}</span></div><div class="lane-title">${feat.label}</div><div class="lane-badges">${enabled && total ? `<span class="delta"><b>${fmtDelta(added, removed, updated)}</b></span>` : ""}<span class="chip ${chipState}">${!enabled ? "Disabled" : chipState === "err" ? "Failed" : chipState === "ok" ? "Synced" : chipState === "run" ? "Running" : "Skipped"}</span></div>`;
+      header.innerHTML = `<div class="lane-ico"><span class="material-symbols-rounded material-symbol" aria-hidden="true">${feat.icon}</span></div><div class="lane-title">${feat.label}</div><div class="lane-badges">${enabled && total ? `<span class="delta"><b>${fmtDelta(added, removed, updated)}</b></span>` : ""}<span class="chip ${chipState}">${TH(!enabled ? "dashboard.main.disabled" : chipState === "err" ? "dashboard.main.failed" : chipState === "ok" ? "dashboard.main.synced" : chipState === "run" ? "dashboard.main.running" : "dashboard.main.skipped")}</span></div>`;
       if (!summaryVisible()) {
         header.querySelector(".delta")?.remove();
         const chip = header.querySelector(".lane-badges .chip");
-        if (chip) { chip.className = "chip skip"; chip.textContent = summary ? "Unavailable" : "Loading"; }
+        if (chip) { chip.className = "chip skip"; chip.textContent = summary ? T("common.status.unavailable") : T("common.status.loadingShort"); }
       } else if (summary?.waiting) {
         const chip = header.querySelector(".lane-badges .chip");
-        if (chip) { chip.className = "chip skip"; chip.textContent = "Waiting"; }
+        if (chip) { chip.className = "chip skip"; chip.textContent = T("dashboard.sync.waiting"); }
       }
       header.appendChild(createLaneControls(feat));
       lane.appendChild(header);
@@ -500,11 +502,11 @@
 
       const cappedTotal = Math.min(25, total);
       if (!enabled || !cappedTotal || !spots.length) {
-        let emptyText = "Awaiting results…";
-        if (!summaryVisible()) emptyText = summary ? "Item details are unavailable for this run." : "Loading sync results…";
-        else if (!enabled) emptyText = "Feature not configured";
+        let emptyText = T("dashboard.lanes.awaiting");
+        if (!summaryVisible()) emptyText = summary ? T("dashboard.lanes.noDetails") : T("dashboard.lanes.loading");
+        else if (!enabled) emptyText = T("dashboard.lanes.notConfigured");
         else if (cappedTotal > 0) emptyText = updated && !added && !removed ? `${updated} updated` : `${cappedTotal} change${cappedTotal === 1 ? "" : "s"}`;
-        else if (sync.state().timeline.done) emptyText = "No changes";
+        else if (sync.state().timeline.done) emptyText = T("dashboard.lanes.noChanges");
         body.appendChild(Object.assign(document.createElement("div"), { className: "spot muted small", textContent: emptyText }));
       } else {
         let lastRow = null;
@@ -514,7 +516,7 @@
         }
         const moreCount = Math.max(0, cappedTotal - Math.min(Math.min(3, cappedTotal), spots.length));
         if (moreCount > 0 && lastRow) {
-          const more = Object.assign(document.createElement("span"), { className: "chip more", textContent: `+${moreCount} more`, title: "Show recent items" });
+          const more = Object.assign(document.createElement("span"), { className: "chip more", textContent: T("dashboard.spots.more", { count: moreCount }), title: T("dashboard.spots.showRecent") });
           more.style.marginLeft = "auto";
           more.addEventListener("click", (ev) => {
             ev.stopPropagation();
@@ -666,12 +668,12 @@
     if (btn) {
       btn.setAttribute("aria-busy", running ? "true" : "false");
       btn.classList.toggle("glass", !!running);
-      btn.title = running ? "Synchronization running…" : "Run synchronization";
+      btn.title = running ? T("dashboard.sync.runningTitle") : T("dashboard.sync.runTitle");
     }
     safe(window.recomputeRunDisabled);
     if (btn && (sync.isWaiting?.() || (sync.isRunBusy?.() && !sync.isRunning()))) {
       btn.disabled = true;
-      btn.title = sync.isWaiting?.() ? "Waiting for your sync pairs" : "Synchronization is already running";
+      btn.title = sync.isWaiting?.() ? T("dashboard.sync.waitingPairs") : T("dashboard.sync.alreadyRunning");
     }
   };
 
@@ -1022,13 +1024,13 @@
     root.className = "hidden";
     root.innerHTML = `
       <div class="cw-qa-shell cw-qa-desktop">
-        <button type="button" class="cw-qa-tab" aria-label="Quick add a movie or show" title="Quick add">
+        <button type="button" class="cw-qa-tab" aria-label="${TH("dashboard.quickAdd.tabLabel")}" title="${TH("dashboard.quickAdd.title")}">
           <span class="cw-qa-plus material-symbols-rounded" aria-hidden="true">add</span>
-          <span class="cw-qa-tab-text"><strong>Quick add</strong><small>Movies &amp; shows</small></span>
+          <span class="cw-qa-tab-text"><strong>${TH("dashboard.quickAdd.title")}</strong><small>${TH("dashboard.quickAdd.subtitle")}</small></span>
         </button>
-        <button type="button" class="cw-qa-grip" aria-label="Move Quick add up or down" title="Drag to move, or use the arrow keys"><span class="material-symbols-rounded" aria-hidden="true">drag_indicator</span></button>
+        <button type="button" class="cw-qa-grip" aria-label="${TH("dashboard.quickAdd.moveLabel")}" title="${TH("dashboard.quickAdd.moveHint")}"><span class="material-symbols-rounded" aria-hidden="true">drag_indicator</span></button>
       </div>
-      <button type="button" class="cw-qa-shell cw-qa-fab" aria-label="Quick Add item" title="Click to Quick Add, drag to move">
+      <button type="button" class="cw-qa-shell cw-qa-fab" aria-label="${TH("dashboard.quickAdd.fabLabel")}" title="${TH("dashboard.quickAdd.fabHint")}">
         <span class="cw-qa-plus material-symbols-rounded" aria-hidden="true">add</span>
       </button>
     `;

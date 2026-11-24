@@ -3,6 +3,8 @@
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 
 (() => {
+  const T = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.t?.(key, vars) ?? key;
+  const TH = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.html?.(key, vars) ?? key;
   if (window.CW?.NotificationFeed) return;
   const url = "/api/profile/notifications";
   let timer, controller, last = null, delay = 10000;
@@ -30,13 +32,13 @@
       const response = await fetch(`${url}?profile=${encodeURIComponent(context.scope)}&view_profile=${encodeURIComponent(viewProfile())}`,
         {credentials: "same-origin", cache: "no-store", signal: request.signal});
       if ([401, 403].includes(response.status)) { allowed = false; deliver({ok: false, denied: true, items: []}, context); return; }
-      if (!response.ok) throw new Error("Notifications unavailable");
+      if (!response.ok) throw new Error(T("common.notifications.unavailable"));
       const data = await response.json();
       if (request.signal.aborted) return;
       delay = Math.max(2, Number(data?.poll) || 10) * 1000;
       deliver(data, context);
     } catch {
-      if (!request.signal.aborted) deliver({ok: false, items: null, errors: ["Could not load notifications."]}, {user: user(), scope: scope()});
+      if (!request.signal.aborted) deliver({ok: false, items: null, errors: [T("common.notifications.loadFailed")]}, {user: user(), scope: scope()});
     } finally {
       if (controller === request) {
         controller = null;

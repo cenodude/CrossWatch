@@ -3,6 +3,8 @@
 (function () {
   const NS = (window.CW ||= {});
   const Editor = (NS.Editor ||= {});
+  const T = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.t?.(key, vars) ?? key;
+  const TH = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.html?.(key, vars) ?? key;
 
   function call(ctx, name, ...args) {
     const fn = ctx && ctx[name];
@@ -61,14 +63,14 @@
         chip.appendChild(text);
       }
       if (entry) {
-        chip.title = [unverified ? `Sent to ${name}` : `On ${name}`, entry[1] > 1 ? `${entry[1]} entries` : "", entry[2] != null ? String(entry[2]) : ""].filter(Boolean).join(" · ")
-          + (unverified ? ". Not validated, missing sync pair." : "");
+        chip.title = [unverified ? T("editor.table.sentTo", {name}) : T("editor.table.on", {name}), entry[1] > 1 ? T("editor.table.entries", {count: entry[1]}) : "", entry[2] != null ? String(entry[2]) : ""].filter(Boolean).join(" · ")
+          + (unverified ? `. ${T("editor.table.notValidated")}` : "");
         chip.setAttribute("role", "img");
         chip.setAttribute("aria-label", chip.title);
       } else {
         chip.type = "button";
         chip.id = `cw-editor-destination-${row._rid}-${index}`;
-        chip.title = `Not on ${name}. Click to send it there.`;
+        chip.title = T("editor.table.notOn", {name});
         chip.setAttribute("aria-label", chip.title);
         chip.onclick = () => call(ctx, "sendRow", row, target);
       }
@@ -83,9 +85,9 @@
       toggle.setAttribute("aria-controls", missing.map(chip => chip.id).join(" "));
       const sync = () => {
         const expanded = wrap.classList.contains("cw-presence-expanded");
-        toggle.textContent = expanded ? "Less" : `+${missing.length}`;
+        toggle.textContent = expanded ? T("editor.table.less") : `+${missing.length}`;
         toggle.setAttribute("aria-expanded", String(expanded));
-        toggle.setAttribute("aria-label", `${toggle.textContent}, ${expanded ? "hide" : "show"} ${missing.length} destinations for ${row.title || row.key}`);
+        toggle.setAttribute("aria-label", `${toggle.textContent}, ${T(expanded ? "editor.table.hideDestinations" : "editor.table.showDestinations", {count: missing.length, name: row.title || row.key})}`);
       };
       toggle.onclick = () => {
         wrap.classList.toggle("cw-presence-expanded");
@@ -104,28 +106,28 @@
     for (const group of row._episodeGroups || []) {
       const badge = document.createElement(group.can_edit ? "button" : "span");
       badge.className = "cw-presence-chip cw-episode-group-badge";
-      badge.textContent = "Episode group";
+      badge.textContent = T("editor.table.episodeGroup");
       const sides = ["source", "target"].map(side => {
         const value = group[side];
         const codes = value.episodes.map(item => `S${String(item.season).padStart(2, "0")}E${String(item.episode).padStart(2, "0")}`).join(", ");
         return `${value.provider} (${value.instance}): ${codes}`;
       });
-      badge.title = [group.name, group.pair_name, ...sides, `Completed scrobbles: ${group.scrobble ? "On" : "Off"}`].join("\n");
-      badge.setAttribute("aria-label", `Episode group: ${badge.title}`);
+      badge.title = [group.name, group.pair_name, ...sides, T(group.scrobble ? "editor.table.scrobblesOn" : "editor.table.scrobblesOff")].join("\n");
+      badge.setAttribute("aria-label", T("editor.table.groupLabel", {title: badge.title}));
       if (group.can_edit) {
         badge.type = "button";
         badge.setAttribute("aria-haspopup", "dialog");
         badge.onclick = async () => {
           const state = ctx.state || {};
           if (state.hasChanges || state.saving || state.loading || state.mappingEditing) {
-            call(ctx, "setStatus", "Save or discard Editor changes before editing episode groups.");
+            call(ctx, "setStatus", T("editor.table.saveFirst"));
             return;
           }
           try {
             const {openEpisodeGroups} = await import(`/assets/js/editor/episode-groups.js?v=${encodeURIComponent(window.APP_VERSION || "1")}`);
             await openEpisodeGroups(badge, {pairId:group.pair_id, groupId:group.id, onSaved:() => call(ctx, "loadState")});
           } catch (error) {
-            call(ctx, "setStatus", error.message || "Could not open episode group.");
+            call(ctx, "setStatus", error.message || T("editor.table.groupFailed"));
           }
         };
       } else {
@@ -140,8 +142,8 @@
     if (kind !== "history" || !rows.some(row => row.raw?._plex_cloud_history === true)) return null;
     const source = document.createElement("div");
     source.className = "cw-title-sub";
-    source.textContent = "Source: Plex cloud history";
-    source.title = "Read from Plex account history. This does not confirm presence in a Plex server library.";
+    source.textContent = T("editor.table.plexCloud");
+    source.title = T("editor.table.plexCloudTitle");
     return source;
   }
 
@@ -160,7 +162,7 @@
     selCb.type = "checkbox";
     selCb.name = fieldName("selected");
     selCb.className = "cw-checkbox";
-    selCb.setAttribute("aria-label", `Select ${row.title || row.key || "row"}`);
+    selCb.setAttribute("aria-label", T("editor.table.select", {name: row.title || row.key || T("editor.table.row")}));
     selCb.checked = (state.selected || new Set()).has(row._rid);
     selCb.onchange = () => {
       if (!state.selected) state.selected = new Set();
@@ -181,9 +183,9 @@
     delBtn.innerHTML = `<span class="material-symbol">${blockMode ? "block" : "delete"}</span>`;
     delBtn.title = blockMode
       ? (baselineRow
-          ? (row.deleted ? "Restore for future syncs" : "Block from future syncs")
-          : (row.deleted ? "Restore row" : "Remove manual correction"))
-      : (row.deleted ? "Restore row" : "Delete row");
+          ? (row.deleted ? T("editor.table.restoreFuture") : T("editor.table.blockFuture"))
+          : (row.deleted ? T("editor.table.restoreRow") : T("editor.table.removeCorrection")))
+      : (row.deleted ? T("editor.table.restoreRow") : T("editor.table.deleteRow"));
     delBtn.setAttribute("aria-label", delBtn.title);
     delBtn.onclick = () => {
       row.deleted = !row.deleted;
@@ -202,7 +204,7 @@
       sendBtn.type = "button";
       sendBtn.className = "cw-btn cw-btn-del cw-btn-send";
       sendBtn.innerHTML = '<span class="material-symbol">send</span>';
-      sendBtn.title = "Send to or remove from providers";
+      sendBtn.title = T("editor.table.send");
       sendBtn.setAttribute("aria-label", sendBtn.title);
       sendBtn.disabled = !!row.deleted;
       sendBtn.onclick = () => call(ctx, "sendRow", row);
@@ -212,8 +214,8 @@
       rawBtn.type = "button";
       rawBtn.className = "cw-btn cw-btn-del";
       rawBtn.innerHTML = '<span class="material-symbol">database</span>';
-      rawBtn.title = "Record details";
-      rawBtn.setAttribute("aria-label", "Record details");
+      rawBtn.title = T("editor.table.details");
+      rawBtn.setAttribute("aria-label", T("editor.table.details"));
       rawBtn.onclick = () => call(ctx, "openRawFieldsModal", row);
       actionWrap.appendChild(rawBtn);
     }
@@ -256,7 +258,7 @@
     mobileMeta.className = "cw-mobile-row-meta";
     titleCell.appendChild(mobileMeta);
     let mobileTitle;
-    const compactTitle = () => call(ctx, "formatEpisodeVisualTitle", row) || row.title || row.key || "Untitled";
+    const compactTitle = () => call(ctx, "formatEpisodeVisualTitle", row) || row.title || row.key || T("editor.table.untitled");
 
     const titleIn = document.createElement("input");
     titleIn.name = fieldName("title");
@@ -289,8 +291,8 @@
       const indicator = document.createElement("span");
       indicator.className = "material-symbols-rounded cw-mapping-indicator";
       indicator.textContent = "link";
-      indicator.title = row._mappingScope === "pair" ? "Mapping saved for this pair"
-        : state.mappingPair ? "Shared mapping inherited by this pair" : "Shared mapping for all pairs using this provider instance";
+      indicator.title = row._mappingScope === "pair" ? T("editor.table.pairMapping")
+        : state.mappingPair ? T("editor.table.inherited") : T("editor.table.sharedAll");
       indicator.setAttribute("role", "img");
       indicator.setAttribute("aria-label", indicator.title);
       titleRow.appendChild(indicator);
@@ -341,7 +343,7 @@
     const searchUsesCorrection = !!call(ctx, "canReplaceRow", row);
     searchBtn.className = searchUsesCorrection ? "cw-btn cw-btn-del cw-btn-map" : "cw-title-search-btn";
     searchBtn.innerHTML = `<span class="material-symbol" aria-hidden="true">${searchUsesCorrection ? "compare_arrows" : "search"}</span>`;
-    searchBtn.title = searchUsesCorrection ? "Edit mapping" : "Search and fill IDs";
+    searchBtn.title = searchUsesCorrection ? T("editor.table.editMapping") : T("editor.table.searchIds");
     searchBtn.setAttribute("aria-label", searchBtn.title);
     searchBtn.disabled = locked && !searchUsesCorrection;
     if (searchBtn.disabled) {
@@ -373,7 +375,7 @@
       originBtn.type = "button";
       originBtn.className = "cw-title-search-btn cw-btn-origin";
       originBtn.innerHTML = '<span class="material-symbol" aria-hidden="true">alt_route</span>';
-      originBtn.title = "Where does this come from?";
+      originBtn.title = T("editor.table.origin");
       originBtn.setAttribute("aria-label", originBtn.title);
       originBtn.onclick = () => call(ctx, "openItemOrigin", row, originBtn);
       titleRow.appendChild(originBtn);
@@ -446,9 +448,9 @@
       const td = dataCells[column];
       if (!td) return;
       td.dataset.column = column;
-      td.dataset.label = ({key: 'Key', type: 'Type', title: 'Title', year: 'Year',
+      td.dataset.label = ({key: T('editor.table.col.key'), type: T('editor.rowType.type'), title: T('editor.meta.titleField'), year: T('editor.meta.year'),
         id: anilistMode ? 'MAL' : 'TMDB', imdb: 'IMDb', tvdb: 'TVDB', trakt: 'Trakt',
-        simkl: 'SIMKL', anilist: 'AniList', status: 'Status', extra: call(ctx, 'columnLabel', 'extra') || 'Extra'})[column];
+        simkl: 'SIMKL', anilist: 'AniList', status: T('editor.table.col.status'), extra: call(ctx, 'columnLabel', 'extra') || T('editor.table.col.extra')})[column];
       td.querySelectorAll('input,button').forEach(control => {
         if (!control.hasAttribute('aria-label')) control.setAttribute('aria-label', td.dataset.label);
       });
@@ -464,7 +466,7 @@
       tr.classList.toggle("cw-mobile-fields-open", expanded);
       fieldsToggle.setAttribute("aria-expanded", String(expanded));
       fieldsToggle.innerHTML = `<span class="material-symbol" aria-hidden="true">${expanded ? 'check' : 'edit'}</span>`;
-      fieldsToggle.setAttribute("aria-label", `${expanded ? "Hide" : "Show"} fields for ${row.title || row.key || "row"}`);
+      fieldsToggle.setAttribute("aria-label", T(expanded ? "editor.table.hideFields" : "editor.table.showFields", {name: row.title || row.key || T("editor.table.row")}));
     };
     fieldsToggle.onclick = () => {
       if (expandedRows.has(row._rid)) expandedRows.delete(row._rid);
@@ -506,7 +508,7 @@
     selCb.className = "cw-checkbox";
     selCb.checked = picked === rows.length;
     selCb.indeterminate = picked > 0 && picked < rows.length;
-    selCb.title = "Select every watch of this title";
+    selCb.title = T("editor.table.selectWatches");
     selCb.setAttribute("aria-label", selCb.title);
     selCb.onchange = () => {
       if (!state.selected) state.selected = new Set();
@@ -527,7 +529,7 @@
     toggle.type = "button";
     toggle.className = "cw-btn cw-btn-del cw-viewing-toggle";
     toggle.innerHTML = `<span class="material-symbol">${expanded ? "expand_less" : "expand_more"}</span>`;
-    toggle.title = expanded ? "Hide watches" : "Show watches";
+    toggle.title = expanded ? T("editor.table.hideWatches") : T("editor.table.showWatches");
     toggle.setAttribute("aria-label", toggle.title);
     toggle.setAttribute("aria-expanded", expanded ? "true" : "false");
     toggle.onclick = () => {
@@ -559,7 +561,7 @@
     }
     const count = document.createElement("span");
     count.className = "cw-viewing-count";
-    count.textContent = `${rows.length} watches`;
+    count.textContent = T("editor.table.watches", {count: rows.length});
     summary.appendChild(count);
     const last = document.createElement("span");
     last.className = "cw-viewing-latest";

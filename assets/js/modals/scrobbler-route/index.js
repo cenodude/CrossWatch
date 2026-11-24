@@ -1,5 +1,7 @@
 /* CrossWatch - Scrobbler Route Modal */
 import { createIdentityMap, identityMapSupported } from "../core/identity-map.js";
+const T = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.t?.(key, vars) ?? key;
+const TH = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.html?.(key, vars) ?? key;
 const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const label = (v) => ({ plex: "Plex", jellyfin: "Jellyfin", emby: "Emby", kodi: "Kodi", trakt: "Trakt", simkl: "SIMKL", mdblist: "MDBList", crosswatch: "CrossWatch", floppy: "Floppy", punchplay: "PunchPlay", bingebase: "BingeBase", flicklist: "FlickList", wetrakr: "WeTrakr", anilist: "AniList", myanimelist: "MyAnimeList", kitsu: "Kitsu", scrob: "Scrob", stremio: "Stremio", silo: "Silo", tofa: "Tofa" }[String(v || "").toLowerCase()] || String(v || "").toUpperCase());
 const sources = ["plex", "jellyfin", "emby", "kodi", "scrob", "stremio", "silo", "tofa"];
@@ -165,7 +167,7 @@ function optionsForProfiles(provider, selected, kind) {
   const selectedExists = list.some((p) => p.instance === current);
   const missing = current && !selectedExists ? `<option value="${esc(current)}" selected disabled>${esc(profileLabel(provider, current, kind))} (not configured)</option>` : "";
   const options = list.map((p) => `<option value="${esc(p.instance)}" title="${esc(p.instance)}" ${p.instance === current ? "selected" : ""}>${esc(profileOptionLabel(p))}</option>`).join("");
-  return missing + options || `<option value="">No configured instance</option>`;
+  return missing + options || `<option value="">${TH("scrobbler.routeModal.noInstance")}</option>`;
 }
 
 function optionsForProviders(kind, selected, source = "") {
@@ -173,7 +175,7 @@ function optionsForProviders(kind, selected, source = "") {
   const list = (kind === "source" ? sourceProviders(current) : sinkProviders(current, source))
     .sort((a, b) => label(a).localeCompare(label(b), undefined, { sensitivity: "base", numeric: true }));
   const configured = kind === "source" ? allSourceProfiles : allSinkProfiles;
-  const empty = kind === "source" ? "No configured source provider" : "No configured destination provider";
+  const empty = kind === "source" ? T("scrobbler.routeModal.noSource") : T("scrobbler.routeModal.noDestination");
   if (!list.length) return `<option value="">${empty}</option>`;
   return list.map((p) => {
     const unavailable = !configured(p).length;
@@ -194,7 +196,7 @@ function profileOptionLabel(profile) {
 
 function profileName(instance) {
   const value = String(instance || "").trim();
-  if (!value || value === "default") return "Default";
+  if (!value || value === "default") return T("scrobbler.routeModal.default");
   return value;
 }
 
@@ -203,7 +205,7 @@ function userProfileField() {
   if (!current) return "";
   const profile = userProfiles.find((p) => p.id === current);
   if (!profile || !profileCanOwnRoute(profile, draft || {})) return "";
-  return `<div class="scrm-profile-row">${fieldIcon("account_circle", "Assigned profile", `<div class="scrm-profile-display" aria-label="Assigned profile"><span>${esc(profile.label)}</span></div>`)}</div>`;
+  return `<div class="scrm-profile-row">${fieldIcon("account_circle", T("scrobbler.routeModal.assignedProfile"), `<div class="scrm-profile-display" aria-label="${TH("scrobbler.routeModal.assignedProfile")}"><span>${esc(profile.label)}</span></div>`)}</div>`;
 }
 
 function profileInstanceValues(profile, provider) {
@@ -275,9 +277,9 @@ function modalAttrs(provider) {
 }
 
 function routeTitle(r) {
-  if (props.mode === "create") return "Add Watcher route";
-  if (props.mode === "delete") return "Delete Watcher route";
-  return "Edit Watcher route";
+  if (props.mode === "create") return T("scrobbler.routeModal.add");
+  if (props.mode === "delete") return T("scrobbler.routeModal.delete");
+  return T("scrobbler.routeModal.edit");
 }
 
 function listText(values) {
@@ -312,7 +314,7 @@ async function pickUser(btn, keepTab = currentActiveTab()) {
     provider: currentProvider(),
     instance: currentProviderInstance(),
     anchorEl: btn,
-    title: `Pick ${label(currentProvider())} user`,
+    title: T("scrobbler.routeModal.pickUser", {provider: label(currentProvider())}),
     overlay: false,
     onPick: (user) => appendListValue("scr-users", user.name || user.id),
   });
@@ -326,7 +328,7 @@ async function fetchServerUuid(targetId, btn, keepTab = currentActiveTab()) {
   const old = labelEl?.textContent;
   if (btn) {
     btn.disabled = true;
-    if (labelEl) labelEl.textContent = "Fetching";
+    if (labelEl) labelEl.textContent = T("scrobbler.routeModal.fetching");
   }
   try {
     const res = await fetch(`/api/plex/server_uuid?instance=${encodeURIComponent(currentProviderInstance())}`, { cache: "no-store", credentials: "same-origin" });
@@ -336,12 +338,12 @@ async function fetchServerUuid(targetId, btn, keepTab = currentActiveTab()) {
     preserveVisiblePanel(keepTab);
   } catch (err) {
     syncDraftFromDom();
-    render([{ message: err.message || "Could not fetch Plex server UUID." }]);
+    render([{ message: err.message || T("scrobbler.routeModal.uuidFailed") }]);
     preserveVisiblePanel(keepTab);
   } finally {
     if (btn && root?.contains(btn)) {
       btn.disabled = false;
-      if (labelEl) labelEl.textContent = old || "Fetch";
+      if (labelEl) labelEl.textContent = old || T("scrobbler.routeModal.fetch");
     }
   }
 }
@@ -362,7 +364,7 @@ function field(labelText, html, extra = "", helpText = "") {
 function journeyHelp(key) {
   const url = window.CW?.HelpLinks?.url?.(key) || "";
   if (!url) return "";
-  return `<a class="scrm-journey-help" href="${esc(url)}" target="_blank" rel="noopener noreferrer" aria-label="Open guide" title="Open guide"><span class="material-symbols-rounded" aria-hidden="true">help</span></a>`;
+  return `<a class="scrm-journey-help" href="${esc(url)}" target="_blank" rel="noopener noreferrer" aria-label="${TH("scrobbler.routeModal.openGuide")}" title="${TH("scrobbler.routeModal.openGuide")}"><span class="material-symbols-rounded" aria-hidden="true">help</span></a>`;
 }
 
 function fieldIcon(icon, labelText, html) {
@@ -374,24 +376,24 @@ function routePanel(r) {
     <section class="scrm-panel ${activeTab === "route" ? "active" : ""}" data-panel="route">
       <div class="scrm-journey">
         <span class="material-symbols-rounded scrm-journey-icon">route</span>
-        <div><strong>Choose the source, then send it to a tracker</strong><p>Watcher routes listen to one configured media instance and forward matching play events to one configured destination instance.</p></div>
+        <div><strong>${TH("scrobbler.routeModal.chooseSource")}</strong><p>${TH("scrobbler.routeModal.chooseSourceHint")}</p></div>
         ${journeyHelp("scrobbler-watcher")}
       </div>
       ${userProfileField()}
       <div class="scrm-route-grid">
         <div ${providerCardAttrs(r.provider)}>
-          <div class="scrm-card-head"><span class="scrm-provider-mark">${providerIcon(r.provider)}</span><div><strong>Source</strong><small>${esc(label(r.provider))}</small></div></div>
+          <div class="scrm-card-head"><span class="scrm-provider-mark">${providerIcon(r.provider)}</span><div><strong>${TH("scrobbler.routeModal.source")}</strong><small>${esc(label(r.provider))}</small></div></div>
           <div class="scrm-fields">
-            ${fieldIcon("dns", "Provider", `<select class="input" id="scr-provider">${optionsForProviders("source", r.provider)}</select>`)}
-            ${fieldIcon("badge", "Profile", `<select class="input" id="scr-provider-instance">${optionsForProfiles(r.provider, r.provider_instance, "source")}</select>`)}
+            ${fieldIcon("dns", T("scrobbler.routeModal.provider"), `<select class="input" id="scr-provider">${optionsForProviders("source", r.provider)}</select>`)}
+            ${fieldIcon("badge", T("scrobbler.routeModal.profile"), `<select class="input" id="scr-provider-instance">${optionsForProfiles(r.provider, r.provider_instance, "source")}</select>`)}
           </div>
         </div>
         <div class="scrm-route-arrow"><span class="material-symbols-rounded">arrow_forward</span></div>
         <div ${providerCardAttrs(r.sink)}>
-          <div class="scrm-card-head"><span class="scrm-provider-mark">${providerIcon(r.sink)}</span><div><strong>Destination</strong><small>${esc(label(r.sink))}</small></div></div>
+          <div class="scrm-card-head"><span class="scrm-provider-mark">${providerIcon(r.sink)}</span><div><strong>${TH("scrobbler.routeModal.destination")}</strong><small>${esc(label(r.sink))}</small></div></div>
           <div class="scrm-fields">
-            ${fieldIcon("gps_fixed", "Provider", `<select class="input" id="scr-sink">${optionsForProviders("sink", r.sink, r.provider)}</select>`)}
-            ${fieldIcon("badge", "Profile", `<select class="input" id="scr-sink-instance">${optionsForProfiles(r.sink, r.sink_instance, "sink")}</select>`)}
+            ${fieldIcon("gps_fixed", T("scrobbler.routeModal.provider"), `<select class="input" id="scr-sink">${optionsForProviders("sink", r.sink, r.provider)}</select>`)}
+            ${fieldIcon("badge", T("scrobbler.routeModal.profile"), `<select class="input" id="scr-sink-instance">${optionsForProfiles(r.sink, r.sink_instance, "sink")}</select>`)}
           </div>
         </div>
       </div>
@@ -403,7 +405,7 @@ function routePanel(r) {
 async function addFilterEntry(id, addLabel) {
   const ta = root?.querySelector(`#${id}`);
   if (!ta) return;
-  const val = ((await (window.CW?.MobileUI?.prompt || window.prompt)(`Add ${addLabel}`)) || "").trim();
+  const val = ((await (window.CW?.MobileUI?.prompt || window.prompt)(T("scrobbler.routeModal.addPrompt", {what: addLabel}))) || "").trim();
   if (val) {
     const lines = ta.value.split("\n").map((s) => s.trim()).filter(Boolean);
     if (!lines.some((l) => l.toLowerCase() === val.toLowerCase())) lines.push(val);
@@ -425,7 +427,7 @@ function filterRow(o) {
       <div class="scrm-filter-tools">
         <button type="button" class="scwm-filter-icon material-symbols-rounded" data-add-filter="${o.id}" data-add-label="${esc(addLabel)}" title="Add ${esc(addLabel)}" aria-label="Add ${esc(addLabel)}">add</button>
         ${action}
-        <button type="button" class="scwm-filter-icon material-symbols-rounded" data-clear-filter="${o.id}" title="Clear" aria-label="Clear">close</button>
+        <button type="button" class="scwm-filter-icon material-symbols-rounded" data-clear-filter="${o.id}" title="${TH("scrobbler.routeModal.clear")}" aria-label="${TH("scrobbler.routeModal.clear")}">close</button>
       </div>
     </div>`;
 }
@@ -442,8 +444,8 @@ function mountIdentityMap(r) {
     target: r.sink,
     targetInstance: r.sink_instance,
     exclude: props.mode !== "create" && r.id ? `route:${r.id}` : "",
-    intro: `Send each person's plays to their own identity on ${label(r.sink)}.`,
-    note: "Linked identities replace the user filter of this route.",
+    intro: T("scrobbler.routeModal.identityIntro", {provider: label(r.sink)}),
+    note: T("scrobbler.routeModal.identityNote"),
     enabled: !!r.match_users,
     mapping: r.user_matches || {},
     onChange: (v) => {
@@ -457,25 +459,25 @@ function mountIdentityMap(r) {
 function filtersPanel(r, f) {
   const isPlex = r.provider === "plex";
   const isStremio = r.provider === "stremio";
-  const rows = isStremio ? [] : [filterRow({ title: "Username whitelist", subtitle: "Only events from these usernames will be scrobbled.", id: "scr-users", value: listText(f.username_whitelist), placeholder: "One username per line", addLabel: "username", actionAttr: "data-pick-user", actionIcon: "person_search", actionTitle: "Find users" })];
+  const rows = isStremio ? [] : [filterRow({ title: T("scrobbler.routeModal.userWhitelist"), subtitle: T("scrobbler.routeModal.userWhitelistHint"), id: "scr-users", value: listText(f.username_whitelist), placeholder: T("scrobbler.routeModal.oneUsername"), addLabel: T("scrobbler.routeModal.what.username"), actionAttr: "data-pick-user", actionIcon: "person_search", actionTitle: T("scrobbler.routeModal.findUsers") })];
   if (isPlex) {
-    rows.push(filterRow({ title: "Server UUID allowlist", subtitle: "Control which servers are allowed.", id: "scr-allow", value: listText(f.server_uuid_whitelist || (f.server_uuid ? [f.server_uuid] : [])), placeholder: "One server UUID per line", dot: "scrm-dot-allow", addLabel: "server UUID", actionAttr: `data-fetch-uuid="scr-allow"`, actionIcon: "search", actionTitle: "Fetch server UUID" }));
-    rows.push(filterRow({ title: "Server UUID blocklist", subtitle: "Control which servers are blocked.", id: "scr-block", value: listText(f.server_uuid_blacklist), placeholder: "One server UUID per line", dot: "scrm-dot-block", addLabel: "server UUID", actionAttr: `data-fetch-uuid="scr-block"`, actionIcon: "search", actionTitle: "Fetch server UUID" }));
+    rows.push(filterRow({ title: T("scrobbler.routeModal.uuidAllow"), subtitle: T("scrobbler.routeModal.uuidAllowHint"), id: "scr-allow", value: listText(f.server_uuid_whitelist || (f.server_uuid ? [f.server_uuid] : [])), placeholder: T("scrobbler.routeModal.oneUuid"), dot: "scrm-dot-allow", addLabel: T("scrobbler.routeModal.what.uuid"), actionAttr: `data-fetch-uuid="scr-allow"`, actionIcon: "search", actionTitle: T("scrobbler.routeModal.fetchUuid") }));
+    rows.push(filterRow({ title: T("scrobbler.routeModal.uuidBlock"), subtitle: T("scrobbler.routeModal.uuidBlockHint"), id: "scr-block", value: listText(f.server_uuid_blacklist), placeholder: T("scrobbler.routeModal.oneUuid"), dot: "scrm-dot-block", addLabel: T("scrobbler.routeModal.what.uuid"), actionAttr: `data-fetch-uuid="scr-block"`, actionIcon: "search", actionTitle: T("scrobbler.routeModal.fetchUuid") }));
   }
-  if (!isStremio) rows.push(filterRow({ title: "Ignored path prefixes", subtitle: "Skip media files under these placeholder folders.", id: "scr-ignore-paths", value: listText(f.ignored_path_prefixes), placeholder: "One path prefix per line", dot: "scrm-dot-block", addLabel: "path" }));
-  if (!isStremio) rows.push(filterRow({ title: "Ignored filename patterns", subtitle: "Skip media files whose filename contains these values.", id: "scr-ignore-patterns", value: listText(f.ignored_filename_patterns), placeholder: "{edition-Trailer}", dot: "scrm-dot-block", addLabel: "pattern" }));
-  if (!isStremio) rows.push(filterRow({ title: "Ignored editions", subtitle: "Skip media with these edition names.", id: "scr-ignore-editions", value: listText(f.ignored_editions), placeholder: "Trailer", dot: "scrm-dot-block", addLabel: "edition" }));
+  if (!isStremio) rows.push(filterRow({ title: T("scrobbler.routeModal.ignorePaths"), subtitle: T("scrobbler.routeModal.ignorePathsHint"), id: "scr-ignore-paths", value: listText(f.ignored_path_prefixes), placeholder: T("scrobbler.routeModal.onePath"), dot: "scrm-dot-block", addLabel: T("scrobbler.routeModal.what.path") }));
+  if (!isStremio) rows.push(filterRow({ title: T("scrobbler.routeModal.ignorePatterns"), subtitle: T("scrobbler.routeModal.ignorePatternsHint"), id: "scr-ignore-patterns", value: listText(f.ignored_filename_patterns), placeholder: "{edition-Trailer}", dot: "scrm-dot-block", addLabel: T("scrobbler.routeModal.what.pattern") }));
+  if (!isStremio) rows.push(filterRow({ title: T("scrobbler.routeModal.ignoreEditions"), subtitle: T("scrobbler.routeModal.ignoreEditionsHint"), id: "scr-ignore-editions", value: listText(f.ignored_editions), placeholder: "Trailer", dot: "scrm-dot-block", addLabel: T("scrobbler.routeModal.what.edition") }));
   const toggles = [
-    isStremio ? "" : `<label class="scrm-toggle-row"><span class="scrm-toggle-copy"><span class="material-symbols-rounded">movie_filter</span><span><strong>Ignore Agregarr placeholder trailers</strong><small>Skip files marked as Trailer editions or stored beside .comingsoon markers.</small></span></span><span class="scrm-switch"><input type="checkbox" id="scr-ignore-agregarr" ${f.ignore_agregarr_trailers ? "checked" : ""}><span class="scrm-switch-track"></span></span></label>`,
-    `<label class="scrm-toggle-row"><span class="scrm-toggle-copy"><span class="material-symbols-rounded">star</span><span><strong>Ignore specials (Season 0)</strong><small>Skip scrobbles for Season 0 / specials episodes.</small></span></span><span class="scrm-switch"><input type="checkbox" id="scr-ignore-specials" ${f.ignore_specials ? "checked" : ""}><span class="scrm-switch-track"></span></span></label>`,
+    isStremio ? "" : `<label class="scrm-toggle-row"><span class="scrm-toggle-copy"><span class="material-symbols-rounded">movie_filter</span><span><strong>${TH("scrobbler.routeModal.agregarr")}</strong><small>${TH("scrobbler.routeModal.agregarrHint")}</small></span></span><span class="scrm-switch"><input type="checkbox" id="scr-ignore-agregarr" ${f.ignore_agregarr_trailers ? "checked" : ""}><span class="scrm-switch-track"></span></span></label>`,
+    `<label class="scrm-toggle-row"><span class="scrm-toggle-copy"><span class="material-symbols-rounded">star</span><span><strong>${TH("scrobbler.routeModal.specials")}</strong><small>${TH("scrobbler.routeModal.specialsHint")}</small></span></span><span class="scrm-switch"><input type="checkbox" id="scr-ignore-specials" ${f.ignore_specials ? "checked" : ""}><span class="scrm-switch-track"></span></span></label>`,
   ];
-  if (isPlex) toggles.push(`<label class="scrm-toggle-row"><span class="scrm-toggle-copy"><span class="material-symbols-rounded">live_tv</span><span><strong>Ignore Plex Live TV &amp; DVR</strong><small>Skip scrobbles from live channels and DVR recordings.</small></span></span><span class="scrm-switch"><input type="checkbox" id="scr-live" ${f.ignore_live_tv_dvr !== false ? "checked" : ""}><span class="scrm-switch-track"></span></span></label>`);
-  if (r.provider === "jellyfin" || r.provider === "emby") toggles.push(`<label class="scrm-toggle-row"><span class="scrm-toggle-copy"><span class="material-symbols-rounded">live_tv</span><span><strong>Ignore Live TV</strong><small>Skip scrobbles from live TV channels and programs.</small></span></span><span class="scrm-switch"><input type="checkbox" id="scr-live" ${f.ignore_live_tv_dvr !== false ? "checked" : ""}><span class="scrm-switch-track"></span></span></label>`);
+  if (isPlex) toggles.push(`<label class="scrm-toggle-row"><span class="scrm-toggle-copy"><span class="material-symbols-rounded">live_tv</span><span><strong>${TH("scrobbler.routeModal.plexLive")}</strong><small>${TH("scrobbler.routeModal.plexLiveHint")}</small></span></span><span class="scrm-switch"><input type="checkbox" id="scr-live" ${f.ignore_live_tv_dvr !== false ? "checked" : ""}><span class="scrm-switch-track"></span></span></label>`);
+  if (r.provider === "jellyfin" || r.provider === "emby") toggles.push(`<label class="scrm-toggle-row"><span class="scrm-toggle-copy"><span class="material-symbols-rounded">live_tv</span><span><strong>${TH("scrobbler.routeModal.live")}</strong><small>${TH("scrobbler.routeModal.liveHint")}</small></span></span><span class="scrm-switch"><input type="checkbox" id="scr-live" ${f.ignore_live_tv_dvr !== false ? "checked" : ""}><span class="scrm-switch-track"></span></span></label>`);
   return `
     <section class="scrm-panel ${activeTab === "filters" ? "active" : ""}" data-panel="filters">
       <div class="scrm-journey scrm-journey-compact">
         <span class="material-symbols-rounded scrm-journey-icon">filter_alt</span>
-        <div><strong>Only scrobble the activity you want</strong><p>${isStremio ? "The Stremio add-on reports one account, so there is no user filter." : "Leave filters empty to accept every matching event from this source instance."}</p></div>
+        <div><strong>${TH("scrobbler.routeModal.onlyWanted")}</strong><p>${isStremio ? T("scrobbler.routeModal.stremioNoFilter") : T("scrobbler.routeModal.emptyFilters")}</p></div>
         ${journeyHelp("scrobbler-filters")}
       </div>
       <div class="scrm-filter-rows">${rows.join("")}</div>
@@ -495,10 +497,10 @@ function librariesPanel(r) {
     <section class="scrm-panel ${activeTab === "libraries" ? "active" : ""}" data-panel="libraries">
       <div class="scrm-journey scrm-journey-compact">
         <span class="material-symbols-rounded scrm-journey-icon">video_library</span>
-        <div><strong>${esc(label(r.sink))} libraries</strong><p>Only update items in the selected libraries. Leave empty to use the Whitelist libraries of ${esc(label(r.sink))} connection.</p></div>
+        <div><strong>${TH("scrobbler.routeModal.libraries", {provider: label(r.sink)})}</strong><p>${TH("scrobbler.routeModal.librariesHint", {provider: label(r.sink)})}</p></div>
       </div>
       <div id="scr-destination-libraries"></div>
-      ${["silo", "tofa"].includes(r.sink) ? "" : `<label class="scrm-toggle-row"><span class="scrm-toggle-copy"><span class="material-symbols-rounded">library_add_check</span><span><strong>Update all copies</strong><small>When the same title exists more than once, for example in a regular and a 4K library, update every copy instead of skipping.</small></span></span><span class="scrm-switch"><input type="checkbox" id="scr-update-all-copies" ${dest.update_all_copies === false ? "" : "checked"}><span class="scrm-switch-track"></span></span></label>`}
+      ${["silo", "tofa"].includes(r.sink) ? "" : `<label class="scrm-toggle-row"><span class="scrm-toggle-copy"><span class="material-symbols-rounded">library_add_check</span><span><strong>${TH("scrobbler.routeModal.allCopies")}</strong><small>${TH("scrobbler.routeModal.allCopiesHint")}</small></span></span><span class="scrm-switch"><input type="checkbox" id="scr-update-all-copies" ${dest.update_all_copies === false ? "" : "checked"}><span class="scrm-switch-track"></span></span></label>`}
     </section>
   `;
 }
@@ -525,25 +527,25 @@ function paintTofaRule() {
   if (!host || !data) return;
   if (!data.ok) {
     host.className = "scrm-note is-warn";
-    host.innerHTML = `<span class="material-symbols-rounded">warning</span><span>Could not read the Tofa watched rule for this profile.</span>`;
+    host.innerHTML = `<span class="material-symbols-rounded">warning</span><span>${TH("scrobbler.routeModal.tofa.readFailed")}</span>`;
     return;
   }
   const tofa = Number(data.percent);
   const route = routeWatchedThreshold();
-  const source = data.custom ? "this Tofa profile" : "the Tofa server default";
-  const credits = data.credits ? " or when the credits start" : "";
-  let detail = "This route uses the same threshold.";
-  if (route < tofa) detail = `This route sends watched at ${route}%, so items stopped between ${route}% and ${tofa}% count as watched on the destination but stay unwatched in Tofa.`;
-  else if (route > tofa) detail = `This route waits for ${route}%. When Tofa marks an item watched first, CrossWatch sends it as watched anyway.`;
+  const source = data.custom ? T("scrobbler.routeModal.tofa.profile") : T("scrobbler.routeModal.tofa.serverDefault");
+  const credits = data.credits ? ` ${T("scrobbler.routeModal.tofa.credits")}` : "";
+  let detail = T("scrobbler.routeModal.tofa.same");
+  if (route < tofa) detail = T("scrobbler.routeModal.tofa.lower", {route: String(route), tofa: String(tofa)});
+  else if (route > tofa) detail = T("scrobbler.routeModal.tofa.higher", {route: String(route)});
   const choices = Array.isArray(data.choices) ? data.choices.map(Number) : [];
   const apply = route !== tofa
     ? (choices.includes(route)
-      ? `<button type="button" class="btn small" data-tofa-apply="${esc(route)}" ${tofaRule.busy ? "disabled" : ""}>${tofaRule.busy ? "Applying..." : `Apply ${esc(route)}% to Tofa`}</button>`
-      : `<small>Tofa only offers ${esc(choices.join(", "))}%.</small>`)
+      ? `<button type="button" class="btn small" data-tofa-apply="${esc(route)}" ${tofaRule.busy ? "disabled" : ""}>${tofaRule.busy ? TH("scrobbler.routeModal.tofa.applying") : TH("scrobbler.routeModal.tofa.apply", {percent: String(route)})}</button>`
+      : `<small>${TH("scrobbler.routeModal.tofa.offers", {choices: choices.join(", ")})}</small>`)
     : "";
   host.className = `scrm-note ${route < tofa ? "is-warn" : ""}`.trim();
   const error = tofaRule.error ? ` <strong>${esc(tofaRule.error)}</strong>` : "";
-  host.innerHTML = `<span class="material-symbols-rounded">${route < tofa ? "warning" : "task_alt"}</span><span>Tofa marks items watched at <strong>${esc(tofa)}%</strong>${credits} (${source}). ${esc(detail)}${error} ${apply}</span>`;
+  host.innerHTML = `<span class="material-symbols-rounded">${route < tofa ? "warning" : "task_alt"}</span><span>${TH("scrobbler.routeModal.tofa.marks", {percent: String(tofa), credits, source})} ${esc(detail)}${error} ${apply}</span>`;
 }
 
 async function mountTofaRule() {
@@ -571,12 +573,12 @@ async function applyTofaRule(percent) {
     if (data?.ok) {
       tofaRule.data = data;
       tofaRule.error = "";
-      window.notify?.(`Tofa now marks items watched at ${data.percent}%`);
+      window.notify?.(T("scrobbler.routeModal.tofa.now", {percent: String(data.percent)}));
     } else {
-      tofaRule.error = "Tofa did not accept the new threshold.";
+      tofaRule.error = T("scrobbler.routeModal.tofa.rejected");
     }
   } catch {
-    tofaRule.error = "Could not reach Tofa to update the threshold.";
+    tofaRule.error = T("scrobbler.routeModal.tofa.unreachable");
   } finally {
     tofaRule.busy = false;
     paintTofaRule();
@@ -601,8 +603,8 @@ function mountDestinationTable() {
   const selected = () => new Set((ensureDraft().options.destination?.libraries || []).map(String));
   window.cwWhitelistTable.mount({
     host,
-    features: [{ key: "scr", label: "Scrobble", icon: "sensors", title: "Scrobbles from this route only update the selected libraries." }],
-    note: "Empty = use the connection History and Progress libraries.",
+    features: [{ key: "scr", label: T("scrobbler.routeModal.scrobble"), icon: "sensors", title: T("scrobbler.routeModal.libScopeHint") }],
+    note: T("scrobbler.routeModal.libEmpty"),
     getLibs: () => destinationLibraries.get(key) || [],
     isOn: (_feature, id) => selected().has(String(id)),
     selectedIds: () => [...selected()],
@@ -619,23 +621,23 @@ function mountDestinationTable() {
 
 function anilistMappingHint(animeGlobalOn) {
   return animeGlobalOn
-    ? `<div class="scrm-journey scrm-journey-compact"><span class="material-symbols-rounded scrm-journey-icon">animation</span><div><strong>AniList uses Anime ID Mapping</strong><p>Only watched stops update AniList progress. Titles the anime mapping cannot place are skipped.</p></div></div>`
-    : `<div class="scrm-journey scrm-journey-compact"><span class="material-symbols-rounded scrm-journey-icon">warning</span><div><strong>AniList needs Anime ID Mapping</strong><p>Enable global Anime ID Mapping first. Without it nothing is sent to AniList.</p></div></div>`;
+    ? `<div class="scrm-journey scrm-journey-compact"><span class="material-symbols-rounded scrm-journey-icon">animation</span><div><strong>${TH("scrobbler.routeModal.anilistUses")}</strong><p>${TH("scrobbler.routeModal.anilistUsesHint")}</p></div></div>`
+    : `<div class="scrm-journey scrm-journey-compact"><span class="material-symbols-rounded scrm-journey-icon">warning</span><div><strong>${TH("scrobbler.routeModal.anilistNeeds")}</strong><p>${TH("scrobbler.routeModal.anilistNeedsHint")}</p></div></div>`;
 }
 
 function optionsPanel(r) {
   const unresolvedFallback = r.provider === "plex"
-    ? `<label class="scrm-toggle-row"><span class="scrm-toggle-copy"><span class="material-symbols-rounded">person_alert</span><span><strong>Unresolved user fallback</strong><small>Use the configured Plex username when Plex omits the playback user and the session cannot be resolved.</small></span></span><span class="scrm-switch"><input type="checkbox" id="scr-unresolved-user-fallback" ${r.options.watch?.unresolved_user_fallback ? "checked" : ""}><span class="scrm-switch-track"></span></span></label>`
+    ? `<label class="scrm-toggle-row"><span class="scrm-toggle-copy"><span class="material-symbols-rounded">person_alert</span><span><strong>${TH("scrobbler.routeModal.userFallback")}</strong><small>${TH("scrobbler.routeModal.userFallbackHint")}</small></span></span><span class="scrm-switch"><input type="checkbox" id="scr-unresolved-user-fallback" ${r.options.watch?.unresolved_user_fallback ? "checked" : ""}><span class="scrm-switch-track"></span></span></label>`
     : "";
   const pkcSupport = r.provider === "plex"
-    ? `<label class="scrm-toggle-row"><span class="scrm-toggle-copy"><span class="material-symbols-rounded">connected_tv</span><span><strong>PlexKodiConnect support</strong><small>Merge the split stop sessions PlexKodiConnect creates for the server owner, so the stop keeps its user and item.</small></span></span><span class="scrm-switch"><input type="checkbox" id="scr-plexkodiconnect-support" ${r.options.watch?.plexkodiconnect_support === true ? "checked" : ""}><span class="scrm-switch-track"></span></span></label>`
+    ? `<label class="scrm-toggle-row"><span class="scrm-toggle-copy"><span class="material-symbols-rounded">connected_tv</span><span><strong>${TH("scrobbler.routeModal.pkc")}</strong><small>${TH("scrobbler.routeModal.pkcHint")}</small></span></span><span class="scrm-switch"><input type="checkbox" id="scr-plexkodiconnect-support" ${r.options.watch?.plexkodiconnect_support === true ? "checked" : ""}><span class="scrm-switch-track"></span></span></label>`
     : "";
   const manualMarks = ["plex", "jellyfin", "emby", "silo", "tofa"].includes(r.provider)
-    ? `<label class="scrm-toggle-row"><span class="scrm-toggle-copy"><span class="material-symbols-rounded">task_alt</span><span><strong>Detect manual marks</strong><small>Send items marked as played by hand on the media server as watched. Checked every idle poll interval, at most every 30 seconds. Unmarks are not sent. On Plex this covers the account of the connected token only.</small></span></span><span class="scrm-switch"><input type="checkbox" id="scr-manual-marks" ${r.options.watch?.manual_marks !== false ? "checked" : ""}><span class="scrm-switch-track"></span></span></label>`
+    ? `<label class="scrm-toggle-row"><span class="scrm-toggle-copy"><span class="material-symbols-rounded">task_alt</span><span><strong>${TH("scrobbler.routeModal.manualMarks")}</strong><small>${TH("scrobbler.routeModal.manualMarksHint")}</small></span></span><span class="scrm-switch"><input type="checkbox" id="scr-manual-marks" ${r.options.watch?.manual_marks !== false ? "checked" : ""}><span class="scrm-switch-track"></span></span></label>`
     : "";
   const animeGlobalOn = globalAnimeMappingEnabled();
   const animeMapping = ["crosswatch", "simkl"].includes(r.sink)
-    ? `<label class="scrm-toggle-row ${animeGlobalOn ? "" : "is-disabled"}"><span class="scrm-toggle-copy"><span class="material-symbols-rounded">animation</span><span><strong>Anime ID Mapping</strong><small>${animeGlobalOn ? "Use local anime mappings for this route before sending watcher scrobbles." : "Enable global Anime ID Mapping first."}</small></span></span><span class="scrm-switch"><input type="checkbox" id="scr-anime-mapping" ${r.options.watch?.anime_mapping ? "checked" : ""} ${animeGlobalOn ? "" : "disabled"}><span class="scrm-switch-track"></span></span></label>`
+    ? `<label class="scrm-toggle-row ${animeGlobalOn ? "" : "is-disabled"}"><span class="scrm-toggle-copy"><span class="material-symbols-rounded">animation</span><span><strong>${TH("scrobbler.routeModal.animeMapping")}</strong><small>${animeGlobalOn ? T("scrobbler.routeModal.animeMappingHint") : T("scrobbler.routeModal.enableAnimeFirst")}</small></span></span><span class="scrm-switch"><input type="checkbox" id="scr-anime-mapping" ${r.options.watch?.anime_mapping ? "checked" : ""} ${animeGlobalOn ? "" : "disabled"}><span class="scrm-switch-track"></span></span></label>`
     : "";
   const anilistHint = r.sink === "anilist" ? anilistMappingHint(animeGlobalOn) : "";
   return `
@@ -643,26 +645,26 @@ function optionsPanel(r) {
       ${anilistHint}
       <div class="scrm-journey scrm-journey-compact">
         <span class="material-symbols-rounded scrm-journey-icon">tune</span>
-        <div><strong>Route-level behavior</strong><p>These settings apply to this route and override the global defaults.<br><b>Leave them at their defaults unless you know what you are doing.</b></p></div>
+        <div><strong>${TH("scrobbler.routeModal.routeLevel")}</strong><p>${TH("scrobbler.routeModal.routeLevelHint")}<br><b>${TH("scrobbler.routeModal.leaveDefaults")}</b></p></div>
       </div>
       <div class="scrm-fields three">
-        ${field("Auto remove from Watchlists", `<select class="input" id="scr-auto"><option value="inherit" ${r.options.auto_remove_watchlist === "inherit" ? "selected" : ""}>Inherit</option><option value="on" ${r.options.auto_remove_watchlist === "on" ? "selected" : ""}>On</option><option value="off" ${r.options.auto_remove_watchlist === "off" ? "selected" : ""}>Off</option></select>`, "", "Override whether watched items are removed from watchlists for this route.")}
-        ${field("Watched threshold (%)", `<input class="input" id="scr-watched" type="number" min="0" max="100" value="${esc(r.options.scrobble?.watched_at ?? "")}" placeholder="Global">`, "", "Progress percentage that counts an item as watched for this route.")}
-        ${field("Final-stop trust (%)", `<input class="input" id="scr-force" type="number" min="0" max="100" value="${esc(r.options.scrobble?.force_stop_at ?? "")}" placeholder="Global">`, "", "At or above this progress, a final stop event is trusted for this route.")}
-        ${field("Progress step (%)", `<input class="input" id="scr-progress-step" type="number" min="15" max="50" value="${esc(r.options.scrobble?.progress_step ?? "")}" placeholder="Global">`, "", "Minimum progress change required before sending another watching update. Leave this at the default, as it significantly affects API usage.")}
-        ${field("Pause debounce (s)", `<input class="input" id="scr-watch-pause" type="number" min="0" max="3600" value="${esc(r.options.watch?.pause_debounce_seconds ?? "")}" placeholder="Global">`, "", "Seconds to ignore tiny pause/start flaps just after playback starts for this route.")}
-        ${field("Suppress start (%)", `<input class="input" id="scr-watch-suppress" type="number" min="0" max="100" value="${esc(r.options.watch?.suppress_start_at ?? "")}" placeholder="Global">`, "", "Ignore new start events at or above this progress for this route.")}
-        ${["emby", "jellyfin", "kodi", "scrob", "silo"].includes(r.provider) ? field("Poll interval (s)", `<input class="input" id="scr-watch-poll" type="number" min="5" max="60" value="${esc(r.options.watch?.poll_seconds ?? "")}" placeholder="10">`, "", "Seconds between playback checks while something is playing, from 5 to 60. Higher values lower the load but delay pause and stop detection. Routes sharing this source use the lowest value set.") : ""}
-        ${["emby", "jellyfin", "kodi", "scrob", "silo"].includes(r.provider) ? field("Idle poll interval (s)", `<input class="input" id="scr-watch-idle-poll" type="number" min="5" max="120" value="${esc(r.options.watch?.idle_poll_seconds ?? "")}" placeholder="30">`, "", "Seconds between checks while nothing is playing, from 5 to 120. This decides how quickly a new playback is noticed. It never drops below the poll interval. Routes sharing this source use the lowest value set.") : ""}
+        ${field(T("scrobbler.routeModal.autoRemove"), `<select class="input" id="scr-auto"><option value="inherit" ${r.options.auto_remove_watchlist === "inherit" ? "selected" : ""}>${TH("scrobbler.routeModal.inherit")}</option><option value="on" ${r.options.auto_remove_watchlist === "on" ? "selected" : ""}>${TH("scrobbler.routeModal.on")}</option><option value="off" ${r.options.auto_remove_watchlist === "off" ? "selected" : ""}>${TH("scrobbler.routeModal.off")}</option></select>`, "", T("scrobbler.routeModal.autoRemoveHint"))}
+        ${field(T("scrobbler.routeModal.watched"), `<input class="input" id="scr-watched" type="number" min="0" max="100" value="${esc(r.options.scrobble?.watched_at ?? "")}" placeholder="${TH("scrobbler.routeModal.global")}">`, "", T("scrobbler.routeModal.watchedHint"))}
+        ${field(T("scrobbler.routeModal.finalStop"), `<input class="input" id="scr-force" type="number" min="0" max="100" value="${esc(r.options.scrobble?.force_stop_at ?? "")}" placeholder="${TH("scrobbler.routeModal.global")}">`, "", T("scrobbler.routeModal.finalStopHint"))}
+        ${field(T("scrobbler.routeModal.progressStep"), `<input class="input" id="scr-progress-step" type="number" min="15" max="50" value="${esc(r.options.scrobble?.progress_step ?? "")}" placeholder="${TH("scrobbler.routeModal.global")}">`, "", T("scrobbler.routeModal.progressStepHint"))}
+        ${field(T("scrobbler.routeModal.pauseDebounce"), `<input class="input" id="scr-watch-pause" type="number" min="0" max="3600" value="${esc(r.options.watch?.pause_debounce_seconds ?? "")}" placeholder="${TH("scrobbler.routeModal.global")}">`, "", T("scrobbler.routeModal.pauseDebounceHint"))}
+        ${field(T("scrobbler.routeModal.suppressStart"), `<input class="input" id="scr-watch-suppress" type="number" min="0" max="100" value="${esc(r.options.watch?.suppress_start_at ?? "")}" placeholder="${TH("scrobbler.routeModal.global")}">`, "", T("scrobbler.routeModal.suppressStartHint"))}
+        ${["emby", "jellyfin", "kodi", "scrob", "silo"].includes(r.provider) ? field(T("scrobbler.routeModal.poll"), `<input class="input" id="scr-watch-poll" type="number" min="5" max="60" value="${esc(r.options.watch?.poll_seconds ?? "")}" placeholder="10">`, "", T("scrobbler.routeModal.pollHint")) : ""}
+        ${["emby", "jellyfin", "kodi", "scrob", "silo"].includes(r.provider) ? field(T("scrobbler.routeModal.idlePoll"), `<input class="input" id="scr-watch-idle-poll" type="number" min="5" max="120" value="${esc(r.options.watch?.idle_poll_seconds ?? "")}" placeholder="30">`, "", T("scrobbler.routeModal.idlePollHint")) : ""}
       </div>
-      ${r.provider === "tofa" ? `<div class="scrm-note" id="scr-tofa-rule"><span class="material-symbols-rounded">sync</span><span>Reading the Tofa watched rule...</span></div>` : ""}
+      ${r.provider === "tofa" ? `<div class="scrm-note" id="scr-tofa-rule"><span class="material-symbols-rounded">sync</span><span>${TH("scrobbler.routeModal.tofa.reading")}</span></div>` : ""}
       ${unresolvedFallback}
       ${pkcSupport}
       ${manualMarks}
       ${animeMapping}
-      ${r.sink === "simkl" ? `<label class="scrm-toggle-row"><span class="scrm-toggle-copy"><span class="material-symbols-rounded">replay</span><span><strong>Track rewatches</strong><small>Allow repeat watches on this route. Requires SIMKL Pro or VIP. SIMKL applies a 48-hour gap per movie or episode. Your watched threshold still applies, with a minimum of 80%.</small></span></span><span class="scrm-switch"><input type="checkbox" id="scr-simkl-rewatches" ${r.options.watch?.simkl_rewatches === true ? "checked" : ""}><span class="scrm-switch-track"></span></span></label>` : ""}
-      ${r.sink === "crosswatch" ? `<label class="scrm-toggle-row"><span class="scrm-toggle-copy"><span class="material-symbols-rounded">replay</span><span><strong>Track rewatches</strong><small>Save every completed watch as its own play. When off, a new watch replaces the latest play of that title.</small></span></span><span class="scrm-switch"><input type="checkbox" id="scr-cw-rewatches" ${r.options.watch?.crosswatch_rewatches === true ? "checked" : ""}><span class="scrm-switch-track"></span></span></label>
-      <div class="scrm-fields two">${field("Rewatch window (h)", `<input class="input" id="scr-cw-rewatch-window" type="number" min="1" max="168" value="${esc(r.options.watch?.crosswatch_rewatch_window_hours ?? "")}" placeholder="12">`, "", "Hours from 1 to 168. A watch of the same movie or episode within this window counts as the same play. Only used when Track rewatches is on.")}</div>` : ""}
+      ${r.sink === "simkl" ? `<label class="scrm-toggle-row"><span class="scrm-toggle-copy"><span class="material-symbols-rounded">replay</span><span><strong>${TH("scrobbler.routeModal.trackRewatches")}</strong><small>${TH("scrobbler.routeModal.simklRewatchHint")}</small></span></span><span class="scrm-switch"><input type="checkbox" id="scr-simkl-rewatches" ${r.options.watch?.simkl_rewatches === true ? "checked" : ""}><span class="scrm-switch-track"></span></span></label>` : ""}
+      ${r.sink === "crosswatch" ? `<label class="scrm-toggle-row"><span class="scrm-toggle-copy"><span class="material-symbols-rounded">replay</span><span><strong>${TH("scrobbler.routeModal.trackRewatches")}</strong><small>${TH("scrobbler.routeModal.cwRewatchHint")}</small></span></span><span class="scrm-switch"><input type="checkbox" id="scr-cw-rewatches" ${r.options.watch?.crosswatch_rewatches === true ? "checked" : ""}><span class="scrm-switch-track"></span></span></label>
+      <div class="scrm-fields two">${field(T("scrobbler.routeModal.rewatchWindow"), `<input class="input" id="scr-cw-rewatch-window" type="number" min="1" max="168" value="${esc(r.options.watch?.crosswatch_rewatch_window_hours ?? "")}" placeholder="12">`, "", T("scrobbler.routeModal.rewatchWindowHint"))}</div>` : ""}
     </section>
   `;
 }
@@ -679,28 +681,28 @@ function ratingsPanel(r, ratings, ratingTargets) {
   const isOff = ratings.mode !== "custom";
   const globalTargets = globalRatingTargets();
   const globalWarn = globalTargets.length
-    ? `<div class="scrm-note is-warn"><span class="material-symbols-rounded">warning</span><span>Global Plex ratings is configured and already forwarding to <strong>${esc(globalTargets.map(label).join(", "))}</strong>. A route-specific webhook sends ratings <em>in addition</em> to the global one - only add one if this route needs different destinations.</span></div>`
+    ? `<div class="scrm-note is-warn"><span class="material-symbols-rounded">warning</span><span>${TH("scrobbler.routeModal.globalRatings", {targets: globalTargets.map(label).join(", ")})}</span></div>`
     : "";
   const targets = ratingSinkList.length
     ? ratingSinkList.map((sink) => {
         const configured = allSinkProfiles(sink).length > 0;
         return `<label class="scrm-target${configured ? "" : " is-disabled"}"><input type="checkbox" data-rating-target="${sink}" ${ratingTargets.has(sink) ? "checked" : ""} ${configured && !isOff ? "" : "disabled"}><span class="scrm-target-mark">${providerIcon(sink)}</span><span>${label(sink)}${configured ? "" : " · not configured"}</span></label>`;
       }).join("")
-    : `<span class="scrm-muted">No configured rating destinations</span>`;
+    : `<span class="scrm-muted">${TH("scrobbler.routeModal.noRatingDest")}</span>`;
   const endpoint = r.ratings_webhook_url
-    ? `<div class="scrm-endpoint"><input type="text" readonly value="${esc(r.ratings_webhook_url)}" title="${esc(r.ratings_webhook_url)}" aria-label="Ratings webhook URL" spellcheck="false" data-copy-field><button type="button" class="btn small material-symbols-rounded" data-copy="${esc(r.ratings_webhook_url)}" title="Copy URL" aria-label="Copy URL">content_copy</button><button type="button" class="btn small danger material-symbols-rounded" data-regen-route title="Regenerate URL" aria-label="Regenerate URL">sync_lock</button></div>`
-    : `<div class="scrm-note"><span class="material-symbols-rounded">link</span><span>Save the route to generate a route-specific ratings webhook URL.</span></div>`;
+    ? `<div class="scrm-endpoint"><input type="text" readonly value="${esc(r.ratings_webhook_url)}" title="${esc(r.ratings_webhook_url)}" aria-label="${TH("scrobbler.routeModal.ratingsUrl")}" spellcheck="false" data-copy-field><button type="button" class="btn small material-symbols-rounded" data-copy="${esc(r.ratings_webhook_url)}" title="${TH("scrobbler.routeModal.copyUrl")}" aria-label="${TH("scrobbler.routeModal.copyUrl")}">content_copy</button><button type="button" class="btn small danger material-symbols-rounded" data-regen-route title="${TH("scrobbler.routeModal.regenUrl")}" aria-label="${TH("scrobbler.routeModal.regenUrl")}">sync_lock</button></div>`
+    : `<div class="scrm-note"><span class="material-symbols-rounded">link</span><span>${TH("scrobbler.routeModal.saveFirst")}</span></div>`;
   return `
     <section class="scrm-panel ${activeTab === "ratings" ? "active" : ""}" data-panel="ratings">
       <div class="scrm-journey scrm-journey-compact">
         <span class="material-symbols-rounded scrm-journey-icon">star</span>
-        <div><strong>Plex ratings webhook</strong><p>Route-specific ratings are Plex-only and can target the destinations selected below.</p></div>
+        <div><strong>${TH("scrobbler.routeModal.plexRatings")}</strong><p>${TH("scrobbler.routeModal.plexRatingsHint")}</p></div>
       </div>
       ${globalWarn}
       <div class="scrm-filter-group">
-        <div class="scrm-filter-head"><span class="material-symbols-rounded">star</span><div><strong>Route ratings</strong><small>Forward this route's Plex ratings to specific trackers.</small></div></div>
-        ${field("Ratings mode", `<select class="input" id="scr-ratings-mode"><option value="off" ${isOff ? "selected" : ""}>Off</option><option value="custom" ${!isOff ? "selected" : ""}>Custom route webhook</option></select>`)}
-        <div class="scrm-field"><span>Destinations</span><div class="scrm-targets${isOff ? " is-muted" : ""}">${targets}</div></div>
+        <div class="scrm-filter-head"><span class="material-symbols-rounded">star</span><div><strong>${TH("scrobbler.routeModal.routeRatings")}</strong><small>${TH("scrobbler.routeModal.routeRatingsHint")}</small></div></div>
+        ${field(T("scrobbler.routeModal.ratingsMode"), `<select class="input" id="scr-ratings-mode"><option value="off" ${isOff ? "selected" : ""}>${TH("scrobbler.routeModal.off")}</option><option value="custom" ${!isOff ? "selected" : ""}>${TH("scrobbler.routeModal.customWebhook")}</option></select>`)}
+        <div class="scrm-field"><span>${TH("scrobbler.routeModal.destinations")}</span><div class="scrm-targets${isOff ? " is-muted" : ""}">${targets}</div></div>
       </div>
       ${isOff ? "" : endpoint}
     </section>
@@ -767,16 +769,16 @@ function render(errors = []) {
       <div class="cx-head scrm-head">
         <span class="scrm-head-logo">${providerIcon(r.provider)}</span>
         <div class="scrm-head-copy"><strong>${esc(routeTitle(r))}</strong><span>${esc(label(r.provider))} ${esc(profileLabel(r.provider, r.provider_instance, "source"))} to ${esc(label(r.sink))} ${esc(profileLabel(r.sink, r.sink_instance, "sink"))}</span></div>
-        <button type="button" class="scrm-close" data-close aria-label="Close"><span class="material-symbols-rounded">close</span></button>
+        <button type="button" class="scrm-close" data-close aria-label="${TH("scrobbler.routeModal.close")}"><span class="material-symbols-rounded">close</span></button>
       </div>
       <div class="scrm-body">
         <div class="scrm-panel-shell" data-scrm-provider="${esc(r.provider)}">
-          <nav class="cw-subtiles scrm-nav" aria-label="Route sections">
-            ${navButton("route", "route", "Route", "Source and destination")}
-            ${navButton("filters", "filter_alt", "Filters", "Users and media")}
-            ${navButton("options", "tune", "Options", "Watchlist and thresholds")}
-            ${mediaSinks.includes(r.sink) ? navButton("libraries", "video_library", "Libraries", "Destination scope") : ""}
-            ${r.provider === "plex" ? navButton("ratings", "star", "Ratings", "Plex webhook") : ""}
+          <nav class="cw-subtiles scrm-nav" aria-label="${TH("scrobbler.routeModal.sections")}">
+            ${navButton("route", "route", T("scrobbler.routeModal.nav.route"), T("scrobbler.routeModal.nav.routeHint"))}
+            ${navButton("filters", "filter_alt", T("scrobbler.routeModal.nav.filters"), T("scrobbler.routeModal.nav.filtersHint"))}
+            ${navButton("options", "tune", T("scrobbler.routeModal.nav.options"), T("scrobbler.routeModal.nav.optionsHint"))}
+            ${mediaSinks.includes(r.sink) ? navButton("libraries", "video_library", T("scrobbler.routeModal.nav.libraries"), T("scrobbler.routeModal.nav.librariesHint")) : ""}
+            ${r.provider === "plex" ? navButton("ratings", "star", T("scrobbler.routeModal.nav.ratings"), T("scrobbler.routeModal.nav.ratingsHint")) : ""}
           </nav>
           <div class="scrm-content">
             ${routePanel(r)}
@@ -786,12 +788,12 @@ function render(errors = []) {
             ${ratingsPanel(r, ratings, ratingTargets)}
           </div>
           <div class="cw-connection-modal-footer scrm-footer">
-            ${props.mode !== "create" ? `<button type="button" class="btn danger cw-connection-footer-delete cw-danger-confirm" data-delete><span class="material-symbols-rounded">delete</span><span>Delete route</span></button>` : `<span></span>`}
+            ${props.mode !== "create" ? `<button type="button" class="btn danger cw-connection-footer-delete cw-danger-confirm" data-delete><span class="material-symbols-rounded">delete</span><span>${TH("scrobbler.routeModal.deleteRoute")}</span></button>` : `<span></span>`}
             ${errors.length
               ? `<span class="scrm-footer-error" role="alert" aria-live="polite"><span class="material-symbols-rounded">warning</span><span class="scrm-footer-error-text">${errors.map((x) => esc(x.message || x.code || x.field)).join(" ")}</span></span>`
-              : dup ? `<span class="scrm-footer-warn"><span class="material-symbols-rounded">warning</span>This source → destination route already exists</span>` : `<span></span>`}
-            <button type="button" class="btn cw-connection-footer-cancel" data-close>Cancel</button>
-            ${props.mode !== "delete" ? `<button type="button" class="btn primary cw-connection-footer-save" data-save ${dup ? "disabled" : ""}>${saving ? "Saving..." : "Save changes"}</button>` : ""}
+              : dup ? `<span class="scrm-footer-warn"><span class="material-symbols-rounded">warning</span>${TH("scrobbler.routeModal.exists")}</span>` : `<span></span>`}
+            <button type="button" class="btn cw-connection-footer-cancel" data-close>${TH("scrobbler.routeModal.cancel")}</button>
+            ${props.mode !== "delete" ? `<button type="button" class="btn primary cw-connection-footer-save" data-save ${dup ? "disabled" : ""}>${saving ? T("scrobbler.routeModal.saving") : T("scrobbler.routeModal.saveChanges")}</button>` : ""}
           </div>
         </div>
       </div>
@@ -892,7 +894,7 @@ async function save(regenerate = false) {
   if (saving) return;
   syncDraftFromDom();
   if (draft.provider === draft.sink && normInst(draft.provider_instance) === normInst(draft.sink_instance)) {
-    render([{ message: "Source and destination must use different providers or instances" }]);
+    render([{ message: T("scrobbler.routeModal.different") }]);
     return;
   }
   if (duplicateRoute(ensureDraft())) {
@@ -928,7 +930,7 @@ let flashTimer = 0;
 function flashSave(ok) {
   const btn = root?.querySelector(".cw-connection-footer-save");
   if (!btn) return;
-  const label = btn.textContent || "Save changes";
+  const label = btn.textContent || T("scrobbler.routeModal.saveChanges");
   const grad = ok ? "#00e084,#2ea859" : "#ff5a6a,#d1342f";
   const bd = ok ? "rgba(0,224,132,.6)" : "rgba(255,112,124,.6)";
   btn.classList.remove("is-saved", "is-failed");
@@ -953,14 +955,14 @@ function resetDeleteConfirm(btn) {
   deleteTimer = 0;
   if (!btn) return;
   btn.classList.remove("is-confirming");
-  btn.innerHTML = `<span class="material-symbols-rounded">delete</span><span>Delete route</span>`;
+  btn.innerHTML = `<span class="material-symbols-rounded">delete</span><span>${TH("scrobbler.routeModal.deleteRoute")}</span>`;
 }
 
 function armDeleteConfirm(btn) {
   confirmDelete = true;
   if (!btn) return;
   btn.classList.add("is-confirming");
-  btn.innerHTML = `<span class="material-symbols-rounded">warning</span><span>Confirm delete</span>`;
+  btn.innerHTML = `<span class="material-symbols-rounded">warning</span><span>${TH("scrobbler.routeModal.confirmDelete")}</span>`;
   if (deleteTimer) clearTimeout(deleteTimer);
   deleteTimer = setTimeout(() => resetDeleteConfirm(btn), 4200);
 }

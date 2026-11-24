@@ -8,6 +8,8 @@ from functools import lru_cache
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError, available_timezones
 
+from cw_platform.i18n import clean_language
+
 
 @lru_cache(maxsize=1)
 def _timezone_names() -> frozenset[str]:
@@ -41,4 +43,5 @@ def clean_user_preferences(raw: Any) -> dict[str, Any]:
         "quick_add": src.get("quick_add") is not False,
         "timezone": clean_timezone(src.get("timezone")),
         "time_format": time_format if time_format in {"auto", "12h", "24h"} else "auto",
+        "language": clean_language(src.get("language")),
     }

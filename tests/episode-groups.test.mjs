@@ -6,6 +6,7 @@ import assert from "node:assert/strict";
 import {readFileSync} from "node:fs";
 import vm from "node:vm";
 import {episodeGroupAction, parseEpisodes} from "../assets/js/editor/episode-groups.js";
+import './i18n-vm-setup.mjs';
 
 test("the split episode action is offered only for History episodes in a known pair", () => {
   const row = {feature:"history", item:{type:"episode"}, source:"jellyfin", source_instance:"default"};

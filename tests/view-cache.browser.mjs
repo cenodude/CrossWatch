@@ -1,6 +1,7 @@
 /* tests/view-cache.browser.mjs */
 /* CrossWatch - Cached tracker views and background refresh behavior */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude */
+import './i18n-browser-setup.mjs';
 import test from "node:test";
 import assert from "node:assert/strict";
 import {mkdir, readFile} from "node:fs/promises";

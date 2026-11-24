@@ -5,7 +5,7 @@
   let preferences = {};
   let resolvedZone = "";
   const cache = new Map();
-  const locale = () => navigator.language || window.__CW_LOCALE || undefined;
+  const locale = () => (window.CW?.I18n || window.__cwI18n)?.locale || navigator.language || window.__CW_LOCALE || undefined;
   const timeZone = () => {
     if (resolvedZone) return resolvedZone;
     const name = preferences.timezone;

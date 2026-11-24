@@ -1,3 +1,6 @@
+const I18N = () => globalThis.window?.CW?.I18n || globalThis.window?.__cwI18n;
+const T = (key, vars) => I18N()?.t?.(key, vars) ?? key;
+const TH = (key, vars) => I18N()?.html?.(key, vars) ?? key;
 const JSON_HEADERS = { "Content-Type": "application/json" };
 const MIN_PASSWORD_LENGTH = 8;
 
@@ -73,10 +76,10 @@ export function syncAppAuthState(root, state) {
 }
 
 export function validateAppAuthState(state) {
-  if (!String(state?.username || "").trim()) return "Username is required.";
-  if (!String(state?.password || "")) return "Password is required.";
-  if (String(state?.password || "").length < MIN_PASSWORD_LENGTH) return `Password must be at least ${MIN_PASSWORD_LENGTH} characters.`;
-  if (state?.password !== state?.password2) return "Passwords do not match.";
+  if (!String(state?.username || "").trim()) return T("auth.setup.usernameRequired");
+  if (!String(state?.password || "")) return T("auth.setup.passwordRequired");
+  if (String(state?.password || "").length < MIN_PASSWORD_LENGTH) return T("auth.setup.minLength", {count: MIN_PASSWORD_LENGTH});
+  if (state?.password !== state?.password2) return T("auth.setup.mismatch");
   return "";
 }
 
@@ -84,9 +87,9 @@ function _liveAppAuthError(state) {
   const password = String(state?.password || "");
   const password2 = String(state?.password2 || "");
   if (!password && !password2) return "";
-  if (!password && password2) return "Password is required.";
-  if (password.length < MIN_PASSWORD_LENGTH) return `Password must be at least ${MIN_PASSWORD_LENGTH} characters.`;
-  if (password2 && password !== password2) return "Passwords do not match.";
+  if (!password && password2) return T("auth.setup.passwordRequired");
+  if (password.length < MIN_PASSWORD_LENGTH) return T("auth.setup.minLength", {count: MIN_PASSWORD_LENGTH});
+  if (password2 && password !== password2) return T("auth.setup.mismatch");
   return "";
 }
 
@@ -136,17 +139,17 @@ export function renderAppAuthFields({
   const body = `
     <form class="authGrid" autocomplete="off" onsubmit="return false">
       <div class="field full">
-        <label for="${escapeHtml(idPrefix)}-user">Username</label>
+        <label for="${escapeHtml(idPrefix)}-user">${TH("auth.login.username")}</label>
         <input id="${escapeHtml(idPrefix)}-user" data-field="username" type="text" autocomplete="username" placeholder="admin" value="${escapeHtml(state?.username)}">
       </div>
       <div class="field">
-        <label for="${escapeHtml(idPrefix)}-pass">Password</label>
-        <input id="${escapeHtml(idPrefix)}-pass" data-field="password" type="password" autocomplete="new-password" placeholder="Enter password" value="${escapeHtml(state?.password)}">
-        <div class="subtxt">Minimum ${MIN_PASSWORD_LENGTH} characters.</div>
+        <label for="${escapeHtml(idPrefix)}-pass">${TH("auth.login.password")}</label>
+        <input id="${escapeHtml(idPrefix)}-pass" data-field="password" type="password" autocomplete="new-password" placeholder="${TH("auth.setup.enterPassword")}" value="${escapeHtml(state?.password)}">
+        <div class="subtxt">${TH("auth.setup.minimum", {count: MIN_PASSWORD_LENGTH})}</div>
       </div>
       <div class="field">
-        <label for="${escapeHtml(idPrefix)}-pass2">Confirm password</label>
-        <input id="${escapeHtml(idPrefix)}-pass2" data-field="password2" type="password" autocomplete="new-password" placeholder="Repeat password" value="${escapeHtml(state?.password2)}">
+        <label for="${escapeHtml(idPrefix)}-pass2">${TH("auth.setup.confirm")}</label>
+        <input id="${escapeHtml(idPrefix)}-pass2" data-field="password2" type="password" autocomplete="new-password" placeholder="${TH("auth.setup.repeat")}" value="${escapeHtml(state?.password2)}">
       </div>
     </form>
     <div class="${errCls}"${errAttr}>${escapeHtml(state?.error)}</div>
@@ -162,9 +165,9 @@ export function renderAppAuthFields({
 export async function saveRequiredAppAuth({ username, password, keepPending = false }) {
   const user = String(username || "").trim();
   const pass = String(password || "");
-  if (!user) throw new Error("Username is required");
-  if (!pass) throw new Error("Password is required");
-  if (pass.length < MIN_PASSWORD_LENGTH) throw new Error(`Password must be at least ${MIN_PASSWORD_LENGTH} characters`);
+  if (!user) throw new Error(T("auth.setup.usernameRequired"));
+  if (!pass) throw new Error(T("auth.setup.passwordRequired"));
+  if (pass.length < MIN_PASSWORD_LENGTH) throw new Error(T("auth.setup.minLength", {count: MIN_PASSWORD_LENGTH}));
 
   const data = await _postJson("/api/app-auth/credentials", {
     enabled: true,

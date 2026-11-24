@@ -3,6 +3,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {readFileSync} from "node:fs";
 import vm from "node:vm";
+import './i18n-vm-setup.mjs';
 
 const core = readFileSync(new URL("../assets/helpers/core.js", import.meta.url), "utf8");
 const showTabSource = core.slice(core.indexOf("  async function showTab("), core.indexOf('  window.addEventListener("hashchange"'));

@@ -2,6 +2,8 @@
 /* Extracted settings hubs/config hydration from core.js */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 (function(){
+const T = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.t?.(key, vars) ?? key;
+const TH = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.html?.(key, vars) ?? key;
 function formatCwSnapshotLabel(name) {
   if (!name || typeof name !== "string") return name || "";
   const stem = name.replace(/\.json$/,"").split("-", 1)[0];
@@ -103,7 +105,7 @@ function cwValidateAppAuthRememberDays(opts = {}) {
   const blank = sanitized === "";
   const days = blank ? NaN : parseInt(sanitized, 10);
   const valid = blank || (Number.isFinite(days) && days >= 1 && days <= 365);
-  const message = valid ? "" : "Session cache days must be between 1 and 365";
+  const message = valid ? "" : T("settings.security.sessions.daysInvalid");
 
   el.classList.toggle("cw-invalid", !valid);
   if (valid) el.removeAttribute("aria-invalid");
@@ -182,10 +184,10 @@ async function cwAppAuthPlexRefreshStatus() {
     const st = r.ok ? await r.json() : null;
     const label = document.getElementById("app_auth_plex_state");
     if (label) {
-      if (!st || !st.linked) label.textContent = "Not linked";
+      if (!st || !st.linked) label.textContent = T("settings.security.plex.notLinked");
       else {
         const who = [st.linked_username, st.linked_email].filter(Boolean).join(" - ");
-        label.textContent = who || "Linked";
+        label.textContent = who || T("settings.security.linked");
       }
     }
     const unlinkBtn = document.getElementById("btn-app-auth-plex-unlink");
@@ -193,19 +195,19 @@ async function cwAppAuthPlexRefreshStatus() {
     return st;
   } catch {
     const label = document.getElementById("app_auth_plex_state");
-    if (label) label.textContent = "Unavailable";
+    if (label) label.textContent = T("settings.security.unavailable");
     return null;
   }
 }
 
 window.cwAppAuthPlexLink = async function cwAppAuthPlexLink() {
   const btn = document.getElementById("btn-app-auth-plex-link");
-  const original = btn?.textContent || "Link Plex account";
+  const original = btn?.textContent || T("settings.security.plex.link");
   const popup = window.open("about:blank", "cw_plex_link", "width=620,height=760,popup=yes");
   try {
     if (btn) {
       btn.disabled = true;
-      btn.textContent = "Waiting for Plex...";
+      btn.textContent = T("settings.security.plex.waiting");
     }
     const r = await fetch("/api/app-auth/plex/link/start", {
       method: "POST",
@@ -215,7 +217,7 @@ window.cwAppAuthPlexLink = async function cwAppAuthPlexLink() {
     const data = await r.json().catch(() => null);
     if (!r.ok || !data?.ok || !data?.state || !data?.auth_url) {
       if (popup && !popup.closed) popup.close();
-      throw new Error(data?.error || `Plex link failed (${r.status})`);
+      throw new Error(data?.error || T("settings.security.plex.linkFailedStatus", { status: String(r.status) }));
     }
     if (popup && !popup.closed) popup.location.href = data.auth_url;
     else window.open(data.auth_url, "_blank", "noopener,noreferrer");
@@ -231,16 +233,16 @@ window.cwAppAuthPlexLink = async function cwAppAuthPlexLink() {
       });
       const pd = await pr.json().catch(() => null);
       if (pr.ok && pd?.ok && pd.pending === true) continue;
-      if (!pr.ok || !pd?.ok) throw new Error(pd?.error || `Plex link failed (${pr.status})`);
+      if (!pr.ok || !pd?.ok) throw new Error(pd?.error || T("settings.security.plex.linkFailedStatus", { status: String(pr.status) }));
       if (popup && !popup.closed) popup.close();
       await cwAppAuthPlexRefreshStatus();
       try { window._appAuthStatus && (window._appAuthStatus.plex_sso_enabled = true); } catch {}
-      try { _cwShowToast?.("Plex sign-in linked", true); } catch {}
+      try { _cwShowToast?.(T("settings.security.plex.linked"), true); } catch {}
       return;
     }
   } catch (e) {
     if (popup && !popup.closed) popup.close();
-    try { _cwShowToast?.(String(e?.message || e || "Plex link failed"), false); } catch {}
+    try { _cwShowToast?.(String(e?.message || e || T("settings.security.plex.linkFailed")), false); } catch {}
   } finally {
     if (btn) {
       btn.disabled = false;
@@ -250,7 +252,7 @@ window.cwAppAuthPlexLink = async function cwAppAuthPlexLink() {
 };
 
 window.cwAppAuthPlexUnlink = async function cwAppAuthPlexUnlink() {
-  const ok = (await (window.CW?.MobileUI?.ask || window.confirm)("Unlink Plex sign-in from this CrossWatch admin?"));
+  const ok = (await (window.CW?.MobileUI?.ask || window.confirm)(T("settings.security.plex.unlinkConfirm")));
   if (!ok) return;
   try {
     const r = await fetch("/api/app-auth/plex/unlink", {
@@ -259,11 +261,11 @@ window.cwAppAuthPlexUnlink = async function cwAppAuthPlexUnlink() {
       credentials: "same-origin",
     });
     const data = await r.json().catch(() => null);
-    if (!r.ok || !data?.ok) throw new Error(data?.error || `Plex unlink failed (${r.status})`);
+    if (!r.ok || !data?.ok) throw new Error(data?.error || T("settings.security.plex.unlinkFailedStatus", { status: String(r.status) }));
     await cwAppAuthPlexRefreshStatus();
-    try { _cwShowToast?.("Plex sign-in unlinked", true); } catch {}
+    try { _cwShowToast?.(T("settings.security.plex.unlinked"), true); } catch {}
   } catch (e) {
-    try { _cwShowToast?.(String(e?.message || e || "Plex unlink failed"), false); } catch {}
+    try { _cwShowToast?.(String(e?.message || e || T("settings.security.plex.unlinkFailed")), false); } catch {}
   }
 };
 
@@ -309,7 +311,7 @@ async function cwAppAuthOidcRefreshStatus() {
       cwSetSelectValue("app_auth_oidc_match_identities", cfg.match_identities ? "true" : "false");
       cwSetInputValue("app_auth_oidc_identity_claim", cfg.identity_claim || "");
       const secret = document.getElementById("app_auth_oidc_client_secret");
-      if (secret) secret.placeholder = cfg.client_secret_configured ? "(leave blank to keep)" : "Client secret";
+      if (secret) secret.placeholder = cfg.client_secret_configured ? T("settings.security.password.keepPlaceholder") : T("settings.security.oidc.clientSecret");
     }
   } catch {}
   try {
@@ -317,11 +319,11 @@ async function cwAppAuthOidcRefreshStatus() {
     const st = r.ok ? await r.json() : null;
     const label = document.getElementById("app_auth_oidc_state");
     if (label) {
-      if (!cfg?.configured && !st?.configured) label.textContent = "Not configured";
-      else if (!st?.linked) label.textContent = "Configured, not linked";
+      if (!cfg?.configured && !st?.configured) label.textContent = T("settings.security.oidc.notConfigured");
+      else if (!st?.linked) label.textContent = T("settings.security.oidc.configuredNotLinked");
       else {
         const who = [st.linked_username, st.linked_email].filter(Boolean).join(" - ");
-        label.textContent = who || "Linked";
+        label.textContent = who || T("settings.security.linked");
       }
     }
     const linkBtn = document.getElementById("btn-app-auth-oidc-link");
@@ -331,7 +333,7 @@ async function cwAppAuthOidcRefreshStatus() {
     return st;
   } catch {
     const label = document.getElementById("app_auth_oidc_state");
-    if (label) label.textContent = "Unavailable";
+    if (label) label.textContent = T("settings.security.unavailable");
     return null;
   }
 }
@@ -391,7 +393,7 @@ window.cwAppAuthOidcSavePending = async function cwAppAuthOidcSavePending(draft)
   try {
     cr = await fetch("/api/app-auth/oidc/config", { cache: "no-store", credentials: "same-origin" });
   } catch {
-    return { ok: false, error: "OIDC settings could not be read" };
+    return { ok: false, error: T("settings.security.oidc.readFailed") };
   }
   const current = cr.ok ? await cr.json().catch(() => null) : null;
   if (!current?.ok) return { ok: true, changed: false };
@@ -407,10 +409,10 @@ window.cwAppAuthOidcSavePending = async function cwAppAuthOidcSavePending(draft)
       body: JSON.stringify({ ...form, client_secret: secret, keep_client_secret: !secret }),
     });
   } catch {
-    return { ok: false, error: "OIDC settings could not be saved" };
+    return { ok: false, error: T("settings.security.oidc.saveFailedSettings") };
   }
   const data = await r.json().catch(() => null);
-  if (!r.ok || !data?.ok) return { ok: false, error: data?.error || `OIDC save failed (${r.status})` };
+  if (!r.ok || !data?.ok) return { ok: false, error: data?.error || T("settings.security.oidc.saveFailedStatus", { status: String(r.status) }) };
   const secretEl = document.getElementById("app_auth_oidc_client_secret");
   if (secretEl) secretEl.value = "";
   await cwAppAuthOidcRefreshStatus();
@@ -419,17 +421,17 @@ window.cwAppAuthOidcSavePending = async function cwAppAuthOidcSavePending(draft)
 
 window.cwAppAuthOidcLink = async function cwAppAuthOidcLink() {
   const btn = document.getElementById("btn-app-auth-oidc-link");
-  const original = btn?.textContent || "Link OIDC account";
+  const original = btn?.textContent || T("settings.security.oidc.link");
   const popup = window.open("about:blank", "cw_oidc_link", "width=720,height=760,popup=yes");
   try {
     if (btn) {
       btn.disabled = true;
-      btn.textContent = "Waiting for OIDC...";
+      btn.textContent = T("settings.security.oidc.waiting");
     }
     const saved = await window.cwAppAuthOidcSavePending();
     if (!saved?.ok) {
       if (popup && !popup.closed) popup.close();
-      throw new Error(saved?.error || "OIDC save failed");
+      throw new Error(saved?.error || T("settings.security.oidc.saveFailed"));
     }
     const r = await fetch("/api/app-auth/oidc/link/start", {
       method: "POST",
@@ -441,7 +443,7 @@ window.cwAppAuthOidcLink = async function cwAppAuthOidcLink() {
     const data = await r.json().catch(() => null);
     if (!r.ok || !data?.ok || !data?.state || !data?.auth_url) {
       if (popup && !popup.closed) popup.close();
-      throw new Error(data?.error || `OIDC link failed (${r.status})`);
+      throw new Error(data?.error || T("settings.security.oidc.linkFailedStatus", { status: String(r.status) }));
     }
     if (popup && !popup.closed) popup.location.href = data.auth_url;
     else window.open(data.auth_url, "_blank", "noopener,noreferrer");
@@ -456,15 +458,15 @@ window.cwAppAuthOidcLink = async function cwAppAuthOidcLink() {
       });
       const pd = await pr.json().catch(() => null);
       if (pr.ok && pd?.ok && pd.pending === true) continue;
-      if (!pr.ok || !pd?.ok) throw new Error(pd?.error || `OIDC link failed (${pr.status})`);
+      if (!pr.ok || !pd?.ok) throw new Error(pd?.error || T("settings.security.oidc.linkFailedStatus", { status: String(pr.status) }));
       if (popup && !popup.closed) popup.close();
       await cwAppAuthOidcRefreshStatus();
-      try { _cwShowToast?.("OIDC sign-in linked", true); } catch {}
+      try { _cwShowToast?.(T("settings.security.oidc.linked"), true); } catch {}
       return;
     }
   } catch (e) {
     if (popup && !popup.closed) popup.close();
-    try { _cwShowToast?.(String(e?.message || e || "OIDC link failed"), false); } catch {}
+    try { _cwShowToast?.(String(e?.message || e || T("settings.security.oidc.linkFailed")), false); } catch {}
   } finally {
     if (btn) {
       btn.disabled = false;
@@ -474,7 +476,7 @@ window.cwAppAuthOidcLink = async function cwAppAuthOidcLink() {
 };
 
 window.cwAppAuthOidcUnlink = async function cwAppAuthOidcUnlink() {
-  const ok = (await (window.CW?.MobileUI?.ask || window.confirm)("Unlink OIDC sign-in from this CrossWatch admin?"));
+  const ok = (await (window.CW?.MobileUI?.ask || window.confirm)(T("settings.security.oidc.unlinkConfirm")));
   if (!ok) return;
   try {
     const r = await fetch("/api/app-auth/oidc/unlink", {
@@ -485,11 +487,11 @@ window.cwAppAuthOidcUnlink = async function cwAppAuthOidcUnlink() {
       body: JSON.stringify({}),
     });
     const data = await r.json().catch(() => null);
-    if (!r.ok || !data?.ok) throw new Error(data?.error || `OIDC unlink failed (${r.status})`);
+    if (!r.ok || !data?.ok) throw new Error(data?.error || T("settings.security.oidc.unlinkFailedStatus", { status: String(r.status) }));
     await cwAppAuthOidcRefreshStatus();
-    try { _cwShowToast?.("OIDC sign-in unlinked", true); } catch {}
+    try { _cwShowToast?.(T("settings.security.oidc.unlinked"), true); } catch {}
   } catch (e) {
-    try { _cwShowToast?.(String(e?.message || e || "OIDC unlink failed"), false); } catch {}
+    try { _cwShowToast?.(String(e?.message || e || T("settings.security.oidc.unlinkFailed")), false); } catch {}
   }
 };
 
@@ -503,7 +505,7 @@ function cwAppAuthTotpRender(st) {
   const secret = document.getElementById("app_auth_totp_secret");
   const code = document.getElementById("app_auth_totp_code");
   const pending = !!(secret && String(secret.value || "").trim());
-  if (state) state.textContent = enabled ? "2FA: on" : (pending ? "2FA: setup pending" : "2FA: off");
+  if (state) state.textContent = enabled ? T("settings.security.twoFactor.stateOn") : (pending ? T("settings.security.twoFactor.statePending") : T("settings.security.twoFactor.stateOff"));
   if (setup) setup.classList.toggle("hidden", !pending);
   if (setupBtn) setupBtn.classList.toggle("hidden", pending);
   if (verifyBtn) verifyBtn.classList.toggle("hidden", !pending);
@@ -516,11 +518,11 @@ function cwAppAuthTotpRender(st) {
 
 window.cwAppAuthTotpSetup = async function cwAppAuthTotpSetup() {
   const btn = document.getElementById("btn-app-auth-totp-setup");
-  const original = btn?.textContent || "Set up 2FA";
+  const original = btn?.textContent || T("settings.security.twoFactor.setup");
   try {
     if (btn) {
       btn.disabled = true;
-      btn.textContent = "Creating...";
+      btn.textContent = T("settings.security.twoFactor.creating");
     }
     const r = await fetch("/api/app-auth/totp/setup", {
       method: "POST",
@@ -530,16 +532,16 @@ window.cwAppAuthTotpSetup = async function cwAppAuthTotpSetup() {
       body: JSON.stringify({ user_id: "administrator" }),
     });
     const data = await r.json().catch(() => null);
-    if (!r.ok || !data?.ok) throw new Error(data?.error || `2FA setup failed (${r.status})`);
+    if (!r.ok || !data?.ok) throw new Error(data?.error || T("settings.security.twoFactor.setupFailedStatus", { status: String(r.status) }));
     const secret = document.getElementById("app_auth_totp_secret");
     const code = document.getElementById("app_auth_totp_code");
     if (secret) secret.value = data.secret || "";
     if (code) code.value = "";
     cwAppAuthTotpRender({ totp_enabled: !!data.enabled });
     try { code?.focus?.(); } catch {}
-    try { _cwShowToast?.("2FA secret created", true); } catch {}
+    try { _cwShowToast?.(T("settings.security.twoFactor.created"), true); } catch {}
   } catch (e) {
-    try { _cwShowToast?.(String(e?.message || e || "2FA setup failed"), false); } catch {}
+    try { _cwShowToast?.(String(e?.message || e || T("settings.security.twoFactor.setupFailed")), false); } catch {}
   } finally {
     if (btn) {
       btn.disabled = false;
@@ -551,7 +553,7 @@ window.cwAppAuthTotpSetup = async function cwAppAuthTotpSetup() {
 window.cwAppAuthTotpVerify = async function cwAppAuthTotpVerify() {
   const code = String(document.getElementById("app_auth_totp_code")?.value || "").replace(/\D+/g, "").slice(0, 6);
   if (code.length !== 6) {
-    try { _cwShowToast?.("Enter the 6 digit code", false); } catch {}
+    try { _cwShowToast?.(T("settings.security.twoFactor.enterCode"), false); } catch {}
     return;
   }
   try {
@@ -563,7 +565,7 @@ window.cwAppAuthTotpVerify = async function cwAppAuthTotpVerify() {
       body: JSON.stringify({ user_id: "administrator", code }),
     });
     const data = await r.json().catch(() => null);
-    if (!r.ok || !data?.ok) throw new Error(data?.error || `2FA verify failed (${r.status})`);
+    if (!r.ok || !data?.ok) throw new Error(data?.error || T("settings.security.twoFactor.verifyFailedStatus", { status: String(r.status) }));
     const secret = document.getElementById("app_auth_totp_secret");
     const codeEl = document.getElementById("app_auth_totp_code");
     if (secret) secret.value = "";
@@ -571,7 +573,7 @@ window.cwAppAuthTotpVerify = async function cwAppAuthTotpVerify() {
     await cwRefreshAppAuthStatus();
     try { _cwShowToast?.("2FA enabled", true); } catch {}
   } catch (e) {
-    try { _cwShowToast?.(String(e?.message || e || "2FA verify failed"), false); } catch {}
+    try { _cwShowToast?.(String(e?.message || e || T("settings.security.twoFactor.verifyFailed")), false); } catch {}
   }
 };
 
@@ -579,8 +581,8 @@ window.cwAppAuthTotpDisable = async function cwAppAuthTotpDisable() {
   const btn = document.getElementById("btn-app-auth-totp-disable");
   if (btn && btn.dataset.confirmTotpDisable !== "1") {
     btn.dataset.confirmTotpDisable = "1";
-    const original = btn.innerHTML || "Disable 2FA";
-    btn.innerHTML = "Confirm disable";
+    const original = btn.innerHTML || TH("settings.security.twoFactor.disable");
+    btn.textContent = T("settings.security.twoFactor.confirmDisable");
     setTimeout(() => { try { delete btn.dataset.confirmTotpDisable; btn.innerHTML = original; } catch {} }, 2200);
     return;
   }
@@ -593,7 +595,7 @@ window.cwAppAuthTotpDisable = async function cwAppAuthTotpDisable() {
       body: JSON.stringify({ user_id: "administrator" }),
     });
     const data = await r.json().catch(() => null);
-    if (!r.ok || !data?.ok) throw new Error(data?.error || `2FA disable failed (${r.status})`);
+    if (!r.ok || !data?.ok) throw new Error(data?.error || T("settings.security.twoFactor.disableFailedStatus", { status: String(r.status) }));
     const secret = document.getElementById("app_auth_totp_secret");
     const code = document.getElementById("app_auth_totp_code");
     if (secret) secret.value = "";
@@ -601,7 +603,7 @@ window.cwAppAuthTotpDisable = async function cwAppAuthTotpDisable() {
     await cwRefreshAppAuthStatus();
     try { _cwShowToast?.("2FA disabled", true); } catch {}
   } catch (e) {
-    try { _cwShowToast?.(String(e?.message || e || "2FA disable failed"), false); } catch {}
+    try { _cwShowToast?.(String(e?.message || e || T("settings.security.twoFactor.disableFailed")), false); } catch {}
   }
 };
 
@@ -709,15 +711,15 @@ function cwBuildSchedulerPanel() {
   const basicFields = document.createElement("div");
   basicFields.className = "auth-card-fields";
 
-  const f1 = mkField("Enable", enabledEl);
-  const f2 = mkField("Frequency", modeEl, "Choose the timer mode.");
-  const f3 = mkField("Every N hours", nEl, "Only used when Frequency = Every N hours.");
-  const f4 = mkField("Time", timeEl, "Only used when Frequency = Daily at…");
+  const f1 = mkField(T("common.actions.enable"), enabledEl);
+  const f2 = mkField(T("sync.schedule.frequency"), modeEl, T("sync.schedule.hint.mode"));
+  const f3 = mkField(T("sync.schedule.mode.everyN"), nEl, T("sync.schedule.hint.everyN"));
+  const f4 = mkField(T("sync.schedule.time"), timeEl, T("sync.schedule.hint.daily"));
   const customWrap = document.createElement("div");
   customWrap.className = "cw-inline-row";
   if (customValueEl) customWrap.appendChild(customValueEl);
   if (customUnitEl) customWrap.appendChild(customUnitEl);
-  const f5 = mkField("Custom interval", customWrap.childNodes.length ? customWrap : null, "Only used when Frequency = Custom.");
+  const f5 = mkField(T("sync.schedule.customInterval"), customWrap.childNodes.length ? customWrap : null, T("sync.schedule.hint.custom"));
 
   [f1, f2, f3, f4, f5].forEach((x) => x && basicFields.appendChild(x));
   if (basicFields.childNodes.length) basicCard.appendChild(basicFields);
@@ -813,17 +815,17 @@ function cwSchedSettingsHubUpdate() {
     patch = { enabled, mode, every_n_hours, daily_time, custom_interval_minutes, advanced: { enabled: advOn, jobs: [] } };
   }
 
-  set("hub_sch_enabled", `Status: ${patch.enabled ? "Enabled" : "Disabled"}`);
+  set("hub_sch_enabled", T("sync.schedule.hub.status", { value: patch.enabled ? T("common.status.enabled") : T("common.status.disabled") }));
 
   let modeText = patch.mode || "hourly";
-  if (patch.mode === "hourly") modeText = "Every hour";
-  else if (patch.mode === "every_n_hours") modeText = `Every ${patch.every_n_hours || 2}h`;
-  else if (patch.mode === "daily_time") modeText = `Daily ${patch.daily_time || "—"}`;
+  if (patch.mode === "hourly") modeText = T("sync.schedule.mode.hourly");
+  else if (patch.mode === "every_n_hours") modeText = T("sync.schedule.hub.everyHours", { n: patch.every_n_hours || 2 });
+  else if (patch.mode === "daily_time") modeText = T("sync.schedule.hub.daily", { time: patch.daily_time || "—" });
   else if (patch.mode === "custom_interval") {
     const minutes = Math.max(15, parseInt(patch.custom_interval_minutes || 60, 10) || 60);
-    modeText = minutes % 60 === 0 ? `Custom ${minutes / 60}h` : `Custom ${minutes} min`;
+    modeText = minutes % 60 === 0 ? T("sync.schedule.hub.customHours", { n: minutes / 60 }) : T("sync.schedule.hub.customMinutes", { n: minutes });
   }
-  set("hub_sch_mode", `Mode: ${modeText}`);
+  set("hub_sch_mode", T("sync.schedule.hub.mode", { value: modeText }));
 
   const adv = patch.advanced || {};
   const jobs = Array.isArray(adv.jobs) ? adv.jobs : [];
@@ -831,8 +833,8 @@ function cwSchedSettingsHubUpdate() {
   const active = jobs.filter(j => j && j.active !== false).length + workflows.filter(w => w && w.active !== false).length;
   const total = jobs.length + workflows.length;
 
-  set("hub_sch_adv", `Plan: ${adv.enabled ? "On" : "Off"}`);
-  set("hub_sch_steps", total ? `Steps: ${active}/${total}` : "Steps: —");
+  set("hub_sch_adv", T("sync.schedule.hub.plan", { value: adv.enabled ? T("common.status.on") : T("common.status.off") }));
+  set("hub_sch_steps", total ? T("sync.schedule.hub.steps", { active, total }) : T("sync.schedule.hub.stepsNone"));
 }
 
 function cwSchedSettingsHubInit() {
@@ -993,11 +995,11 @@ function _cwFormatCompactUtc(value) {
   if (!raw) return "-";
   const d = new Date(raw);
   if (Number.isNaN(d.getTime())) return raw;
-  const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  const month = new Intl.DateTimeFormat((window.CW?.I18n || window.__cwI18n)?.locale || "en", { month: "short", timeZone: "UTC" }).format(d);
   const day = String(d.getUTCDate()).padStart(2, "0");
   const hour = String(d.getUTCHours()).padStart(2, "0");
   const minute = String(d.getUTCMinutes()).padStart(2, "0");
-  return `${day} ${months[d.getUTCMonth()]}, ${hour}:${minute} UTC`;
+  return `${day} ${month}, ${hour}:${minute} UTC`;
 }
 
 function _cwAnimeMappingSetBusy(on, label = "") {
@@ -1007,22 +1009,22 @@ function _cwAnimeMappingSetBusy(on, label = "") {
     if (el) el.disabled = !!on;
   });
   if (on) {
-    _cwSetText("anime_mapping_dataset", label || "Updating");
+    _cwSetText("anime_mapping_dataset", label || T("settings.anime.state.updating"));
   }
 }
 
 function cwAnimeMappingRenderStatus(st = {}) {
   const cfg = window._cfgCache || {};
   const block = cfg.anime_mapping || {};
-  const err = String(st.error || st.message || (st.identity_error ? `animeApi update failed (${st.identity_error})` : "")).trim();
+  const err = String(st.error || st.message || (st.identity_error ? T("settings.anime.identityFailed", { reason: st.identity_error }) : "")).trim();
   const installed = !!st.installed;
   const ready = !!st.index_ready;
   const enabled = st.enabled !== undefined ? !!st.enabled : !!block.enabled;
   const autoUpdate = st.auto_update !== undefined ? !!st.auto_update : block.auto_update !== false;
-  const dataset = err ? "Error" : (animeMappingBusy ? "Updating" : (installed ? "Installed" : "Missing"));
-  const index = ready ? "Index ready" : "Index missing";
-  const sources = installed ? `${Number(st.source_count || 0).toLocaleString()} sources` : "-";
-  const edges = installed ? `${Number(st.edge_count || 0).toLocaleString()} edges` : "-";
+  const dataset = err ? T("settings.anime.state.error") : (animeMappingBusy ? T("settings.anime.state.updating") : (installed ? T("settings.anime.state.installed") : T("settings.anime.state.missing")));
+  const index = ready ? T("settings.anime.indexReady") : T("settings.anime.indexMissing");
+  const sources = installed ? T("settings.anime.sources", { count: Number(st.source_count || 0) }) : "-";
+  const edges = installed ? T("settings.anime.edges", { count: Number(st.edge_count || 0) }) : "-";
   const updatedSeconds = Number(st.last_updated_at || 0);
   const updatedAt = updatedSeconds > 0 ? new Date(updatedSeconds * 1000).toISOString() : "";
   const updated = _cwFormatUtc(updatedAt);
@@ -1037,22 +1039,22 @@ function cwAnimeMappingRenderStatus(st = {}) {
   _cwSetStat("anime_mapping_edges", edges);
   _cwSetStat("anime_mapping_counts", installed ? `${sources} | ${edges}` : "-");
   _cwSetText("anime_mapping_last_update", updated);
-  const sourceDate = value => value ? _cwFormatUtc(value).slice(0, 10) : "Date unavailable";
-  _cwSetStat("anime_mapping_episodes_version", installed ? `${st.release_tag || "v3"} · ${sourceDate(st.dataset_generated_on)}` : "Not installed");
-  _cwSetStat("anime_mapping_identity_version", st.identity_installed ? `${st.identity_release_tag || "v3"} · ${sourceDate(st.identity_generated_on)}` : "Not installed");
+  const sourceDate = value => value ? _cwFormatUtc(value).slice(0, 10) : T("settings.anime.dateUnavailable");
+  _cwSetStat("anime_mapping_episodes_version", installed ? `${st.release_tag || "v3"} · ${sourceDate(st.dataset_generated_on)}` : T("settings.anime.notInstalled"));
+  _cwSetStat("anime_mapping_identity_version", st.identity_installed ? `${st.identity_release_tag || "v3"} · ${sourceDate(st.identity_generated_on)}` : T("settings.anime.notInstalled"));
   const identityVersion = document.getElementById("anime_mapping_identity_version");
-  if (identityVersion && st.identity_revision) identityVersion.title = `Installed animeApi revision: ${st.identity_revision}`;
+  if (identityVersion && st.identity_revision) identityVersion.title = T("settings.anime.identityRevision", { revision: st.identity_revision });
   const cwApplied = Array.isArray(st.cw_applied) ? st.cw_applied.length : 0;
   const cwRedundant = Array.isArray(st.cw_redundant) ? st.cw_redundant.length : 0;
-  _cwSetStat("anime_mapping_cw_version", st.cw_revision ? `${st.cw_revision} · ${cwApplied.toLocaleString()} applied` : (installed ? "Not loaded" : "Not installed"));
+  _cwSetStat("anime_mapping_cw_version", st.cw_revision ? T("settings.anime.cwApplied", { revision: st.cw_revision, count: cwApplied }) : (installed ? T("settings.anime.notLoaded") : T("settings.anime.notInstalled")));
   const cwVersion = document.getElementById("anime_mapping_cw_version");
   if (cwVersion && st.cw_revision) {
     const origin = st.cw_source === "downloaded"
-      ? `Downloaded from GitHub${st.cw_download_generated_on ? ` (${sourceDate(st.cw_download_generated_on)})` : ""}`
-      : "Included with this CrossWatch version";
-    cwVersion.title = [origin, cwRedundant ? `${cwRedundant.toLocaleString()} fixed upstream and no longer needed` : "", st.cw_error || ""].filter(Boolean).join("\n");
+      ? (st.cw_download_generated_on ? T("settings.anime.downloadedOn", { date: sourceDate(st.cw_download_generated_on) }) : T("settings.anime.downloaded"))
+      : T("settings.anime.bundled");
+    cwVersion.title = [origin, cwRedundant ? T("settings.anime.fixedUpstream", { count: cwRedundant }) : "", st.cw_error || ""].filter(Boolean).join("\n");
   }
-  _cwSetText("anime_mapping_meta_status", err ? "Error" : (installed && ready ? "Up to date" : (installed ? "Needs index" : "Missing")));
+  _cwSetText("anime_mapping_meta_status", err ? T("settings.anime.state.error") : (installed && ready ? T("settings.anime.state.upToDate") : (installed ? T("settings.anime.state.needsIndex") : T("settings.anime.state.missing"))));
   const statusPill = document.getElementById("anime_mapping_meta_status");
   if (statusPill) {
     statusPill.classList.toggle("is-ok", !!(installed && ready && !err));
@@ -1069,7 +1071,7 @@ function cwAnimeMappingRenderStatus(st = {}) {
   const heroBadge = document.getElementById("anime_mapping_hero_status");
   if (heroBadge) {
     heroBadge.classList.toggle("is-on", !!enabled);
-    _cwSetText("anime_mapping_hero_status_text", enabled ? "Enabled" : "Disabled");
+    _cwSetText("anime_mapping_hero_status_text", enabled ? T("common.status.enabled") : T("common.status.disabled"));
   }
   const enabledProxy = document.getElementById("anime_mapping_enabled_proxy");
   if (enabledProxy) {
@@ -1091,7 +1093,7 @@ async function cwAnimeMappingRefreshStatus() {
     cwAnimeMappingRenderStatus(st || {});
     return st;
   } catch (e) {
-    cwAnimeMappingRenderStatus({ error: e?.message || "Status failed" });
+    cwAnimeMappingRenderStatus({ error: e?.message || T("settings.anime.statusFailed") });
     return null;
   }
 }
@@ -1101,7 +1103,7 @@ async function cwAnimeMappingSaveSettings() {
   const autoUpdate = !!document.getElementById("anime_mapping_auto_update")?.checked;
   const st0 = window.__animeMappingStatus || {};
   const needsBootstrap = enabled && !(st0.installed && st0.index_ready);
-  _cwAnimeMappingSetBusy(true, needsBootstrap ? "Downloading" : "Saving");
+  _cwAnimeMappingSetBusy(true, needsBootstrap ? T("settings.anime.state.downloading") : T("settings.anime.state.saving"));
   try {
     const r = await fetch("/api/anime-mapping/settings", {
       method: "POST",
@@ -1115,7 +1117,7 @@ async function cwAnimeMappingSaveSettings() {
       }),
     });
     const data = await r.json().catch(() => ({}));
-    if (!r.ok || data.ok === false) throw new Error(data.message || data.error || `Settings failed (${r.status})`);
+    if (!r.ok || data.ok === false) throw new Error(data.message || data.error || T("settings.anime.settingsFailedStatus", { status: String(r.status) }));
     window._cfgCache ||= {};
     window._cfgCache.anime_mapping = data.anime_mapping || {
       ...(window._cfgCache.anime_mapping || {}),
@@ -1126,10 +1128,10 @@ async function cwAnimeMappingSaveSettings() {
     if (data.status) window.__animeMappingStatus = data.status;
     cwAnimeMappingRenderStatus(data.status || window.__animeMappingStatus || {});
     if (data.bootstrap_error) throw new Error(data.bootstrap_error);
-    try { window.CW?.DOM?.showToast?.(needsBootstrap ? "Anime mapping enabled and downloaded" : "Anime ID Mapping saved", true); } catch {}
+    try { window.CW?.DOM?.showToast?.(needsBootstrap ? T("settings.anime.enabledDownloaded") : T("settings.anime.saved"), true); } catch {}
   } catch (e) {
-    cwAnimeMappingRenderStatus({ ...(window.__animeMappingStatus || {}), error: e?.message || "Save failed" });
-    try { window.CW?.DOM?.showToast?.(e?.message || "Anime ID Mapping save failed", false); } catch {}
+    cwAnimeMappingRenderStatus({ ...(window.__animeMappingStatus || {}), error: e?.message || T("settings.saveFailed") });
+    try { window.CW?.DOM?.showToast?.(e?.message || T("settings.anime.saveFailed"), false); } catch {}
   } finally {
     _cwAnimeMappingSetBusy(false);
     try { await cwAnimeMappingRefreshStatus(); } catch {}
@@ -1138,7 +1140,7 @@ async function cwAnimeMappingSaveSettings() {
 
 async function cwAnimeMappingRun(action) {
   const update = action === "update";
-  _cwAnimeMappingSetBusy(true, update ? "Updating" : "Rebuilding");
+  _cwAnimeMappingSetBusy(true, update ? T("settings.anime.state.updating") : T("settings.anime.state.rebuilding"));
   try {
     const r = await fetch(update ? "/api/anime-mapping/update" : "/api/anime-mapping/rebuild-index", {
       method: "POST",
@@ -1148,15 +1150,15 @@ async function cwAnimeMappingRun(action) {
       body: JSON.stringify(update ? { force: false } : {}),
     });
     const data = await r.json().catch(() => ({}));
-    if (!r.ok || data.ok === false) throw new Error(data.message || data.error || `${update ? "Update" : "Rebuild"} failed (${r.status})`);
+    if (!r.ok || data.ok === false) throw new Error(data.message || data.error || T(update ? "settings.anime.updateFailedStatus" : "settings.anime.rebuildFailedStatus", { status: String(r.status) }));
     cwAnimeMappingRenderStatus(data.status || data || {});
-    const message = !update ? "Anime mapping index rebuilt"
-      : data.updated ? (data.cw_mappings_updated && !data.identity_updated && !data.mappings_updated ? "CW Anime DB updated" : (data.identity_updated && !data.mappings_updated ? "Anime identity data updated" : "Anime mapping updated"))
-      : data.rebuilt ? "Anime mapping index rebuilt" : "Anime mapping already up to date";
+    const message = !update ? T("settings.anime.rebuilt")
+      : data.updated ? (data.cw_mappings_updated && !data.identity_updated && !data.mappings_updated ? T("settings.anime.cwUpdated") : (data.identity_updated && !data.mappings_updated ? T("settings.anime.identityUpdated") : T("settings.anime.updated")))
+      : data.rebuilt ? T("settings.anime.rebuilt") : T("settings.anime.alreadyCurrent");
     try { window.CW?.DOM?.showToast?.(message, true); } catch {}
   } catch (e) {
-    cwAnimeMappingRenderStatus({ ...(window.__animeMappingStatus || {}), error: e?.message || "Action failed" });
-    try { window.CW?.DOM?.showToast?.(e?.message || "Anime mapping action failed", false); } catch {}
+    cwAnimeMappingRenderStatus({ ...(window.__animeMappingStatus || {}), error: e?.message || T("settings.anime.actionFailedShort") });
+    try { window.CW?.DOM?.showToast?.(e?.message || T("settings.anime.actionFailed"), false); } catch {}
   } finally {
     _cwAnimeMappingSetBusy(false);
     try { await cwAnimeMappingRefreshStatus(); } catch {}
@@ -1176,8 +1178,8 @@ function cwBuildAnimeMappingPanel() {
     <div class="head" data-toggle-section="sec-meta-anime-mapping">
       <span class="chev"></span>
       <div class="cw-meta-provider-head-copy">
-        <strong>Anime ID Mapping</strong>
-        <span class="cw-meta-provider-help" title="Improves anime matching for AniList and SIMKL pairs. Requires a TMDB metadata key." aria-label="Improves anime matching for AniList and SIMKL pairs. Requires a TMDB metadata key.">
+        <strong>${TH("settings.anime.title")}</strong>
+        <span class="cw-meta-provider-help" title="${TH("settings.anime.help")}" aria-label="${TH("settings.anime.help")}">
           <span class="material-symbols-rounded cw-meta-provider-help-icon" aria-hidden="true">info</span>
         </span>
       </div>
@@ -1188,22 +1190,22 @@ function cwBuildAnimeMappingPanel() {
         <header class="am-modal-header">
           <span class="material-symbols-rounded am-modal-icon" aria-hidden="true">shield</span>
           <div class="am-modal-title">
-            <h4>Anime ID Mapping</h4>
-            <p>Match anime IDs across providers</p>
+            <h4>${TH("settings.anime.title")}</h4>
+            <p>${TH("settings.anime.subtitle")}</p>
           </div>
           <label class="am-header-state" id="anime_mapping_hero_status">
             <span class="am-hero-badge">
               <span class="material-symbols-rounded" aria-hidden="true">check_circle</span>
-              <span id="anime_mapping_hero_status_text">Disabled</span>
+              <span id="anime_mapping_hero_status_text">${TH("common.status.disabled")}</span>
             </span>
             <span class="cx-toggle am-toggle">
-              <input type="checkbox" id="anime_mapping_enabled" aria-label="Enable Anime ID Mapping index">
+              <input type="checkbox" id="anime_mapping_enabled" aria-label="${TH("settings.anime.enableIndex")}">
               <span class="cx-toggle-ui" aria-hidden="true"></span>
             </span>
           </label>
         </header>
 
-        <section class="am-status-strip" aria-label="Anime ID Mapping status">
+        <section class="am-status-strip" aria-label="${TH("settings.anime.status")}">
           <div class="am-status-item">
             <span class="material-symbols-rounded am-status-icon" id="anime_mapping_dataset_icon" aria-hidden="true">database</span>
             <span id="anime_mapping_dataset">-</span>
@@ -1222,7 +1224,7 @@ function cwBuildAnimeMappingPanel() {
           </div>
           <div class="am-status-item">
             <span class="material-symbols-rounded am-status-icon" aria-hidden="true">schedule</span>
-            <span>Updated <span id="anime_mapping_generated">-</span></span>
+            <span>${TH("settings.anime.updatedLabel")} <span id="anime_mapping_generated">-</span></span>
           </div>
           <span class="am-sr-only" id="anime_mapping_counts">-</span>
           <span class="am-sr-only" id="anime_mapping_last_update">-</span>
@@ -1231,20 +1233,20 @@ function cwBuildAnimeMappingPanel() {
         <section class="am-panel am-settings-panel">
           <div class="am-setting-row">
             <div>
-              <strong>Mapping index</strong>
-              <span>Use the local Anime ID mapping index</span>
+              <strong>${TH("settings.anime.index")}</strong>
+              <span>${TH("settings.anime.indexHint")}</span>
             </div>
-            <button class="am-toggle-proxy" id="anime_mapping_enabled_proxy" type="button" role="switch" aria-checked="false" aria-label="Toggle Anime ID Mapping index">
+            <button class="am-toggle-proxy" id="anime_mapping_enabled_proxy" type="button" role="switch" aria-checked="false" aria-label="${TH("settings.anime.toggleIndex")}">
               <span class="material-symbols-rounded" aria-hidden="true">check</span>
             </button>
           </div>
           <div class="am-setting-row">
             <div>
-              <strong>Automatic updates</strong>
-              <span>Keep the mapping dataset current</span>
+              <strong>${TH("settings.anime.autoUpdates")}</strong>
+              <span>${TH("settings.anime.autoUpdatesHint")}</span>
             </div>
             <label class="cx-toggle am-toggle">
-              <input type="checkbox" id="anime_mapping_auto_update" aria-label="Enable automatic Anime ID Mapping updates">
+              <input type="checkbox" id="anime_mapping_auto_update" aria-label="${TH("settings.anime.enableAutoUpdates")}">
               <span class="cx-toggle-ui" aria-hidden="true"></span>
             </label>
           </div>
@@ -1252,24 +1254,24 @@ function cwBuildAnimeMappingPanel() {
 
         <section class="am-panel am-dataset-panel">
           <div class="am-panel-head">
-            <h4>Dataset</h4>
+            <h4>${TH("settings.anime.dataset")}</h4>
             <span class="am-status-pill" id="anime_mapping_meta_status">-</span>
           </div>
           <dl class="am-dataset-list">
             <div>
-              <dt>Episodes</dt>
+              <dt>${TH("settings.anime.episodes")}</dt>
               <dd><a href="https://github.com/anibridge/anibridge-mappings" target="_blank" rel="noopener noreferrer">aniBridge/anibridge-mappings<span class="material-symbols-rounded" aria-hidden="true">open_in_new</span></a><span class="am-dataset-version" id="anime_mapping_episodes_version">-</span></dd>
             </div>
             <div>
-              <dt>Identity</dt>
+              <dt>${TH("settings.anime.identity")}</dt>
               <dd><a href="https://github.com/nattadasu/animeApi" target="_blank" rel="noopener noreferrer">nattadasu/animeApi<span class="material-symbols-rounded" aria-hidden="true">open_in_new</span></a><span class="am-dataset-version" id="anime_mapping_identity_version">-</span></dd>
             </div>
             <div>
-              <dt>Corrections</dt>
+              <dt>${TH("settings.anime.corrections")}</dt>
               <dd><a href="https://github.com/cenodude/CrossWatch/blob/main/cw_platform/anime_mapping/cw_mappings.json" target="_blank" rel="noopener noreferrer">CW Anime DB<span class="material-symbols-rounded" aria-hidden="true">open_in_new</span></a><span class="am-dataset-version" id="anime_mapping_cw_version">-</span></dd>
             </div>
           </dl>
-          <p class="am-details-copy">AniBridge maps episodes, animeApi links IDs, and CW Anime DB adds corrections. Your custom mappings take priority.</p>
+          <p class="am-details-copy">${TH("settings.anime.datasetCopy")}</p>
           <div class="auth-card-notes" id="anime_mapping_error"></div>
         </section>
 
@@ -1277,14 +1279,14 @@ function cwBuildAnimeMappingPanel() {
           <div class="am-advanced-head">
             <span class="material-symbols-rounded am-advanced-icon" aria-hidden="true">settings</span>
             <span>
-              <strong>Advanced</strong>
-              <small>Manual actions and custom mappings</small>
+              <strong>${TH("common.labels.advanced")}</strong>
+              <small>${TH("settings.anime.advancedHint")}</small>
             </span>
           </div>
           <div class="am-actions">
-            <button class="btn primary" type="button" id="btn-anime-mapping-update">Update now</button>
-            <button class="btn" type="button" id="btn-anime-mapping-rebuild">Rebuild index</button>
-            <button class="btn" type="button" id="btn-anime-mapping-overrides">Custom mappings</button>
+            <button class="btn primary" type="button" id="btn-anime-mapping-update">${TH("settings.anime.updateNow")}</button>
+            <button class="btn" type="button" id="btn-anime-mapping-rebuild">${TH("settings.anime.rebuildIndex")}</button>
+            <button class="btn" type="button" id="btn-anime-mapping-overrides">${TH("settings.anime.customMappings")}</button>
           </div>
         </section>
       </div>
@@ -1350,7 +1352,7 @@ function cwBuildTmdbPanel() {
     <span class="chev"></span>
     <div class="cw-meta-provider-head-copy">
       <strong>TMDb</strong>
-      <span class="cw-meta-provider-help" title="Highly recommended for matching, metadata and images." aria-label="Highly recommended for matching, metadata and images.">
+      <span class="cw-meta-provider-help" title="${TH("settings.meta.tmdb.help")}" aria-label="${TH("settings.meta.tmdb.help")}">
         <span class="material-symbols-rounded cw-meta-provider-help-icon" aria-hidden="true">info</span>
       </span>
     </div>
@@ -1364,8 +1366,8 @@ function cwBuildTmdbPanel() {
   head.className = "cw-panel-head";
   head.innerHTML = `
     <div>
-      <div class="cw-panel-title">TMDb (The Movie Database)</div>
-      <div class="muted">Metadata and images fetched from TMDb.</div>
+      <div class="cw-panel-title">${TH("settings.meta.tmdb.panelTitle")}</div>
+      <div class="muted">${TH("settings.meta.tmdb.panelHint")}</div>
     </div>
   `;
 
@@ -1373,7 +1375,7 @@ function cwBuildTmdbPanel() {
   subTiles.className = "cw-subtiles";
   subTiles.innerHTML = `
     <button type="button" class="cw-subtile active" data-sub="api">API key</button>
-    <button type="button" class="cw-subtile" data-sub="advanced">Advanced</button>
+    <button type="button" class="cw-subtile" data-sub="advanced">${TH("common.labels.advanced")}</button>
   `;
 
   const subPanels = document.createElement("div");
@@ -1398,7 +1400,7 @@ function cwBuildTmdbPanel() {
     const i = document.createElement("input");
     i.id = "tmdb_api_key";
     i.type = "text";
-    i.placeholder = "TMDb API key";
+    i.placeholder = T("settings.meta.tmdb.keyPlaceholder");
     return i;
   })();
 
@@ -1406,7 +1408,7 @@ function cwBuildTmdbPanel() {
     const d = document.createElement("div");
     d.id = "tmdb_hint";
     d.className = "auth-card-notes";
-    d.textContent = "Add a TMDb API key to enable metadata lookups.";
+    d.textContent = T("settings.meta.tmdb.addKey");
     return d;
   })();
 
@@ -1431,8 +1433,8 @@ function cwBuildTmdbPanel() {
   checkRow.style.alignItems = "center";
   checkRow.style.justifyContent = "flex-start";
   checkRow.innerHTML = `
-    <button type="button" class="btn good" id="tmdb_check">Check</button>
-    <button type="button" class="btn danger" id="tmdb_delete">Delete</button>
+    <button type="button" class="btn good" id="tmdb_check">${TH("settings.meta.check")}</button>
+    <button type="button" class="btn danger" id="tmdb_delete">${TH("settings.metaDelete")}</button>
     <div id="tmdb_check_msg" class="msg ok hidden" aria-live="polite" style="margin-left:auto;width:auto;max-width:min(520px,60%);flex:0 1 auto;white-space:normal"></div>
   `;
   checkRow.querySelector("#tmdb_check")?.addEventListener("click", () => {
@@ -1471,19 +1473,19 @@ function cwBuildTmdbPanel() {
   if (localeEl) {
     const f = document.createElement("div");
     f.className = "field";
-    f.innerHTML = `<div class="muted" style="margin-bottom:6px;">Language / locale</div>`;
+    f.innerHTML = `<div class="muted" style="margin-bottom:6px;">${TH("settings.meta.tmdb.locale")}</div>`;
     advFields.appendChild(f);
     f.appendChild(localeEl);
     const note = document.createElement("div");
     note.className = "auth-card-notes";
-    note.textContent = "Optional. Example: en-US, nl-NL.";
+    note.textContent = T("settings.meta.tmdb.localeHint");
     advFields.appendChild(note);
   }
 
   if (!localeEl) {
     const note = document.createElement("div");
     note.className = "auth-card-notes";
-    note.textContent = "No advanced options available yet.";
+    note.textContent = T("settings.meta.noAdvanced");
     advCard.appendChild(note);
   }
 
@@ -1515,7 +1517,7 @@ function cwBuildFanartPanel() {
   if (!panelHost) return;
   if (panelHost.querySelector('.cw-meta-provider-panel[data-provider="fanart"]')) return;
 
-  const modeOptions = `<option value="fanart">fanart.tv first</option><option value="tmdb_first">TMDb first</option><option value="tmdb">TMDb only</option>`;
+  const modeOptions = `<option value="fanart">${TH("settings.meta.fanart.modeFanart")}</option><option value="tmdb_first">${TH("settings.meta.fanart.modeTmdbFirst")}</option><option value="tmdb">${TH("settings.meta.fanart.modeTmdb")}</option>`;
   const wrap = document.createElement("div");
   wrap.className = "section cw-settings-section cw-settings-provider-section cw-meta-provider-panel active";
   wrap.id = "sec-meta-fanart";
@@ -1525,7 +1527,7 @@ function cwBuildFanartPanel() {
       <span class="chev"></span>
       <div class="cw-meta-provider-head-copy">
         <strong>Fanart.tv</strong>
-        <span class="cw-meta-provider-help" title="Optional. Logos, backgrounds and disc art from fanart.tv, with TMDb as fallback." aria-label="Optional. Logos, backgrounds and disc art from fanart.tv, with TMDb as fallback.">
+        <span class="cw-meta-provider-help" title="${TH("settings.meta.fanart.help")}" aria-label="${TH("settings.meta.fanart.help")}">
           <span class="material-symbols-rounded cw-meta-provider-help-icon" aria-hidden="true">info</span>
         </span>
       </div>
@@ -1535,33 +1537,33 @@ function cwBuildFanartPanel() {
       <div class="cw-panel-head">
         <div>
           <div class="cw-panel-title">Fanart.tv</div>
-          <div class="muted">Logos, backgrounds and disc art from fanart.tv.</div>
+          <div class="muted">${TH("settings.meta.fanart.panelHint")}</div>
         </div>
       </div>
       <div class="cw-subtiles">
         <button type="button" class="cw-subtile active" data-sub="api">API key</button>
-        <button type="button" class="cw-subtile" data-sub="settings">Settings</button>
+        <button type="button" class="cw-subtile" data-sub="settings">${TH("navigation.tabs.settings")}</button>
       </div>
       <div class="cw-subpanels">
         <div class="cw-subpanel active" data-sub="api">
           <div class="auth-card">
-            <div class="auth-card-notes" id="fanart_hint">Images are provided by <a href="https://fanart.tv" target="_blank" rel="noopener noreferrer">fanart.tv</a>. No keys are required. Leave both fields empty and just click Connect fanart.tv to use the CrossWatch project key.</div>
-            <div class="auth-card-notes" id="fanart_tmdb_hint" hidden>Connect TMDb Metadata first. fanart.tv art is loaded through TMDb Metadata.</div>
+            <div class="auth-card-notes" id="fanart_hint">${TH("settings.meta.fanart.providedBy")} <a href="https://fanart.tv" target="_blank" rel="noopener noreferrer">fanart.tv</a>. ${TH("settings.meta.fanart.noKeys")}</div>
+            <div class="auth-card-notes" id="fanart_tmdb_hint" hidden>${TH("settings.meta.fanart.tmdbFirst")}</div>
             <div class="auth-card-fields">
               <div style="display:flex;gap:14px;flex-wrap:wrap">
                 <div class="field" style="flex:1 1 220px;min-width:0">
-                  <div class="muted" style="margin-bottom:6px;">Personal API key (not required)</div>
-                  <input id="fanart_personal_api_key" type="text" placeholder="Optional, from your fanart.tv profile" autocomplete="off">
+                  <div class="muted" style="margin-bottom:6px;">${TH("settings.meta.fanart.personalKey")}</div>
+                  <input id="fanart_personal_api_key" type="text" placeholder="${TH("settings.meta.fanart.personalPlaceholder")}" autocomplete="off">
                 </div>
                 <div class="field" style="flex:1 1 220px;min-width:0">
-                  <div class="muted" style="margin-bottom:6px;">Project API key (not required)</div>
-                  <input id="fanart_api_key" type="text" placeholder="Optional, replaces the CrossWatch key" autocomplete="off">
+                  <div class="muted" style="margin-bottom:6px;">${TH("settings.meta.fanart.projectKey")}</div>
+                  <input id="fanart_api_key" type="text" placeholder="${TH("settings.meta.fanart.projectPlaceholder")}" autocomplete="off">
                 </div>
               </div>
-              <div class="auth-card-notes">A personal key shows new fanart.tv uploads after 2 days instead of 7, and right away for fanart.tv VIP members. Only add a project key if you have your own fanart.tv project.</div>
+              <div class="auth-card-notes">${TH("settings.meta.fanart.keyNote")}</div>
               <div class="inline" style="display:flex;margin-top:10px;gap:10px;align-items:center;justify-content:flex-start">
-                <button type="button" class="btn good" id="fanart_check">Connect fanart.tv</button>
-                <button type="button" class="btn danger" id="fanart_delete" hidden>Delete</button>
+                <button type="button" class="btn good" id="fanart_check">${TH("settings.meta.fanart.connect")}</button>
+                <button type="button" class="btn danger" id="fanart_delete" hidden>${TH("settings.metaDelete")}</button>
                 <div id="fanart_check_msg" class="msg ok hidden" aria-live="polite" style="margin-left:auto;width:auto;max-width:min(520px,60%);flex:0 1 auto;white-space:normal"></div>
               </div>
             </div>
@@ -1571,16 +1573,16 @@ function cwBuildFanartPanel() {
           <div class="auth-card">
             <div class="auth-card-fields">
               <div class="field">
-                <div class="muted" style="margin-bottom:6px;">Logos</div>
-                <select id="fanart_pref_logos" aria-label="Logo source">${modeOptions}</select>
+                <div class="muted" style="margin-bottom:6px;">${TH("settings.meta.fanart.logos")}</div>
+                <select id="fanart_pref_logos" aria-label="${TH("settings.meta.fanart.logoSource")}">${modeOptions}</select>
               </div>
               <div class="field">
-                <div class="muted" style="margin-bottom:6px;">Backgrounds</div>
-                <select id="fanart_pref_backgrounds" aria-label="Background source">${modeOptions}</select>
+                <div class="muted" style="margin-bottom:6px;">${TH("settings.meta.fanart.backgrounds")}</div>
+                <select id="fanart_pref_backgrounds" aria-label="${TH("settings.meta.fanart.backgroundSource")}">${modeOptions}</select>
               </div>
             </div>
-            <div class="auth-card-notes" id="fanart_settings_hint" hidden>Connect fanart.tv first.</div>
-            <div class="auth-card-notes">fanart.tv first uses fanart.tv art and falls back to TMDb. TMDb first only uses fanart.tv when TMDb has nothing, which mostly helps logos. Logos and backgrounds show in media details, the Now Playing card, the Media Hub, dashboard widgets and the tracker. Posters always come from TMDb. Reload open pages to see a change.</div>
+            <div class="auth-card-notes" id="fanart_settings_hint" hidden>${TH("settings.meta.fanart.connectFirst")}</div>
+            <div class="auth-card-notes">${TH("settings.meta.fanart.modesNote")}</div>
           </div>
         </div>
       </div>
@@ -1639,7 +1641,7 @@ async function cwSaveFanartPrefs() {
     cwFanartStateUpdate();
     return true;
   } catch {
-    cwSetFanartMessage(false, "fanart.tv settings save failed.");
+    cwSetFanartMessage(false, T("settings.meta.fanart.saveFailed"));
     return false;
   }
 }
@@ -1648,7 +1650,7 @@ async function cwSaveFanartModal() {
   const on = window._cfgCache?.fanart?.enabled === true;
   if (cwFanartKeysTouched()) {
     if (!on && !cwFanartHasTmdb()) {
-      cwSetFanartMessage(false, "Connect TMDb Metadata first.");
+      cwSetFanartMessage(false, T("settings.meta.fanart.tmdbFirstShort"));
       throw new Error("fanart_tmdb_missing");
     }
     if (!await cwSaveFanartKey()) throw new Error("fanart_key_failed");
@@ -1674,7 +1676,7 @@ function cwFanartStateUpdate() {
   const dot = document.getElementById("meta-fanart-dot");
   if (dot) {
     dot.classList.toggle("on", on);
-    dot.title = on ? "Connected" : "Not connected";
+    dot.title = on ? T("common.status.connected") : T("common.status.notConnected");
     dot.setAttribute("aria-label", dot.title);
     dot.closest?.('.cw-meta-provider-panel[data-provider="fanart"]')?.classList?.toggle("is-configured", on);
   }
@@ -1683,7 +1685,7 @@ function cwFanartStateUpdate() {
   const connected = on && !cwFanartKeysTouched();
   const btn = document.getElementById("fanart_check");
   if (btn) {
-    try { window.CW?.AuthShared?.setConnectLocked?.(["fanart_check"], connected, "Connected"); } catch {}
+    try { window.CW?.AuthShared?.setConnectLocked?.(["fanart_check"], connected, T("common.status.connected")); } catch {}
     if (!btn.classList.contains("busy")) btn.disabled = blocked;
   }
   const tmdbHint = document.getElementById("fanart_tmdb_hint");
@@ -1693,8 +1695,8 @@ function cwFanartStateUpdate() {
   const msg = document.getElementById("fanart_check_msg");
   if (msg) {
     const text = String(msg.textContent || "").trim();
-    if (connected && (!text || msg.classList.contains("hidden"))) cwSetFanartMessage(true, "Connected");
-    else if (!connected && text === "Connected") cwSetFanartMessage(true, "");
+    if (connected && (!text || msg.classList.contains("hidden"))) cwSetFanartMessage(true, T("common.status.connected"));
+    else if (!connected && text === T("common.status.connected")) cwSetFanartMessage(true, "");
   }
   const modeOf = (value) => value === false ? "tmdb" : ["fanart", "tmdb_first", "tmdb"].includes(value) ? value : "fanart";
   [["fanart_pref_logos", "logos"], ["fanart_pref_backgrounds", "backgrounds"]].forEach(([id, name]) => {
@@ -1739,7 +1741,7 @@ async function cwSaveFanartKey() {
   const wasOn = window._cfgCache?.fanart?.enabled === true;
   try {
     if (btn) btn.disabled = true;
-    cwSetFanartMessage(true, "Checking...");
+    cwSetFanartMessage(true, T("settings.meta.checking"));
     const r = await fetch("/api/fanart/save", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -1749,19 +1751,19 @@ async function cwSaveFanartKey() {
     });
     const data = await r.json().catch(() => ({}));
     if (!r.ok || !data?.ok) {
-      cwSetFanartMessage(false, data?.error || "fanart.tv key check failed.");
+      cwSetFanartMessage(false, data?.error || T("settings.meta.fanart.checkFailed"));
       return false;
     }
     cwFanartCacheUpdate({ enabled: true });
     await cwRefreshFanartState();
-    cwSetFanartMessage(true, "Connected");
+    cwSetFanartMessage(true, T("common.status.connected"));
     try { window.dispatchEvent(new CustomEvent("auth-changed")); } catch {}
     if (!wasOn) {
       try { document.dispatchEvent(new CustomEvent("cw-provider-connected", { bubbles: true, detail: { provider: "fanart", key: "FANART_METADATA" } })); } catch {}
     }
     return true;
   } catch {
-    cwSetFanartMessage(false, "fanart.tv key check failed.");
+    cwSetFanartMessage(false, T("settings.meta.fanart.checkFailed"));
     return false;
   } finally {
     cwFanartStateUpdate();
@@ -1786,7 +1788,7 @@ async function cwDeleteFanartKey() {
     try { window.dispatchEvent(new CustomEvent("auth-changed")); } catch {}
     return true;
   } catch {
-    cwSetFanartMessage(false, "fanart.tv delete failed.");
+    cwSetFanartMessage(false, T("settings.meta.fanart.deleteFailed"));
     return false;
   }
 }
@@ -1850,7 +1852,7 @@ function cwMetaSettingsHubUpdate() {
   const dot = document.getElementById("meta-tmdb-dot");
   if (dot) {
     dot.classList.toggle("on", hasKeyNow && !failed);
-    dot.title = verified ? "Verified" : failed ? "TMDb key check failed" : hasKeyNow ? "Configured; click Check to validate" : "Not configured";
+    dot.title = verified ? T("settings.meta.verified") : failed ? T("settings.meta.tmdb.checkFailedShort") : hasKeyNow ? T("settings.meta.tmdb.configuredCheck") : T("common.status.notConfigured");
     dot.setAttribute("aria-label", dot.title);
     dot.closest?.('.cw-meta-provider-panel[data-provider="tmdb"]')?.classList?.toggle("is-configured", hasKeyNow && !failed);
   }
@@ -1858,7 +1860,7 @@ function cwMetaSettingsHubUpdate() {
   const tmdbCheckBtn = document.getElementById("tmdb_check");
   if (tmdbCheckBtn) {
     const connected = verified || (cfgHasKey && !uiTouched);
-    try { window.CW?.AuthShared?.setConnectLocked?.(["tmdb_check"], connected, "Connected — delete the key to reconnect."); }
+    try { window.CW?.AuthShared?.setConnectLocked?.(["tmdb_check"], connected, T("settings.meta.tmdb.connectedLocked")); }
     catch { tmdbCheckBtn.disabled = connected; }
   }
 
@@ -1948,7 +1950,7 @@ function cwMetaSettingsHubEnsure() {
       <img class="cw-hub-logo" src="${tmdbLogo}" alt="" loading="lazy">
       <div>
         <div class="cw-hub-title">TMDb</div>
-        <div class="cw-hub-desc">The Movie Database</div>
+        <div class="cw-hub-desc">${TH("settings.meta.tmdb.desc")}</div>
       </div>
     </div>
     <div class="chips">
@@ -2270,13 +2272,13 @@ async function loadConfig() {
     const el = document.getElementById("app_auth_state");
     if (el) {
       if (!st) el.textContent = "—";
-      else if (!st.configured || st.reset_required) el.textContent = "Auth: set password";
+      else if (!st.configured || st.reset_required) el.textContent = T("settings.security.auth.setPassword");
       else if (st.authenticated) {
         const exp = (st.session_expires_at && st.session_expires_at > 0) ? new Date(st.session_expires_at * 1000) : null;
         el.textContent = !rememberEnabled
-          ? "Auth: signed in (browser session)"
-          : (exp ? `Auth: signed in (until ${exp.toISOString().replace('T',' ').slice(0,16)}Z)` : "Auth: signed in");
-      } else el.textContent = "Auth: locked";
+          ? T("settings.security.auth.browserSession")
+          : (exp ? T("settings.security.auth.signedInUntil", { time: `${exp.toISOString().replace('T',' ').slice(0,16)}Z` }) : T("settings.security.auth.signedIn"));
+      } else el.textContent = T("settings.security.auth.locked");
     }
     const btn = document.getElementById("btn-auth-logout");
     if (btn) btn.disabled = !(st && st.authenticated);
@@ -2313,7 +2315,7 @@ function cwSessionAgentLabel(ua) {
   const browser = cwSessionBrowserLabel(ua);
   if (browser) return browser;
   const text = String(ua || "").trim();
-  if (!text) return "Unknown browser";
+  if (!text) return T("settings.security.sessions.unknownBrowser");
   return text.length > 72 ? `${text.slice(0, 69)}...` : text;
 }
 
@@ -2325,8 +2327,7 @@ function cwRenderOtherSessions(st) {
   const count = Number.isFinite(st?.other_session_count) ? Number(st.other_session_count) : sessions.length;
 
   if (stateEl) {
-    const label = count === 1 ? "browser session" : "browser sessions";
-    stateEl.textContent = `Logged in from: ${count} ${label}`;
+    stateEl.textContent = T("settings.security.sessions.loggedInFrom", { count });
   }
 
   if (detailEl) {
@@ -2372,13 +2373,13 @@ async function cwRefreshAppAuthStatus() {
   const el = document.getElementById("app_auth_state");
   if (el) {
     if (!st) el.textContent = "-";
-    else if (!st.configured || st.reset_required) el.textContent = "Auth: set password";
+    else if (!st.configured || st.reset_required) el.textContent = T("settings.security.auth.setPassword");
     else if (st.authenticated) {
       const exp = (st.session_expires_at && st.session_expires_at > 0) ? new Date(st.session_expires_at * 1000) : null;
       el.textContent = !rememberEnabled
-        ? "Auth: signed in (browser session)"
-        : (exp ? `Auth: signed in (until ${exp.toISOString().replace("T", " ").slice(0, 16)}Z)` : "Auth: signed in");
-    } else el.textContent = "Auth: locked";
+        ? T("settings.security.auth.browserSession")
+        : (exp ? T("settings.security.auth.signedInUntil", { time: `${exp.toISOString().replace("T", " ").slice(0, 16)}Z` }) : T("settings.security.auth.signedIn"));
+    } else el.textContent = T("settings.security.auth.locked");
   }
 
   const btn = document.getElementById("btn-auth-logout");
@@ -2464,13 +2465,13 @@ async function cwVerifyTmdbKey() {
   const state = cwReadTmdbKeyForVerify();
   if (!state.has) {
     if (input) input.dataset.verified = "0";
-    cwSetTmdbCheckMessage(false, "Missing API key");
+    cwSetTmdbCheckMessage(false, T("settings.meta.tmdb.missingKey"));
     try { cwMetaSettingsHubUpdate(); } catch {}
     return false;
   }
   try {
     if (btn) btn.disabled = true;
-    cwSetTmdbCheckMessage(true, "Checking...");
+    cwSetTmdbCheckMessage(true, T("settings.meta.checking"));
     const fresh = !state.masked;
     const r = await fetch(fresh ? "/api/tmdb/save" : "/api/tmdb/verify", {
       method: "POST",
@@ -2482,7 +2483,7 @@ async function cwVerifyTmdbKey() {
     const data = await r.json().catch(() => ({}));
     const ok = !!(r.ok && data && data.valid !== false && data.ok !== false);
     if (input) input.dataset.verified = ok ? "1" : "0";
-    cwSetTmdbCheckMessage(ok, ok ? "Connected" : (data?.error || "TMDb key check failed."));
+    cwSetTmdbCheckMessage(ok, ok ? T("common.status.connected") : (data?.error || T("settings.meta.tmdb.checkFailed")));
     try { cwMetaSettingsHubUpdate(); } catch {}
     if (ok) {
       if (fresh) {
@@ -2496,7 +2497,7 @@ async function cwVerifyTmdbKey() {
     return ok;
   } catch {
     if (input) input.dataset.verified = "0";
-    cwSetTmdbCheckMessage(false, "TMDb key check failed.");
+    cwSetTmdbCheckMessage(false, T("settings.meta.tmdb.checkFailed"));
     try { cwMetaSettingsHubUpdate(); } catch {}
     return false;
   } finally {
@@ -2511,7 +2512,7 @@ async function cwDeleteTmdbKey() {
   try {
     if (btn) btn.disabled = true;
     if (checkBtn) checkBtn.disabled = true;
-    cwSetTmdbCheckMessage(true, "Deleting...");
+    cwSetTmdbCheckMessage(true, T("settings.meta.deleting"));
     const r = await fetch("/api/tmdb/disconnect", {
       method: "POST",
       cache: "no-store",
@@ -2536,10 +2537,10 @@ async function cwDeleteTmdbKey() {
     try { window.manualRefreshStatus?.(); } catch {}
     try { updateTmdbHint(); } catch {}
     try { cwMetaSettingsHubUpdate(); } catch {}
-    cwSetTmdbCheckMessage(false, "Deleted");
+    cwSetTmdbCheckMessage(false, T("settings.meta.deleted"));
     return true;
   } catch {
-    cwSetTmdbCheckMessage(false, "TMDb key delete failed.");
+    cwSetTmdbCheckMessage(false, T("settings.meta.tmdb.deleteFailed"));
     return false;
   } finally {
     if (btn) btn.disabled = false;

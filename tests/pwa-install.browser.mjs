@@ -2,10 +2,12 @@
 /* CrossWatch - Mobile install availability and native prompt lifecycle */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 
+import './i18n-browser-setup.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFile, mkdir} from 'node:fs/promises';
 import {chromium} from 'playwright';
+import {englishFrontendSource} from './i18n-test-helper.mjs';
 
 const styles = ['fonts/material-symbols-rounded','themes/tokens','css/base','crosswatch','css/layout','css/components','css/pages','css/page-theme','ui-shell','themes/flat'];
 
@@ -129,7 +131,7 @@ test('dismissing the banner respects cooldown while keeping manual installation 
 });
 
 test('legacy Compact preferences and links keep full mobile navigation and routes', async t => {
-  const frontend = await readFile(new URL('../ui_frontend.py', import.meta.url),'utf8');
+  const frontend = englishFrontendSource();
   const page = await fixture(t);
   const bootstrap = await page.evaluate(source => {
     const doc = new DOMParser().parseFromString(source, 'text/html');

@@ -6,6 +6,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import vm from "node:vm";
 import {readFileSync} from "node:fs";
+import './i18n-vm-setup.mjs';
 
 const metaSource = readFileSync(new URL("../assets/helpers/provider-meta.js", import.meta.url), "utf8");
 const coreSource = readFileSync(new URL("../assets/helpers/core.js", import.meta.url), "utf8");

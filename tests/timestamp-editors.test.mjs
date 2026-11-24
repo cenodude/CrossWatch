@@ -5,6 +5,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import vm from "node:vm";
 import { readFileSync } from "node:fs";
+import './i18n-vm-setup.mjs';
 
 const read = path => readFileSync(new URL(path, import.meta.url), "utf8");
 const element = tag => ({ tag, children: [], value: "", focus() {}, setAttribute(name, value) { this[name] = value; }, append(...nodes) { this.children.push(...nodes); }, appendChild(node) { this.children.push(node); } });

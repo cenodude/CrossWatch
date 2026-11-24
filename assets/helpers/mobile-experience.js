@@ -2,6 +2,8 @@
 /* CrossWatch - Mobile navigation, sheets and viewport behavior */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 (function () {
+  const T = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.t?.(key, vars) ?? key;
+  const TH = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.html?.(key, vars) ?? key;
   const CW = window.CW ||= {};
   if (CW.MobileUI) return;
   const mobile = matchMedia('(max-width:760px)');
@@ -136,10 +138,10 @@
   function ask(message) {
     if (!mobile.matches) return window.confirm(message);
     const destructive = /\b(delete|remove|discard|clear|reset|replace|unlink|prune)\b/i.test(message);
-    return confirmAction({title:'Confirm action', message, confirmLabel:'Continue', danger:destructive});
+    return confirmAction({title:T("common.mobile.confirmTitle"), message, confirmLabel:T("common.mobile.continue"), danger:destructive});
   }
 
-  function sheet(panel, {title = 'Filters', trigger, onClose} = {}) {
+  function sheet(panel, {title = T("common.mobile.filters"), trigger, onClose} = {}) {
     const existing = panel.closest('dialog.cw-page-panel-sheet');
     if (existing) return existing;
     const anchor = document.createElement('span');
@@ -153,7 +155,7 @@
     const done = document.createElement('button');
     done.type = 'button';
     done.className = 'cw-btn';
-    done.textContent = 'Done';
+    done.textContent = T("common.mobile.done");
     done.addEventListener('click', () => dialog.close());
     const style = panel.getAttribute('style');
     const hidden = panel.hidden;
@@ -175,7 +177,7 @@
     return dialog;
   }
 
-  async function confirmAction({title, message, confirmLabel = 'Remove', danger = true, input = false, initialValue = '', notice = false}) {
+  async function confirmAction({title, message, confirmLabel = T("common.mobile.remove"), danger = true, input = false, initialValue = '', notice = false}) {
     const dialog = document.createElement('dialog');
     dialog.className = 'cw-page-confirm';
     const id = `cw-mobile-confirm-${++serial}`;
@@ -191,7 +193,7 @@
     const cancel = document.createElement('button');
     cancel.type = 'button';
     cancel.className = 'cw-btn';
-    cancel.textContent = 'Cancel';
+    cancel.textContent = T("common.mobile.cancel");
     cancel.hidden = notice;
     const accept = document.createElement('button');
     accept.type = 'button';
@@ -227,12 +229,12 @@
 
   function promptAction(message, initialValue = '') {
     if (!mobile.matches) return window.prompt(message, initialValue);
-    return confirmAction({title:message, message:'', confirmLabel:'Continue', danger:false, input:true, initialValue});
+    return confirmAction({title:message, message:'', confirmLabel:T("common.mobile.continue"), danger:false, input:true, initialValue});
   }
 
   function notice(message) {
     if (!mobile.matches) return window.alert(message);
-    return confirmAction({title:'CrossWatch', message, confirmLabel:'OK', danger:false, notice:true});
+    return confirmAction({title:'CrossWatch', message, confirmLabel:T("common.mobile.ok"), danger:false, notice:true});
   }
 
   function sectionPicker(nav) {
@@ -244,7 +246,7 @@
       picker = document.createElement('label');
       picker.className = 'cw-mobile-section-picker';
       const label = document.createElement('span');
-      label.textContent = 'Section';
+      label.textContent = T("common.mobile.section");
       const select = document.createElement('select');
       select.className = 'cw-input';
       select.addEventListener('change', () => nav.querySelectorAll(':scope > button')[Number(select.value)]?.click());

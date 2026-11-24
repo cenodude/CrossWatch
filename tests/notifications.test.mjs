@@ -6,6 +6,9 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import vm from "node:vm";
 import {readFileSync} from "node:fs";
+import {englishI18n} from "./i18n-test-helper.mjs";
+import './i18n-vm-setup.mjs';
+import {englishFrontendSource} from './i18n-test-helper.mjs';
 
 const script = readFileSync(new URL("../assets/helpers/notifications.js", import.meta.url), "utf8");
 const feedScript = readFileSync(new URL("../assets/js/notification-feed.js", import.meta.url), "utf8");
@@ -28,7 +31,7 @@ function setup(storage = new Map(), {pairs = true, role = "admin", write = "on",
   const document = {head:new Element(),body:new Element(),documentElement:{dataset:{cwRole:role,cwPermWrite:write}},
     getElementById:id=>id==="cw-notifications-css" || (id==="pairs_list" && !pairs) ? null : new Element(),
     createElement:()=>{const el=new Element();elements.push(el);return el;},addEventListener:(name,fn)=>events[name]=fn};
-  const window = {CW:{AuthState:{user:{id:"alice"}},OverviewProfile:{id:"home"}},
+  const window = {CW:{I18n:englishI18n(),AuthState:{user:{id:"alice"}},OverviewProfile:{id:"home"}},
     innerHeight:900,innerWidth:1200,addEventListener:(name,fn)=>events[name]=fn,
     dispatchEvent:event=>dispatched.push(event.type)};
   const context = {window,document,clearTimeout(){},setTimeout(){},navigator:{},location:{href:"http://localhost/",origin:"http://localhost"},URL,
@@ -200,7 +203,7 @@ test("storage events reflect clearing in another tab", () => {
 });
 
 test("profile shell initializes account state and shares Main's dismissals", () => {
-  const frontend = readFileSync(new URL("../ui_frontend.py", import.meta.url), "utf8");
+  const frontend = englishFrontendSource();
   const profileShell = frontend.slice(frontend.indexOf("def get_profile_html("));
   const authScript = profileShell.indexOf('<script src="/assets/helpers/auth-state.js?');
   assert.ok(authScript >= 0);
@@ -342,7 +345,7 @@ test("the push switch explains why it cannot turn on", async () => {
 
 function feed({hidden = false, status = 200, data = {ok:true,items:[],poll:3}} = {}) {
   const events = {}, timers = [], requests = [], received = [];
-  const window = {CW:{AuthState:{user:{id:"alice"}},OverviewProfile:{id:"home"},Notifications:{receive:(value, ctx)=>received.push([value, ctx])}},
+  const window = {CW:{I18n:englishI18n(),AuthState:{user:{id:"alice"}},OverviewProfile:{id:"home"},Notifications:{receive:(value, ctx)=>received.push([value, ctx])}},
     addEventListener:(name,fn)=>{(events[name] ||= []).push(fn);}};
   const document = {hidden, addEventListener:(name,fn)=>{(events[name] ||= []).push(fn);}};
   const context = {window, document, AbortController, clearTimeout(){},

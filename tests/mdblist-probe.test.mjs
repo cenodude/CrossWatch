@@ -5,6 +5,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import vm from "node:vm";
 import { readFileSync } from "node:fs";
+import { withI18n } from './i18n-test-helper.mjs';
+import './i18n-vm-setup.mjs';
 
 const source = path => readFileSync(new URL(path, import.meta.url), "utf8");
 const metadata = source("../assets/helpers/provider-meta.js");
@@ -15,7 +17,7 @@ function setup() {
   const formats = [];
   const window = { CW: { ProfileDateTime: { format(date, options) { formats.push({ date, options }); return "11/10/2026, 01:00 AM CET"; } } } };
   const badge = { classList: { add() {}, remove() {} } };
-  const context = vm.createContext({ window, Date, byId: () => badge, connState: () => "ok", instancesTooltip: () => "" });
+  const context = vm.createContext(withI18n({ window, Date, byId: () => badge, connState: () => "ok", instancesTooltip: () => "" }));
   vm.runInContext(metadata, context);
   Object.assign(context, { meta: window.CW.ProviderMeta, META: window.CW.ProviderMeta, up: v => String(v).toUpperCase() });
   vm.runInContext(main.slice(main.indexOf("  function providerMeta("), main.indexOf("  function updateConn(")), context);
@@ -31,7 +33,7 @@ for (const [plan, vip, label] of [["free", false, "Free"], ["supporter", true, "
     const info = app.context.providerMeta("MDBLIST", data);
     app.context.setBadge("badge-mdblist", "MDBList", data, false, "MDBLIST", data);
     assert.equal(info.vip, vip);
-    assert.equal(info.detail, `Account: tester\nPlan: ${label}\nAPI calls left today: 881 / 1000\nResets: 11/10/2026, 01:00 AM CET`);
+    assert.equal(info.detail, `Account: tester\nPlan: ${label}\nAPI calls left today: 881 / 1,000\nResets: 11/10/2026, 01:00 AM CET`);
     for (const line of info.detail.split("\n")) assert.ok(app.badge.title.includes(line));
     assert.equal(app.formats[0].date.getTime(), reset * 1000);
     assert.equal(app.formats[0].options.timeZoneName, "short");
@@ -41,7 +43,7 @@ for (const [plan, vip, label] of [["free", false, "Free"], ["supporter", true, "
 test("MDBList shows exhausted quotas but hides missing observations", () => {
   const app = setup();
   const data = { username: "tester", plan: "free", daily_remaining: 0, daily_limit: 1000, daily_seen_at: Date.now() / 1000 };
-  assert.match(app.context.providerMeta("MDBLIST", data).detail, /API calls left today: 0 \/ 1000/);
+  assert.match(app.context.providerMeta("MDBLIST", data).detail, /API calls left today: 0 \/ 1,000/);
   for (const quota of [{ daily_remaining: null }, { daily_remaining: -1 }, { daily_remaining: "invalid" }]) {
     assert.equal(app.context.providerMeta("MDBLIST", { ...data, ...quota }).detail, "Account: tester\nPlan: Free");
   }

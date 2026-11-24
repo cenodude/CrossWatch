@@ -2,6 +2,8 @@
 // CrossWatch - Silo Auth UI
 // Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 (function () {
+  const T = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.t?.(key, vars) ?? key;
+  const TH = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.html?.(key, vars) ?? key;
   if (window._siloAuthPatched) return;
   window._siloAuthPatched = true;
 
@@ -61,7 +63,7 @@
     save.disabled = !canSave;
     save.classList.toggle("is-disabled", !canSave);
     if (canSave) save.removeAttribute("title");
-    else save.title = chosen?.has_pin ? "Enter the profile PIN before saving." : "Connect this instance before saving.";
+    else save.title = chosen?.has_pin ? T("connections.auth.enterPinBefore") : T("connections.auth.connectBeforeSave");
   }
 
   function syncConnectLocked() {
@@ -73,7 +75,7 @@
     if (!node) return;
     node.classList.remove("hidden", "ok", "warn");
     node.classList.add(ok ? "ok" : "warn");
-    node.textContent = msg || (ok ? "Connected" : "Not connected");
+    node.textContent = msg || (ok ? T("connections.auth.connected") : T("connections.auth.notConnected"));
     notifyModalState();
   }
 
@@ -115,7 +117,7 @@
       return;
     }
     const left = Math.max(0, Math.floor(exp - Date.now() / 1000));
-    node.textContent = left ? `Expires in ${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")}` : "Expired";
+    node.textContent = left ? T("connections.auth.expiresIn", {time: `${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")}`}) : T("connections.auth.expired");
   }
 
   function stopExpiryTimer() {
@@ -144,7 +146,7 @@
     const url = el("silo_server_url");
     if (url) {
       url.disabled = locked;
-      url.title = locked ? "Disconnect Silo to change the server." : "";
+      url.title = locked ? T("connections.auth.gen.disconnectToChange", {provider: "Silo"}) : "";
     }
     const ssl = el("silo_verify_ssl");
     if (ssl) ssl.disabled = locked;
@@ -177,7 +179,7 @@
     sel.innerHTML = "";
     const placeholder = document.createElement("option");
     placeholder.value = "";
-    placeholder.textContent = profiles.length ? (effective ? "Selected profile unavailable" : "Select Silo profile") : "No Silo profiles loaded";
+    placeholder.textContent = profiles.length ? (effective ? T("connections.auth.profileUnavailableSel") : T("connections.auth.gen.selectProfile", {provider: "Silo"})) : T("connections.auth.gen.noProfiles", {provider: "Silo"});
     placeholder.disabled = true;
     placeholder.selected = true;
     sel.appendChild(placeholder);
@@ -214,10 +216,10 @@
       profileSelectionReady = connected || authenticated;
       syncConnectLocked();
       renderServer(data);
-      if (data.reconnect_required) setStatus(false, "Silo session ended - disconnect and connect again");
-      else if (connected && data.profile_pin_required) setStatus(false, "Enter the Silo profile PIN again");
-      else if (connected) setStatus(true, data.profile_name ? `Silo connected - ${data.profile_name}` : "Silo connected");
-      else if (authenticated) setStatus(false, "Choose a Silo profile to finish setup");
+      if (data.reconnect_required) setStatus(false, T("connections.auth.gen.sessionEndedDisconnect", {provider: "Silo"}));
+      else if (connected && data.profile_pin_required) setStatus(false, T("connections.auth.gen.enterPinAgain", {provider: "Silo"}));
+      else if (connected) setStatus(true, data.profile_name ? T("connections.auth.connectedProfile", {provider: "Silo", profile: data.profile_name}) : T("connections.auth.gen.connected", {provider: "Silo"}));
+      else if (authenticated) setStatus(false, T("connections.auth.gen.chooseProfile", {provider: "Silo"}));
       else hideStatus();
       await refreshProfiles(data);
       if (connected && data.profile_pin_required) {
@@ -228,32 +230,32 @@
       connected = false;
       authenticated = false;
       syncConnectLocked();
-      setStatus(false, "Silo status failed");
+      setStatus(false, T("connections.auth.gen.statusFailed", {provider: "Silo"}));
     }
   }
 
   function friendlyError(code) {
     switch (String(code || "")) {
-      case "invalid_url": return "Enter a valid Silo server URL";
-      case "connection_failed": return "Could not reach the Silo server";
-      case "ssl_error": return "SSL check failed - fix the certificate or turn off Verify SSL";
-      case "not_silo": return "That URL is not a Silo server";
-      case "http_error": return "Silo server returned an error";
-      case "device_login_unavailable": return "Device sign-in is disabled on this Silo server";
-      case "disconnect_first": return "Disconnect Silo before changing the server";
-      case "rate_limited": return "Silo is rate limiting sign-in - try again shortly";
-      case "service_unavailable": return "Silo service unavailable";
-      case "reconnect_required": return "Silo session ended - connect again";
-      case "authentication_failed": return "Silo authentication failed";
-      case "profile_unavailable": return "Selected Silo profile is unavailable";
-      case "pin_required": return "Enter the profile PIN";
-      case "invalid_pin": return "Incorrect profile PIN";
-      case "pin_locked": return "Too many incorrect PINs - try again later";
-      case "invalid_response": return "Silo returned an unexpected response";
-      case "denied": return "The sign-in was denied on Silo";
-      case "canceled": return "The sign-in was canceled";
-      case "consumed": return "That code was already used - connect again";
-      default: return "Silo request failed";
+      case "invalid_url": return T("connections.auth.gen.validServerUrl", {provider: "Silo"});
+      case "connection_failed": return T("connections.auth.gen.reachServer", {provider: "Silo"});
+      case "ssl_error": return T("connections.auth.sslFailed");
+      case "not_silo": return T("connections.auth.gen.notServer", {provider: "Silo"});
+      case "http_error": return T("connections.auth.gen.serverReturnedError", {provider: "Silo"});
+      case "device_login_unavailable": return T("connections.auth.gen.deviceDisabled", {provider: "Silo"});
+      case "disconnect_first": return T("connections.auth.gen.disconnectBefore", {provider: "Silo"});
+      case "rate_limited": return T("connections.auth.gen.rateLimitingSignIn", {provider: "Silo"});
+      case "service_unavailable": return T("connections.auth.gen.serviceUnavailable", {provider: "Silo"});
+      case "reconnect_required": return T("connections.auth.gen.sessionEnded", {provider: "Silo"});
+      case "authentication_failed": return T("connections.auth.gen.authenticationFailed", {provider: "Silo"});
+      case "profile_unavailable": return T("connections.auth.gen.profileUnavailable", {provider: "Silo"});
+      case "pin_required": return T("connections.auth.enterPin");
+      case "invalid_pin": return T("connections.auth.incorrectPin");
+      case "pin_locked": return T("connections.auth.pinLocked");
+      case "invalid_response": return T("connections.validation.returnedUnexpected", {provider: "Silo"});
+      case "denied": return T("connections.auth.gen.deniedOn", {provider: "Silo"});
+      case "canceled": return T("connections.auth.silo.canceled");
+      case "consumed": return T("connections.auth.silo.consumed");
+      default: return T("connections.auth.gen.requestFailedShort", {provider: "Silo"});
     }
   }
 
@@ -285,22 +287,22 @@
         return { state: "pending", intervalMs: Math.max(3000, Number(data?.interval || 3) * 1000) };
       },
       onPending(data) {
-        setPolling(data?.opened ? "Code opened on Silo - waiting for approval..." : "Waiting for approval...");
+        setPolling(data?.opened ? T("connections.auth.gen.codeOpened", {provider: "Silo"}) : T("connections.auth.waitingApproval"));
       },
       async onAuthorized(data) {
         setLoginState(false);
         setPolling("");
         authenticated = true;
         profileSelectionReady = true;
-        note("Silo sign-in approved");
+        note(T("connections.auth.gen.signInApproved", {provider: "Silo"}));
         try { window.dispatchEvent(new CustomEvent("auth-changed")); } catch {}
         await refresh();
-        if (!connected) setStatus(false, "Choose a Silo profile to finish setup");
+        if (!connected) setStatus(false, T("connections.auth.gen.chooseProfile", {provider: "Silo"}));
       },
       onExpired() {
         setLoginState(false);
         setPolling("");
-        setStatus(false, "Silo code expired - connect again");
+        setStatus(false, T("connections.auth.gen.codeExpiredConnect", {provider: "Silo"}));
       },
       onTerminal(verdict) {
         setLoginState(false);
@@ -308,7 +310,7 @@
       },
       onTimeout() {
         setLoginState(false);
-        setStatus(false, "Silo sign-in timed out");
+        setStatus(false, T("connections.auth.gen.signInTimedOut", {provider: "Silo"}));
       },
     });
     return poller;
@@ -320,23 +322,23 @@
       setStatus(false, friendlyError("invalid_url"));
       return;
     }
-    const win = Shared.openWaitWindow("Silo", "Contacting your Silo server...", "SILO");
+    const win = Shared.openWaitWindow("Silo", T("connections.auth.gen.contactingServer", {provider: "Silo"}), "SILO");
     try {
       profileSelectionReady = false;
       renderProfiles([], "", false);
-      setStatus(false, "Contacting Silo server...");
+      setStatus(false, T("connections.auth.gen.contactingServerShort", {provider: "Silo"}));
       const r = await jsonPost("/api/silo/device/start", { server_url: serverUrl, verify_ssl: !!el("silo_verify_ssl")?.checked });
       const data = r.data || {};
       if (!r.ok || !data.ok) throw new Error(String(data.error || "start_failed"));
       setLoginState(true, data);
-      setStatus(false, "Waiting for Silo approval");
-      setPolling("Waiting for approval...");
+      setStatus(false, T("connections.auth.gen.waitingApproval", {provider: "Silo"}));
+      setPolling(T("connections.auth.waitingApproval"));
       const url = txt(data.verification_uri_complete || data.verification_uri);
       if (url && win && !win.closed) {
         Shared.showWaitCode(win, { key: "SILO", label: "Silo", code: txt(data.user_code), url });
       } else if (url) {
         try { window.open(url, "_blank", "noopener"); } catch {}
-        note("Popup blocked - open the Silo activate link.");
+        note(T("connections.auth.silo.popup"));
       } else {
         try { if (win && !win.closed) win.close(); } catch {}
       }
@@ -361,11 +363,11 @@
       syncServerUI();
       stopPendingLogin(false);
       renderProfiles([], "", false);
-      setStatus(false, "Silo disconnected");
-      note("Silo disconnected");
+      setStatus(false, T("connections.auth.gen.disconnected", {provider: "Silo"}));
+      note(T("connections.auth.gen.disconnected", {provider: "Silo"}));
       try { window.dispatchEvent(new CustomEvent("auth-changed")); } catch {}
     } catch {
-      note("Silo disconnect failed");
+      note(T("connections.auth.gen.disconnectFailed", {provider: "Silo"}));
     }
   }
 
@@ -386,7 +388,7 @@
     profileSelectionReady = true;
     savedProfileId = String(chosen.id);
     syncPinField();
-    setStatus(true, `Silo connected - ${txt(r.data?.profile_name || chosen.name)}`);
+    setStatus(true, T("connections.auth.connectedProfile", {provider: "Silo", profile: txt(r.data?.profile_name || chosen.name)}));
     try { window.invalidateConfigCache?.(); } catch {}
     try { window.CW?.Cache?.invalidate?.("config"); } catch {}
     setTimeout(async () => {
@@ -395,7 +397,7 @@
       try { window.manualRefreshStatus?.(); } catch {}
     }, 0);
     try { window.dispatchEvent(new CustomEvent("auth-changed")); } catch {}
-    if (!opts.silent) note("Silo profile saved");
+    if (!opts.silent) note(T("connections.auth.gen.profileSaved", {provider: "Silo"}));
     return true;
   }
 
@@ -423,7 +425,7 @@
     if (copy && !copy.__wired) {
       copy.addEventListener("click", (ev) => {
         ev.preventDefault();
-        void Shared.copyField("silo_code_input", copy, { emptyMessage: "Nothing to copy" });
+        void Shared.copyField("silo_code_input", copy, { emptyMessage: T("connections.auth.nothingToCopy") });
       });
       copy.__wired = true;
     }
@@ -436,7 +438,7 @@
     if (!host) return;
     if (!connected) {
       host.__cwSyncUsersState = null;
-      host.innerHTML = '<div class="cw-wl cw-su"><div class="cw-wl-empty">Connect Silo and choose a profile before adding household users.</div></div>';
+      host.innerHTML = `<div class="cw-wl cw-su"><div class="cw-wl-empty">${TH("connections.auth.chooseBeforeUsers", {provider: "Silo"})}</div></div>`;
       return;
     }
     try { window.CW?.SyncUsers?.mount(host, "silo", profile.getInstance ? profile.getInstance() : "default"); } catch {}
@@ -465,7 +467,7 @@
     if (!host) return;
     if (!connected) {
       wlHandle = null;
-      host.innerHTML = '<div class="cw-wl"><div class="cw-wl-empty">Connect Silo and choose a profile before whitelisting libraries.</div></div>';
+      host.innerHTML = `<div class="cw-wl"><div class="cw-wl-empty">${TH("connections.auth.chooseBeforeLibs", {provider: "Silo"})}</div></div>`;
       return;
     }
     if (!librariesHydrated) {
@@ -481,7 +483,7 @@
       host.innerHTML = "";
       wlHandle = window.cwWhitelistTable.mount({
         host,
-        features: [{ key: "hist", label: "History" }, { key: "rate", label: "Ratings" }, { key: "prog", label: "Progress" }, { key: "coll", label: "Collections" }, { key: "scr", label: "Scrobble", title: "Libraries the watcher reads from. Scrobble destinations use History and Progress, or the libraries set on the route." }],
+        features: [{ key: "hist", label: T("connections.auth.feat.history") }, { key: "rate", label: T("connections.auth.feat.ratings") }, { key: "prog", label: T("connections.auth.feat.progress") }, { key: "coll", label: T("connections.auth.feat.collections") }, { key: "scr", label: T("connections.auth.feat.scrobble"), title: T("connections.auth.feat.scrobbleWatcherTitle") }],
         getLibs: () => libraries,
         isOn: (fk, id) => libSets[fk].has(String(id)),
         selectedIds: () => Object.values(libSets).flatMap((set) => [...set]),

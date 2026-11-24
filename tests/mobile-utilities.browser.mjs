@@ -2,10 +2,12 @@
 /* CrossWatch - Mobile import previews and live log controls */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 
+import './i18n-browser-setup.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFile, mkdir} from 'node:fs/promises';
 import {chromium} from 'playwright';
+import {englishFrontendSource} from './i18n-test-helper.mjs';
 
 async function fixture(t,width,kind) {
   const browser=await chromium.launch({headless:true});
@@ -14,7 +16,7 @@ async function fixture(t,width,kind) {
   page.setDefaultTimeout(6000);
   const errors=[],requests=[];
   page.on('pageerror',error=>errors.push(error.message));
-  const source=await readFile(new URL('../ui_frontend.py',import.meta.url),'utf8');
+  const source=englishFrontendSource();
   const detailsStart=source.indexOf('<div id="details"');
   const details=source.slice(detailsStart,source.indexOf('  <section id="stats-card"',detailsStart));
   const css=['fonts/material-symbols-rounded','themes/tokens','css/base','crosswatch','css/layout','css/components','css/pages','css/page-theme','themes/flat'];

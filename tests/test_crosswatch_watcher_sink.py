@@ -11,6 +11,7 @@ import providers.scrobble.watch_manager as watch_manager
 from providers.scrobble.crosswatch.sink import CrossWatchSink
 from providers.scrobble.routes import build_route_cfg, normalize_route
 from providers.scrobble.scrobble import ScrobbleEvent
+from tests.i18n_source import english_source
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -306,10 +307,10 @@ def test_crosswatch_rewatch_webhook_settings_reach_the_sink() -> None:
 
 
 def test_scrobbler_route_modal_lists_crosswatch_sink() -> None:
-    text = (ROOT / "assets" / "js" / "modals" / "scrobbler-route" / "index.js").read_text("utf-8")
-    scrobbler = (ROOT / "assets" / "js" / "scrobbler.js").read_text("utf-8")
+    text = english_source((ROOT / "assets" / "js" / "modals" / "scrobbler-route" / "index.js").read_text("utf-8"))
+    scrobbler = english_source((ROOT / "assets" / "js" / "scrobbler.js").read_text("utf-8"))
     css = (ROOT / "assets" / "css" / "providers.css").read_text("utf-8")
-    meta = (ROOT / "assets" / "helpers" / "provider-meta.js").read_text("utf-8")
+    meta = english_source((ROOT / "assets" / "helpers" / "provider-meta.js").read_text("utf-8"))
 
     assert '"crosswatch"' in text.split("const sinks")[1].split("]")[0]
     assert '"crosswatch"' in text.split("const ratingSinks")[1].split("]")[0]
@@ -325,7 +326,7 @@ def test_scrobbler_route_modal_lists_crosswatch_sink() -> None:
 
 
 def test_scrobbler_webhook_modal_lists_crosswatch_sink() -> None:
-    text = (ROOT / "assets" / "js" / "modals" / "scrobbler-webhook" / "index.js").read_text("utf-8")
+    text = english_source((ROOT / "assets" / "js" / "modals" / "scrobbler-webhook" / "index.js").read_text("utf-8"))
 
     assert '"crosswatch"' in text.split("const sinks")[1].split("]")[0]
     assert '"crosswatch"' in text.split("const ratingSinks")[1].split("]")[0]

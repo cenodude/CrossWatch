@@ -2,6 +2,8 @@
 /* CrossWatch - MyAnimeList hosted login and account connection */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 (function () {
+  const T = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.t?.(key, vars) ?? key;
+  const TH = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.html?.(key, vars) ?? key;
   if (window.cwAuth?.myanimelist) return;
   const Shared = window.CW.AuthShared, el = Shared.el;
   const profile = Shared.createProfileAdapter({ provider: "myanimelist", configKey: "myanimelist", label: "MyAnimeList", sectionId: "sec-myanimelist", selectId: "myanimelist_instance", storageKey: "cw.ui.myanimelist.auth.instance.v1" });
@@ -16,7 +18,7 @@
   }
 
   function errorText(code) {
-    return ({ network_dns: "CrossWatch could not resolve the authentication service hostname. Check DNS on the CrossWatch server.", network_tls: "CrossWatch could not establish a trusted TLS connection to the authentication service. Check the server clock and CA certificates.", network_proxy: "CrossWatch could not connect through its configured proxy. Check the server proxy settings.", network_timeout: "The CrossWatch server timed out contacting the authentication service. Please try again.", network_connection: "The CrossWatch server could not connect to the authentication service. Check its outbound network access.", broker_unavailable: "MyAnimeList login is not available on this installation yet.", network_error: "Could not reach the authentication service. Please try again.", broker_error: "The authentication service is temporarily unavailable.", invalid_client: "MyAnimeList login is temporarily unavailable.", invalid_response: "The authentication service returned an incomplete response.", invalid_account: "Could not verify your MyAnimeList account.", account_unavailable: "Could not reach your MyAnimeList account.", invalid_flow: "This login is no longer active. Connect again.", expired_flow: "This login expired. Connect again.", rate_limited: "Please wait before trying again.", access_denied: "Access was declined.", reconnect_required: "Your connection expired. Connect again." })[code] || "MyAnimeList login failed. Please try again.";
+    return (["network_dns", "network_tls", "network_proxy", "network_timeout", "network_connection", "broker_unavailable", "network_error", "broker_error", "invalid_client", "invalid_response", "invalid_account", "account_unavailable", "invalid_flow", "expired_flow", "rate_limited", "access_denied", "reconnect_required"].includes(code) ? T(`connections.auth.mal.err.${code}`) : T("connections.auth.mal.err.fallback"));
   }
 
   function setStatus(connected, message) {
@@ -59,7 +61,7 @@
     if (current !== generation || !flow) return;
     const active = flow;
     const seconds = Math.max(0, Math.ceil(active.expires_at - Date.now() / 1000));
-    el("myanimelist_login_timer").textContent = 'Login session: ' + seconds + ' seconds remaining';
+    el("myanimelist_login_timer").textContent = T("connections.auth.sessionSeconds", {count: seconds});
     if (!seconds) { await cancel(); setStatus(false, errorText("expired_flow")); return; }
     try {
       const response = await post("oauth/poll", active.instance, { flow_id: active.flow_id });
@@ -77,7 +79,7 @@
       await refresh();
       document.dispatchEvent(new CustomEvent("cw-provider-connected", { bubbles: true, detail: { provider: "myanimelist", key: "MYANIMELIST", instance: active.instance } }));
       window.dispatchEvent(new Event("auth-changed"));
-      Shared.notify("MyAnimeList connected");
+      Shared.notify(T("connections.auth.mal.connected"));
     } catch (_) {
       if (current === generation) { setStatus(false, errorText("network_error")); schedule(current, 5); }
     }
@@ -91,7 +93,7 @@
     const button = el("myanimelist_oauth_start");
     button.disabled = true;
     button.classList.add("busy");
-    popup = Shared.openWaitWindow("MyAnimeList", "Preparing the MyAnimeList approval page...");
+    popup = Shared.openWaitWindow("MyAnimeList", T("connections.auth.mal.preparing"));
     const win = popup;
     try {
       const response = await post("oauth/start", instance);
@@ -106,10 +108,10 @@
       flow = { instance, flow_id: data.flow_id, expires_at: data.expires_at };
       el("myanimelist_approval_link").href = url.href;
       pending(true);
-      setStatus(false, "Approve CrossWatch in MyAnimeList. Waiting for authorization...");
+      setStatus(false, T("connections.auth.mal.approve"));
       schedule(current, Math.max(3, Number(data.interval) || 5));
       if (win && !win.closed) { win.location.replace(url.href); popup = null; }
-      else Shared.notify("Use the approval link to open MyAnimeList.");
+      else Shared.notify(T("connections.auth.mal.useLink"));
     } catch (error) {
       if (current === generation) { await cancel(); setStatus(false, errorText(error.message)); }
     } finally {
@@ -123,7 +125,7 @@
       const response = await Shared.fetchJSON(api("status", instance), { cache: "no-store" });
       if (current !== generation || instance !== profile.getInstance() || flow || starting) return;
       const data = response.data || {}, connected = response.ok && !!data.connected;
-      setStatus(connected, connected ? 'Connected' + (data.username ? ' as ' + data.username : '') : data.error ? errorText(data.reason || data.error) : data.reauth_required ? errorText("reconnect_required") : data.login_available ? "Not connected" : errorText("broker_unavailable"));
+      setStatus(connected, connected ? (data.username ? T("connections.auth.connectedAs", {name: data.username}) : T("connections.auth.connected")) : data.error ? errorText(data.reason || data.error) : data.reauth_required ? errorText("reconnect_required") : data.login_available ? T("connections.auth.notConnected") : errorText("broker_unavailable"));
       if (!connected && !data.login_available && el("myanimelist_oauth_start")) el("myanimelist_oauth_start").disabled = true;
     } catch (_) { if (current === generation) setStatus(false, errorText("network_error")); }
   }
@@ -133,7 +135,7 @@
     await cancel();
     const response = await post("disconnect", instance);
     if (Shared.reportProviderUsage(response)) return;
-    if (!response.ok || !response.data?.ok) { Shared.notify("Could not disconnect MyAnimeList"); return; }
+    if (!response.ok || !response.data?.ok) { Shared.notify(T("connections.auth.mal.disconnectFailed")); return; }
     window.dispatchEvent(new Event("auth-changed"));
     await refresh();
   }
@@ -145,7 +147,7 @@
       const button = el(id);
       if (button && !button.dataset.malWired) {
         button.dataset.malWired = "1";
-        button.addEventListener("click", () => { void action().catch(() => Shared.notify("Could not update MyAnimeList")); });
+        button.addEventListener("click", () => { void action().catch(() => Shared.notify(T("connections.auth.mal.updateFailed"))); });
       }
     }
     void refresh();

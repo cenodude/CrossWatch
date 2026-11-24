@@ -2,6 +2,9 @@
 /* Shared metadata accessors for the pair-config modal. */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 
+const I18N = () => globalThis.window?.CW?.I18n || globalThis.window?.__cwI18n;
+const T = (key, vars) => I18N()?.t?.(key, vars) ?? key;
+const TH = (key, vars) => I18N()?.html?.(key, vars) ?? key;
 export const FLOW_FEATURE_COLORS = {
   globals: "124,92,255",
   providers: "124,92,255",
@@ -21,8 +24,8 @@ export const sharedFeatureOrder = () =>
 
 export const sharedFeatureLabel = (key) => {
   const k = String(key || "").trim().toLowerCase();
-  if (k === "globals") return "General";
-  if (k === "providers") return "Providers";
+  if (k === "globals") return T("pairs.meta.general");
+  if (k === "providers") return T("pairs.meta.providers");
   return featureMeta()?.label?.(k) || k || "?";
 };
 
@@ -37,7 +40,7 @@ export function iconPath(name) {
 export function providerLogoHTML(name, label) {
   const key = String(name || "").trim().toUpperCase();
   const src = iconPath(key);
-  const alt = (label || name || "Provider") + " logo";
+  const alt = T("editor.sendModal.logo", {name: label || name || T("pairs.meta.provider")});
   const fallback = label || providerMeta()?.label?.(key) || name || "-";
   return `<span class="prov-wrap"><img class="prov-logo" src="${src}" alt="${alt}" width="36" height="36" onerror="this.style.display='none'; this.nextElementSibling.style.display='inline-block'"/><span class="prov-fallback" style="display:none">${fallback}</span></span>`;
 }

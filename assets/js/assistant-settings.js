@@ -2,6 +2,8 @@
 /* CrossWatch - Assistant provider settings */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 (function (w, d) {
+  const T = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.t?.(key, vars) ?? key;
+  const TH = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.html?.(key, vars) ?? key;
   if (w.cwAssistantSettings) return;
 
   const API = "/api/assistant";
@@ -15,8 +17,8 @@
   const LOCAL = new Set(["ollama", "lmstudio"]);
   const DEFAULT_PRESET = "gemini";
   const DEFAULT_MODELS = { gemini: "gemini-flash-lite-latest" };
-  const KEY_NOTE = "From the provider's developer page. A ChatGPT or Claude subscription does not include one.";
-  const GEMINI_KEY_NOTE = "Get a free key at aistudio.google.com. On Google's free tier, what you send can be used to improve Google's products. CrossWatch hides keys and tokens, but titles, logs and settings are sent.";
+  const KEY_NOTE = T("assistant.settings.keyNote");
+  const GEMINI_KEY_NOTE = T("assistant.settings.geminiNote");
   const LOG_QUESTIONS = {
     sync: "Analyze the latest sync run in the sync log. Tell me what happened and whether anything went wrong.",
     watcher: "Analyze the recent watcher log. Is scrobbling working, and did anything go wrong?",
@@ -36,7 +38,7 @@
     const preview = /(?:^|[-_/])(?:preview|experimental|exp)(?:$|[-_/])/i.test(name);
     const latest = /(?:^|[-_/:])latest(?:$|[-_/:])/i.test(name);
     const rank = preview ? 2 : latest ? 0 : 1;
-    return {id, name, specialist, rank, label: [name, preview ? "Preview" : "", specialist ? "Likely specialist" : ""].filter(Boolean).join(" · ")};
+    return {id, name, specialist, rank, label: [name, preview ? T("assistant.settings.preview") : "", specialist ? T("assistant.settings.specialist") : ""].filter(Boolean).join(" · ")};
   }
 
   function renderModels() {
@@ -56,7 +58,7 @@
 
   function invalidateModels(clear = false) {
     revision++;
-    if ($("assistant_model_test")) $("assistant_model_test").textContent = "Optional check. Uses two short requests; provider charges may apply.";
+    if ($("assistant_model_test")) $("assistant_model_test").textContent = T("assistant.settings.optionalCheck");
     if (clear) {
       models = [];
       renderModels();
@@ -102,10 +104,10 @@
   }
 
   function hint() {
-    if (LOCAL.has(preset)) return "Enter the address of your model, choose a model and save.";
-    if (preset === "custom") return "Enter the address and key of your provider, choose a model and save.";
-    if (DEFAULT_MODELS[preset]) return "Paste your key and click Save and turn on. The model is already filled in.";
-    return "Add your key, choose a model and save.";
+    if (LOCAL.has(preset)) return T("assistant.settings.local");
+    if (preset === "custom") return T("assistant.settings.custom");
+    if (DEFAULT_MODELS[preset]) return T("assistant.settings.paste");
+    return T("assistant.settings.addKey");
   }
 
   function renderPreset() {
@@ -115,14 +117,12 @@
     $("assistant_url_field")?.classList.toggle("hidden", !(LOCAL.has(preset) || preset === "custom"));
     $("assistant_key_field")?.classList.toggle("hidden", LOCAL.has(preset));
     const key = $("assistant_api_key");
-    if (key) key.placeholder = keyKept() ? "Saved. Leave empty to keep it" : "Paste your key";
+    if (key) key.placeholder = keyKept() ? T("assistant.settings.kept") : T("assistant.settings.pasteKey");
     const note = $("assistant_key_note");
     if (note) note.textContent = preset === "gemini" ? GEMINI_KEY_NOTE : KEY_NOTE;
   }
 
-  const ASK_ON = "Ask CrossWatch";
-  const ASK_WIKI = "Ask CrossWatch (wiki only)";
-  const ASK_OFF = "Ask CrossWatch: set up the assistant under Settings, UI and Security, Security first";
+  const askLabel = key => T(`assistant.ask.${key}`);
 
   function modeOf(conf) {
     if (conf?.mode === "full" || conf?.mode === "wiki" || conf?.mode === "off") return conf.mode;
@@ -138,8 +138,8 @@
     btn.id = "cw-ask-button";
     btn.type = "button";
     btn.disabled = true;
-    btn.title = ASK_OFF;
-    btn.setAttribute("aria-label", ASK_OFF);
+    btn.title = askLabel("off");
+    btn.setAttribute("aria-label", askLabel("off"));
     btn.innerHTML = '<span class="material-symbols-rounded" aria-hidden="true">auto_awesome</span>';
     ($("cw-notifications-button") || account).before(btn);
     return btn;
@@ -149,7 +149,7 @@
     d.documentElement.dataset.cwAssistant = mode === "full" ? "on" : "off";
     const btn = askButton();
     if (!btn) return;
-    const label = mode === "full" ? ASK_ON : mode === "wiki" ? ASK_WIKI : ASK_OFF;
+    const label = askLabel(mode === "full" ? "on" : mode === "wiki" ? "wiki" : "off");
     btn.disabled = mode === "off";
     btn.title = label;
     btn.setAttribute("aria-label", label);
@@ -173,15 +173,15 @@
     renderPreset();
     const pill = $("assistant_pill");
     if (pill) {
-      pill.textContent = conf.ready ? `On, ${conf.model}` : conf.base_url && conf.model ? "Turned off" : mode === "wiki" ? "Wiki only" : "Off";
+      pill.textContent = conf.ready ? T("assistant.settings.onModel", {model: conf.model}) : conf.base_url && conf.model ? T("assistant.settings.turnedOff") : mode === "wiki" ? T("assistant.settings.wikiOnly") : T("assistant.settings.off");
       pill.dataset.state = conf.ready ? "on" : "off";
     }
     if (conf.ready) setStatus("");
-    else if (conf.base_url && conf.model) setStatus("Set up, but turned off.");
+    else if (conf.base_url && conf.model) setStatus(T("assistant.settings.setUpOff"));
     else setStatus(hint());
     $("btn-assistant-open").disabled = mode === "off";
     $("btn-assistant-off").classList.toggle("hidden", !conf.enabled);
-    $("btn-assistant-save").textContent = conf.enabled ? "Save" : "Save and turn on";
+    $("btn-assistant-save").textContent = conf.enabled ? T("assistant.settings.save") : T("assistant.settings.saveOn");
   }
 
   async function refresh() {
@@ -190,7 +190,7 @@
     try {
       render(await api("/settings"));
     } catch (err) {
-      setStatus(err?.message || "Could not load the assistant settings.", "error");
+      setStatus(err?.message || T("assistant.settings.loadFailed"), "error");
     }
   }
 
@@ -221,29 +221,29 @@
 
   async function save(enabled) {
     const body = { ...fields(), enabled };
-    if (enabled && !body.base_url) return setStatus("Enter the address of your model first.", "error");
-    if (enabled && !body.model) return setStatus("Choose a model first. Load models lists what your provider offers.", "error");
+    if (enabled && !body.base_url) return setStatus(T("assistant.settings.addressFirst"), "error");
+    if (enabled && !body.model) return setStatus(T("assistant.settings.modelFirst"), "error");
     try {
       render(await api("/settings", body));
-      toast(enabled ? "Assistant is on" : "Assistant is off", true);
+      toast(enabled ? T("assistant.settings.isOn") : T("assistant.settings.isOff"), true);
     } catch (err) {
-      setStatus(err?.message || "Could not save", "error");
+      setStatus(err?.message || T("assistant.settings.couldNotSave"), "error");
     }
   }
 
   async function saveWikiHelp(on) {
     try {
       render(await api("/settings", { wiki_help: on }));
-      toast(on ? "Wiki answers are on" : "Wiki answers are off", true);
+      toast(on ? T("assistant.settings.wikiOn") : T("assistant.settings.wikiOff"), true);
     } catch (err) {
-      setStatus(err?.message || "Could not save", "error");
+      setStatus(err?.message || T("assistant.settings.couldNotSave"), "error");
     }
   }
 
   async function loadModels() {
     const btn = $("btn-assistant-models");
     if (btn) btn.disabled = true;
-    setStatus("Asking your provider which models it has...");
+    setStatus(T("assistant.settings.asking"));
     const started = revision;
     try {
       const { base_url, api_key } = fields();
@@ -251,10 +251,10 @@
       if (started !== revision) return;
       models = (data.models || []).filter(name => typeof name === "string");
       renderModels();
-      setStatus(models.length ? "Models loaded. Type in the model field to search." : "Your provider listed no models. Type the model ID instead.", models.length ? "good" : "");
+      setStatus(models.length ? T("assistant.settings.modelsLoaded") : T("assistant.settings.noModels"), models.length ? "good" : "");
       $("assistant_model")?.focus();
     } catch (err) {
-      if (started === revision) setStatus(err?.message || "Could not load the models", "error");
+      if (started === revision) setStatus(err?.message || T("assistant.settings.modelsFailed"), "error");
     } finally {
       if (btn) btn.disabled = false;
     }
@@ -263,20 +263,20 @@
   async function testModel() {
     const body = fields();
     const status = $("assistant_model_test");
-    if (!body.model || !body.base_url) { status.textContent = "Enter a provider address and choose a model first."; return; }
+    if (!body.model || !body.base_url) { status.textContent = T("assistant.settings.needBoth"); return; }
     const button = $("btn-assistant-test");
     if (button.disabled) return;
     button.disabled = true;
     const started = revision;
-    status.textContent = "Testing a tool call and text reply…";
+    status.textContent = T("assistant.settings.testing");
     try {
       const data = await api("/test-model", body);
       if (started !== revision) return;
-      status.textContent = data.compatible ? "Passed: this model can use assistant tools."
-        : !data.tool_call ? "The model did not make the required tool call. Try another model."
-        : "The tool call worked, but the model did not return a text answer. Try another model.";
+      status.textContent = data.compatible ? T("assistant.settings.passed")
+        : !data.tool_call ? T("assistant.settings.noTool")
+        : T("assistant.settings.noText");
     } catch (err) {
-      if (started === revision) status.textContent = `Could not verify compatibility: ${err?.message || "Request failed"}`;
+      if (started === revision) status.textContent = T("assistant.settings.verifyFailed", {error: err?.message || T("assistant.settings.requestFailed")});
     } finally { button.disabled = false; }
   }
 

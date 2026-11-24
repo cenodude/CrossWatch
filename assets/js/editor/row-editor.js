@@ -3,6 +3,8 @@
 (function () {
   const NS = (window.CW ||= {});
   const Editor = (NS.Editor ||= {});
+  const T = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.t?.(key, vars) ?? key;
+  const TH = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.html?.(key, vars) ?? key;
 
   function updateTypeDisplay(row, el) {
     if (!el) return;
@@ -10,19 +12,19 @@
     let icon = "category";
     const t = (row?.type || "").toLowerCase();
     if (t === "movie") {
-      label = "Movie";
+      label = T("editor.rowType.movie");
       icon = "movie";
     } else if (t === "show") {
-      label = "Show";
+      label = T("editor.rowType.show");
       icon = "monitoring";
     } else if (t === "anime") {
-      label = "Anime";
+      label = T("editor.rowType.anime");
       icon = "auto_awesome";
     } else if (t === "season") {
-      label = "Season";
+      label = T("editor.rowType.season");
       icon = "layers";
     } else if (t === "episode") {
-      label = "Episode";
+      label = T("editor.rowType.episode");
       icon = "open_in_new";
     }
 
@@ -35,7 +37,7 @@
       text.textContent = label;
       text.classList.add("cw-extra-display-value");
     } else {
-      text.textContent = "Set type";
+      text.textContent = T("editor.rowType.set");
       text.classList.add("cw-extra-display-placeholder");
     }
     el.appendChild(text);
@@ -50,7 +52,7 @@
     const locked = !!ctx.isRowLocked(row);
 
     ctx.openPopup(anchor, (pop, close) => {
-      ctx.appendPopupTitle(pop, "Type");
+      ctx.appendPopupTitle(pop, T("editor.rowType.type"));
       if (locked) return ctx.renderLockedPopup(pop, close);
 
       const grid = document.createElement("div");
@@ -58,11 +60,11 @@
       const current = (row.type || "").toLowerCase();
       const allowed = ctx.allowedTypesForKind(ctx.state.kind);
       const options = [
-        { key: "movie", label: "Movie" },
-        { key: "show", label: "Show" },
-        { key: "anime", label: "Anime" },
-        { key: "season", label: "Season" },
-        { key: "episode", label: "Episode" },
+        { key: "movie", label: T("editor.rowType.movie") },
+        { key: "show", label: T("editor.rowType.show") },
+        { key: "anime", label: T("editor.rowType.anime") },
+        { key: "season", label: T("editor.rowType.season") },
+        { key: "episode", label: T("editor.rowType.episode") },
       ].filter(o => allowed.includes(o.key));
 
       options.forEach(opt => {
@@ -82,7 +84,7 @@
       pop.appendChild(grid);
       ctx.appendPopupActions(pop, [
         {
-          label: "Clear",
+          label: T("editor.rowType.clear"),
           kind: "ghost",
           onClick: () => {
             row.type = "";
@@ -91,7 +93,7 @@
             ctx.finishPopupChange(close, true);
           }
         },
-        { label: "Close", kind: "ghost", onClick: close },
+        { label: T("editor.raw.close"), kind: "ghost", onClick: close },
       ]);
     });
   }

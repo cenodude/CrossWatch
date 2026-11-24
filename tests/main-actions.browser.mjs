@@ -1,12 +1,14 @@
 // tests/main-actions.browser.mjs
 // CrossWatch - Sync Hub action alignment across available widths
 // Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
+import './i18n-browser-setup.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFile,mkdir} from 'node:fs/promises';
 import {chromium} from 'playwright';
+import {englishFrontendSource} from './i18n-test-helper.mjs';
 
-const source=await readFile(new URL('../ui_frontend.py',import.meta.url),'utf8');
+const source=englishFrontendSource();
 for(const theme of ['original','flat-dark','flat-light']) test(`Sync Hub actions align in ${theme}`,async t=>{
   const browser=await chromium.launch({headless:true});
   t.after(()=>browser.close());

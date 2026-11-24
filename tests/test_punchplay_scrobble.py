@@ -5,6 +5,7 @@ import json
 from typing import Any
 
 import pytest
+from tests.i18n_source import english_source
 
 
 class _Resp:
@@ -589,7 +590,7 @@ def test_rating_sink_lists_include_punchplay() -> None:
         assert '"punchplay"' in text.split("ratingSinks")[1].split("]")[0], rel
         assert 'punchplay: "PunchPlay"' in text, rel
 
-    webhook = (root / "assets/js/modals/scrobbler-webhook/index.js").read_text(encoding="utf-8")
+    webhook = english_source((root / "assets/js/modals/scrobbler-webhook/index.js").read_text(encoding="utf-8"))
     assert '" (not connected)"' not in webhook
     assert "availableSinks().includes(sink)" in webhook
     assert "availableRatingSinks()" in webhook

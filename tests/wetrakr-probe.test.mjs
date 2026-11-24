@@ -5,6 +5,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import vm from "node:vm";
 import { readFileSync } from "node:fs";
+import { withI18n } from './i18n-test-helper.mjs';
+import './i18n-vm-setup.mjs';
 
 const source = path => readFileSync(new URL(path, import.meta.url), "utf8");
 const metadata = source("../assets/helpers/provider-meta.js");
@@ -15,7 +17,7 @@ function setup() {
   const formats = [];
   const window = { CW: { ProfileDateTime: { format(date, options) { formats.push({ date, options }); return "2026-09-27 02:00 CEST"; } } } };
   const badge = { classList: { add() {}, remove() {} } };
-  const context = vm.createContext({ window, Date, byId: () => badge, connState: () => "ok", instancesTooltip: () => "", svgCrown: () => "<svg></svg>" });
+  const context = vm.createContext(withI18n({ window, Date, byId: () => badge, connState: () => "ok", instancesTooltip: () => "", svgCrown: () => "<svg></svg>" }));
   vm.runInContext(metadata, context);
   Object.assign(context, { meta: window.CW.ProviderMeta, META: window.CW.ProviderMeta, txt: v => String(v ?? "").trim(), up: v => String(v).toUpperCase() });
   vm.runInContext(main.slice(main.indexOf("  function providerMeta("), main.indexOf("  function updateConn(")), context);
@@ -31,7 +33,7 @@ test("both WeTrakr tooltips show the observed allowance and localized reset", ()
   app.context.setBadge("badge-wetrakr", "WeTrakr", data, false, "WETRAKR", data);
   assert.equal(mainInfo.vip, true);
   for (const text of [mainInfo.detail, app.badge.title]) {
-    assert.match(text, /API calls left today: 49850 \/ 50000/);
+    assert.match(text, /API calls left today: 49,850 \/ 50,000/);
     assert.match(text, /Resets: 2026-09-27 02:00 CEST/);
     assert.match(text, /Plan: VIP/);
   }
@@ -43,7 +45,7 @@ test("zero is displayed and a missing daily limit is not invented", () => {
   const app = setup();
   const data = { daily_remaining: 0, daily_seen_at: Date.now() / 1000 };
   assert.equal(app.details(data)[0], "API calls left today: 0");
-  assert.equal(app.details({ ...data, daily_limit: 1000 })[0], "API calls left today: 0 / 1000");
+  assert.equal(app.details({ ...data, daily_limit: 1000 })[0], "API calls left today: 0 / 1,000");
 });
 
 test("missing and malformed observations are hidden", () => {
@@ -76,7 +78,7 @@ for (const provider of ["MDBLIST", "WETRAKR", "SIMKL"]) {
     const data = { ...account, daily_remaining: 0, daily_limit: 1000, daily_resets_at: now + 3600 };
     app.context.setBadge("badge", provider, data, false, provider, data);
     for (const text of [app.context.providerMeta(provider, data).detail, app.badge.title]) {
-      assert.match(text, /API calls left today: 0 \/ 1000/);
+      assert.match(text, /API calls left today: 0 \/ 1,000/);
       assert.match(text, /Resets:/);
       assert.doesNotMatch(text, /Awaiting updated quota/);
     }

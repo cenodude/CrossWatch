@@ -7,6 +7,7 @@ import re
 import pytest
 from pathlib import Path
 from typing import Any
+from tests.i18n_source import english_source
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -299,7 +300,7 @@ def test_scrobbler_overview_reuses_runtime_status(monkeypatch) -> None:
 
 
 def test_global_plex_rating_targets_only_show_configured_or_enabled_sinks() -> None:
-    js = (ROOT / "assets" / "js" / "scrobbler.js").read_text(encoding="utf-8")
+    js = english_source((ROOT / "assets" / "js" / "scrobbler.js").read_text(encoding="utf-8"))
     block = js.split("function renderRatingsWebhook(o)", 1)[1].split("function renderWebhookDefaults(o)", 1)[0]
 
     assert "const configured = new Set((o.destination_availability || [])" in block
@@ -311,8 +312,8 @@ def test_global_plex_rating_targets_only_show_configured_or_enabled_sinks() -> N
 
 
 def test_scrobbler_rating_modals_keep_enabled_unconfigured_sinks_visible() -> None:
-    webhook = (ROOT / "assets" / "js" / "modals" / "scrobbler-webhook" / "index.js").read_text(encoding="utf-8")
-    route = (ROOT / "assets" / "js" / "modals" / "scrobbler-route" / "index.js").read_text(encoding="utf-8")
+    webhook = english_source((ROOT / "assets" / "js" / "modals" / "scrobbler-webhook" / "index.js").read_text(encoding="utf-8"))
+    route = english_source((ROOT / "assets" / "js" / "modals" / "scrobbler-route" / "index.js").read_text(encoding="utf-8"))
 
     webhook_block = webhook.split("function visibleRatingSinks(selected = [])", 1)[1].split("function selectedSinkKey()", 1)[0]
     assert "const available = availableRatingSinks();" in webhook_block
@@ -331,8 +332,8 @@ def test_scrobbler_rating_modals_keep_enabled_unconfigured_sinks_visible() -> No
 
 
 def test_scrobbler_loader_waits_for_auth_bootstrap_before_blocking() -> None:
-    scrobbler = (ROOT / "assets" / "js" / "scrobbler.js").read_text(encoding="utf-8")
-    core = (ROOT / "assets" / "helpers" / "core.js").read_text(encoding="utf-8")
+    scrobbler = english_source((ROOT / "assets" / "js" / "scrobbler.js").read_text(encoding="utf-8"))
+    core = english_source((ROOT / "assets" / "helpers" / "core.js").read_text(encoding="utf-8"))
 
     auth_block = scrobbler.split("async function authSetupBlocked()", 1)[1].split("async function j", 1)[0]
     assert "w.__cwAuthBootstrapState" in auth_block

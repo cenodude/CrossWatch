@@ -1,13 +1,15 @@
 /* tests/tracker-overview.browser.mjs */
 /* CrossWatch - Overview navigation, actions and responsive theme coverage */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
+import './i18n-browser-setup.mjs';
 import test from "node:test";
 import assert from "node:assert/strict";
 import {readFile, mkdir} from "node:fs/promises";
 import {chromium, webkit} from "playwright";
+import {englishFrontendSource} from './i18n-test-helper.mjs';
 
 const sizes = [[320,740],[390,844],[430,932],[740,360],[844,390],[768,1024],[820,1180],[1024,768],[1194,834],[1366,1024],[1366,768],[1440,900],[1920,1080]];
-const source = await readFile(new URL("../ui_frontend.py", import.meta.url),"utf8");
+const source = englishFrontendSource();
 const profileMenu = source.match(/def _nav_profile_link\([^]*?return """([^]*?)"""/)[1].replaceAll("__CW_NAV_PROFILE_AVATAR__", "").replaceAll("__CW_NAV_PROFILE_ITEMS__", "");
 const assets = new Map();
 const rows = Array.from({length:20},(_,index) => ({key:`movie:${index}`,ref:{feature:"progress",key:`movie:${index}`},type:"movie",title:index === 1 ? 'A title with <script>window.injected=true</script>' : `Movie ${index + 1}`,year:2026,art:{kind:"movie",tmdb:String(index + 1)},ids:{tmdb:String(index + 1)},date:"2026-11-09T12:00:00Z",progress_percent:40,remaining_minutes:22}));
@@ -409,7 +411,7 @@ test("selected History, Shows and My titles tabs show their loaded totals", asyn
     await choose(page,'#trk-mobile-view',view);
     const badge = page.locator(`.trk-tabs [data-trk-view="${view === 'shows' ? 'history' : view}"] .trk-tab-count`);
     await badge.filter({hasText:compact}).waitFor();
-    const exact = await page.evaluate(value=>value.toLocaleString(),total);
+    const exact = await page.evaluate(value=>value.toLocaleString((window.CW?.I18n||window.__cwI18n)?.locale),total);
     assert.equal(await badge.getAttribute('title'),exact);
     assert.equal(await badge.getAttribute('aria-label'),exact);
     assert.equal(await page.locator('.trk-tabs .trk-tab-count').count(),1);

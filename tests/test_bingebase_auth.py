@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import Any
+from tests.i18n_source import english_source
 
 
 class _Resp:
@@ -199,7 +200,7 @@ def test_bingebase_modal_layout_uses_tracker_connection_shell() -> None:
 
     root = Path(__file__).resolve().parents[1]
     html = auth.html()
-    ui = (root / "assets" / "helpers" / "providers-ui.js").read_text(encoding="utf-8")
+    ui = english_source((root / "assets" / "helpers" / "providers-ui.js").read_text(encoding="utf-8"))
     css = (root / "assets" / "css" / "auth-providers.css").read_text(encoding="utf-8")
 
     auth_panel = html.index('<div class="cw-subpanel active" data-sub="auth">')

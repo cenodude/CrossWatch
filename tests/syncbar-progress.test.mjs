@@ -5,6 +5,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import vm from 'node:vm';
+import './i18n-vm-setup.mjs';
 
 const source = readFileSync(new URL('../assets/js/syncbar.js', import.meta.url), 'utf8');
 
@@ -40,7 +41,7 @@ test('the bar shows the server progress during writes', () => {
   assert.equal(bar.text(), 'Reading STREMIO history');
   bar.applyStart({event: 'apply:add:start', dst: 'SCROB', feature: 'history', count: 1554});
   assert.equal(bar.width(), 67);
-  assert.equal(bar.text(), `Adding to SCROB history · 0 of ${(1554).toLocaleString()}`);
+  assert.equal(bar.text(), "Adding to SCROB history · 0 of 1,554");
   const widths = [0.25, 0.5, 0.75, 1].map(progress => { bar.server(progress); return bar.width(); });
   assert.deepEqual(widths, [75, 82, 90, 97]);
 });

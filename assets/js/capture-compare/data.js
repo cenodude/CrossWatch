@@ -1,7 +1,10 @@
 /* CrossWatch - Capture comparison routing and results */
+const I18N = () => globalThis.window?.CW?.I18n || globalThis.window?.__cwI18n;
+const T = (key, vars) => I18N()?.t?.(key, vars) ?? key;
+const TH = (key, vars) => I18N()?.html?.(key, vars) ?? key;
 import {kindOf, displayTitle} from './model.js';
 
-export const STATUS = {added:'Added', removed:'Removed', updated:'Updated', unchanged:'Unchanged'};
+export const STATUS = Object.defineProperties({}, Object.fromEntries(['added', 'removed', 'updated', 'unchanged'].map(key => [key, {enumerable: true, get: () => T(`snapshots.compare.status.${key}`)}])));
 export function readRoute(hash) {
   const query = new URLSearchParams(String(hash).split('?')[1] || '');
   return {a:query.get('a') || '', b:query.get('b') || '', feature:query.get('feature') || ''};
@@ -30,13 +33,13 @@ export async function loadComparison(route, {signal, fetcher=fetch, onProgress=(
   do {
     const query = new URLSearchParams({...route, kind:'all', offset:String(offset), limit:'20000', max_changes:'250', max_depth:'6'});
     const response = await fetcher('/api/snapshots/diff/extended?' + query, {signal, cache:'no-store', credentials:'same-origin'});
-    if (!response.ok) throw new Error('Could not load these captures. Check that both are still available.');
+    if (!response.ok) throw new Error(T("snapshots.compare.loadFailed"));
     const payload = await response.json(), diff = payload?.diff;
-    if (!diff || diff.ok === false || !Array.isArray(diff.items)) throw new Error('Could not read the capture comparison.');
+    if (!diff || diff.ok === false || !Array.isArray(diff.items)) throw new Error(T("snapshots.compare.readFailed"));
     result ||= diff;
     items.push(...diff.items);
     offset += diff.items.length;
-    if (offset < Number(diff.total) && !diff.items.length) throw new Error('The comparison was incomplete. Please refresh.');
+    if (offset < Number(diff.total) && !diff.items.length) throw new Error(T("snapshots.compare.incomplete"));
     onProgress(offset, Number(diff.total) || offset);
   } while (offset < Number(result.total));
   return {...result, items:items.map(normalizeRow).filter(row => row.key)};

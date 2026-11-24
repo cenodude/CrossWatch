@@ -6,7 +6,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
-globalThis.window = {};
+const { englishI18n } = await import("./i18n-test-helper.mjs");
+globalThis.window = { __cwI18n: englishI18n() };
 globalThis.document = { addEventListener() {} };
 const { matchDetailsHTML, mappingRowActions, savedMappingText, createResultFilter, groupSnapshotGaps, watchDifferenceLabel, retryLabel, nextStepText, watchDifferenceDetails, episodeGroupLabel } = await import("../assets/js/analyzer/index.js");
 const features = ["history", "watchlist", "ratings", "progress", "collection"];

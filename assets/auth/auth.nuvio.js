@@ -2,6 +2,8 @@
 // CrossWatch - Nuvio Auth UI
 // Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 (function () {
+  const T = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.t?.(key, vars) ?? key;
+  const TH = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.html?.(key, vars) ?? key;
   if (window._nuvioAuthPatched) return;
   window._nuvioAuthPatched = true;
 
@@ -40,7 +42,7 @@
     save.disabled = !canSave;
     save.classList.toggle("is-disabled", !canSave);
     if (canSave) save.removeAttribute("title");
-    else save.title = "Connect this instance before saving.";
+    else save.title = T("connections.auth.connectBeforeSave");
   }
 
   function syncConnectLocked() {
@@ -52,7 +54,7 @@
     if (!node) return;
     node.classList.remove("hidden", "ok", "warn");
     node.classList.add(ok ? "ok" : "warn");
-    node.textContent = msg || (ok ? "Connected" : "Not connected");
+    node.textContent = msg || (ok ? T("connections.auth.connected") : T("connections.auth.notConnected"));
     notifyModalState();
   }
 
@@ -82,7 +84,7 @@
     const a = el("nuvio_login_url");
     if (a) {
       a.href = url || "#";
-      a.textContent = url ? "Open Nuvio approval page" : "";
+      a.textContent = url ? T("connections.auth.nuvio.openApproval") : "";
     }
     const localUrl = localDashboardUrl(url);
     el("nuvio_local_hint")?.classList.toggle("hidden", !localUrl);
@@ -119,12 +121,12 @@
     }
     const left = Math.max(0, Math.floor(exp - Date.now() / 1000));
     if (!left) {
-      node.textContent = "Expired";
+      node.textContent = T("connections.auth.expired");
       return;
     }
     const mins = Math.floor(left / 60);
     const secs = String(left % 60).padStart(2, "0");
-    node.textContent = `Expires in ${mins}:${secs}`;
+    node.textContent = T("connections.auth.expiresIn", {time: `${mins}:${secs}`});
   }
 
   function stopExpiryTimer() {
@@ -155,7 +157,7 @@
     const mode = el("nuvio_server_mode");
     if (mode) {
       mode.disabled = locked;
-      mode.title = locked ? "Disconnect Nuvio to change the server." : "";
+      mode.title = locked ? T("connections.auth.gen.disconnectToChange", {provider: "Nuvio"}) : "";
     }
     const url = el("nuvio_server_url");
     if (url) url.disabled = locked;
@@ -188,7 +190,7 @@
     if (btn) btn.disabled = true;
     try {
       await applyServer();
-      setStatus(true, "Nuvio server found");
+      setStatus(true, T("connections.auth.nuvio.found"));
     } catch (e) {
       setStatus(false, friendlyError(e?.message));
     } finally {
@@ -225,15 +227,15 @@
     const placeholder = document.createElement("option");
     placeholder.value = "";
     placeholder.textContent = rows.length
-      ? (effectiveSelectedId ? "Selected profile unavailable" : "Select Nuvio profile")
-      : "No Nuvio profiles loaded";
+      ? (effectiveSelectedId ? T("connections.auth.profileUnavailableSel") : T("connections.auth.gen.selectProfile", {provider: "Nuvio"}))
+      : T("connections.auth.gen.noProfiles", {provider: "Nuvio"});
     placeholder.disabled = true;
     placeholder.selected = true;
     sel.appendChild(placeholder);
     [...rows].sort((a, b) => String(a.name || `Profile ${a.profile_id || a.profile_index || ""}`).localeCompare(String(b.name || `Profile ${b.profile_id || b.profile_index || ""}`), undefined, { sensitivity: "base", numeric: true })).forEach((row) => {
       const option = document.createElement("option");
       option.value = String(row.profile_id || row.profile_index || "");
-      option.textContent = String(row.name || `Profile ${option.value}`);
+      option.textContent = String(row.name || T("connections.auth.profileN", {n: option.value}));
       sel.appendChild(option);
     });
     if (hasSelected) {
@@ -281,15 +283,15 @@
       profileSelectionReady = connected || authenticated || profileSelectionReady;
       syncConnectLocked();
       renderServer(data);
-      if (connected) setStatus(true, "Nuvio connected");
-      else if (data.authenticated) setStatus(false, "Choose a Nuvio profile to finish setup");
+      if (connected) setStatus(true, T("connections.auth.gen.connected", {provider: "Nuvio"}));
+      else if (data.authenticated) setStatus(false, T("connections.auth.gen.chooseProfile", {provider: "Nuvio"}));
       else hideStatus();
       await refreshProfiles(data);
     } catch {
       connected = false;
       authenticated = false;
       syncConnectLocked();
-      setStatus(false, "Nuvio status failed");
+      setStatus(false, T("connections.auth.gen.statusFailed", {provider: "Nuvio"}));
     }
   }
 
@@ -298,7 +300,7 @@
     if (!r.ok || !r.data?.ok) throw new Error(String(r.data?.status || "finish_failed"));
     setLoginState(false);
     setPolling("");
-    note("Nuvio login approved");
+    note(T("connections.auth.nuvio.approved"));
     try { window.dispatchEvent(new CustomEvent("auth-changed")); } catch {}
     authenticated = true;
     profileSelectionReady = true;
@@ -321,23 +323,23 @@
         return { state: "pending", intervalMs: Math.max(3000, Number(data?.interval || 3) * 1000) };
       },
       onPending(data) {
-        setPolling("Waiting for approval...");
+        setPolling(T("connections.auth.waitingApproval"));
       },
       onAuthorized() {
         finishLogin().catch((e) => {
           setStatus(false, friendlyError(e?.message));
-          note("Nuvio login completion failed");
+          note(T("connections.auth.nuvio.completionFailed"));
         });
       },
       onExpired() {
-        setPolling("Link code expired. Connect again to retry.");
-        setStatus(false, "Nuvio login expired");
+        setPolling(T("connections.auth.codeExpiredConnect"));
+        setStatus(false, T("connections.auth.nuvio.expired"));
       },
       onTerminal(verdict) {
         setStatus(false, friendlyError(verdict?.message || "poll_failed"));
       },
       onTimeout() {
-        setStatus(false, "Nuvio login timed out");
+        setStatus(false, T("connections.auth.nuvio.timedOut"));
       },
     });
     return poller;
@@ -345,52 +347,52 @@
 
   function friendlyError(code) {
     switch (String(code || "")) {
-      case "authentication_failed": return "Nuvio authentication failed";
-      case "token_refresh_failed": return "Nuvio token refresh failed";
-      case "anonymous_session_not_object": return "Nuvio anonymous login returned an unexpected response";
-      case "missing_access_token": return "Nuvio anonymous login did not return an access token";
-      case "missing_refresh_token": return "Nuvio anonymous login did not return a refresh token";
-      case "start_session_not_list_object": return "Nuvio TV login returned an unexpected response";
-      case "missing_code_or_qr_content": return "Nuvio TV login did not return a login URL";
-      case "invalid_expiry": return "Nuvio TV login returned an invalid expiry";
-      case "invalid_poll_interval": return "Nuvio TV login returned an invalid poll interval";
-      case "invalid_response": return "Nuvio returned an unexpected response";
-      case "service_unavailable": return "Nuvio service unavailable";
-      case "profile_unavailable": return "Selected Nuvio profile is unavailable";
-      case "invalid_url": return "Enter a valid Nuvio backend URL";
-      case "official_server": return "That is the Nuvio cloud server - choose Nuvio cloud instead";
-      case "connection_failed": return "Could not reach the Nuvio server";
-      case "http_error": return "Nuvio server did not return a discovery document";
+      case "authentication_failed": return T("connections.auth.gen.authenticationFailed", {provider: "Nuvio"});
+      case "token_refresh_failed": return T("connections.auth.nuvio.refresh");
+      case "anonymous_session_not_object": return T("connections.auth.nuvio.anonResponse");
+      case "missing_access_token": return T("connections.auth.nuvio.noAccess");
+      case "missing_refresh_token": return T("connections.auth.nuvio.noRefresh");
+      case "start_session_not_list_object": return T("connections.auth.nuvio.tvResponse");
+      case "missing_code_or_qr_content": return T("connections.auth.nuvio.tvUrl");
+      case "invalid_expiry": return T("connections.auth.nuvio.tvExpiry");
+      case "invalid_poll_interval": return T("connections.auth.nuvio.tvPoll");
+      case "invalid_response": return T("connections.validation.returnedUnexpected", {provider: "Nuvio"});
+      case "service_unavailable": return T("connections.auth.gen.serviceUnavailable", {provider: "Nuvio"});
+      case "profile_unavailable": return T("connections.auth.gen.profileUnavailable", {provider: "Nuvio"});
+      case "invalid_url": return T("connections.auth.nuvio.backendUrl");
+      case "official_server": return T("connections.auth.nuvio.official");
+      case "connection_failed": return T("connections.auth.gen.reachServer", {provider: "Nuvio"});
+      case "http_error": return T("connections.auth.nuvio.discovery");
       case "invalid_document":
       case "wrong_service":
       case "not_self_hosted":
-      case "missing_configuration": return "Not a valid self-hosted Nuvio server";
-      case "unsupported_version": return "Nuvio server version is not supported";
-      case "response_too_large": return "Nuvio discovery response is too large";
-      case "tv_login_unsupported": return "This Nuvio server does not support TV login";
-      case "disconnect_first": return "Disconnect Nuvio before changing the server";
-      default: return "Nuvio request failed";
+      case "missing_configuration": return T("connections.auth.nuvio.notSelfHosted");
+      case "unsupported_version": return T("connections.auth.nuvio.version");
+      case "response_too_large": return T("connections.auth.nuvio.tooLarge");
+      case "tv_login_unsupported": return T("connections.auth.nuvio.noTv");
+      case "disconnect_first": return T("connections.auth.gen.disconnectBefore", {provider: "Nuvio"});
+      default: return T("connections.auth.gen.requestFailedShort", {provider: "Nuvio"});
     }
   }
 
   async function startLogin() {
     profileSelectionReady = false;
     renderProfiles([], null, "", false);
-    const win = Shared.openWaitWindow("Nuvio", "Checking Nuvio server...", "NUVIO");
+    const win = Shared.openWaitWindow("Nuvio", T("connections.auth.nuvio.checking"), "NUVIO");
     try {
-      setStatus(false, "Checking Nuvio server...");
+      setStatus(false, T("connections.auth.nuvio.checking"));
       await applyServer();
       const r = await fetchJSON(api("/api/nuvio/device/start"), { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
       const data = r.data || {};
       if (!r.ok || !data.ok) throw new Error(String(data.error || "start_failed"));
       setLoginState(true, data);
-      setStatus(false, "Waiting for Nuvio approval");
-      setPolling("Waiting for approval...");
+      setStatus(false, T("connections.auth.gen.waitingApproval", {provider: "Nuvio"}));
+      setPolling(T("connections.auth.waitingApproval"));
       const url = txt(data.login_url);
       if (url) {
         if (!Shared.showWaitCode(win, { key: "NUVIO", label: "Nuvio", code: txt(data.code).slice(0, 5).toUpperCase(), url })) {
           try { window.open(url, "_blank", "noopener"); } catch {}
-          note("Popup blocked - open the Nuvio approval link.");
+          note(T("connections.auth.nuvio.popup"));
         }
       }
       ensurePoller().start({ intervalMs: Math.max(3000, Number(data.interval || 3) * 1000), deadlineMs: normalizeExpiryEpoch(data.expires_at) * 1000 });
@@ -414,11 +416,11 @@
     syncServerUI();
     stopPendingLogin(false);
     renderProfiles([], null, "", false);
-      setStatus(false, "Nuvio disconnected");
-      note("Nuvio disconnected");
+      setStatus(false, T("connections.auth.gen.disconnected", {provider: "Nuvio"}));
+      note(T("connections.auth.gen.disconnected", {provider: "Nuvio"}));
       try { window.dispatchEvent(new CustomEvent("auth-changed")); } catch {}
     } catch {
-      note("Nuvio disconnect failed");
+      note(T("connections.auth.gen.disconnectFailed", {provider: "Nuvio"}));
     }
   }
 
@@ -428,8 +430,8 @@
     if (!profileId) return false;
     const profileName = txt(select?.selectedOptions?.[0]?.textContent);
     if (connected && savedProfileId && String(savedProfileId) === String(profileId)) {
-      setStatus(true, "Nuvio connected");
-      if (!opts.silent) note("Nuvio profile saved");
+      setStatus(true, T("connections.auth.gen.connected", {provider: "Nuvio"}));
+      if (!opts.silent) note(T("connections.auth.gen.profileSaved", {provider: "Nuvio"}));
       return true;
     }
     const r = await fetchJSON(api("/api/nuvio/profile/select"), {
@@ -444,7 +446,7 @@
     profileSelectionReady = true;
     savedProfileId = profileId;
     savedProfileName = txt(r.data?.profile_name || profileName);
-    setStatus(true, "Nuvio connected");
+    setStatus(true, T("connections.auth.gen.connected", {provider: "Nuvio"}));
     try { window.invalidateConfigCache?.(); } catch {}
     try { window.CW?.Cache?.invalidate?.("config"); } catch {}
     setTimeout(async () => {
@@ -453,7 +455,7 @@
       try { window.manualRefreshStatus?.(); } catch {}
     }, 0);
     try { window.dispatchEvent(new CustomEvent("auth-changed")); } catch {}
-    if (!opts.silent) note("Nuvio profile saved");
+    if (!opts.silent) note(T("connections.auth.gen.profileSaved", {provider: "Nuvio"}));
     return true;
   }
 
@@ -472,7 +474,7 @@
     if (copy && !copy.__wired) {
       copy.addEventListener("click", (ev) => {
         ev.preventDefault();
-        void Shared.copyField("nuvio_code_input", copy, { emptyMessage: "Nothing to copy" });
+        void Shared.copyField("nuvio_code_input", copy, { emptyMessage: T("connections.auth.nothingToCopy") });
       });
       copy.__wired = true;
     }

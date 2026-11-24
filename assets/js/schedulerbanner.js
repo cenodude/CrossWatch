@@ -2,6 +2,8 @@
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 (()=>{
   if (window.__SCHED_BANNER_INIT__) return;
+  const T = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.t?.(key, vars) ?? key;
+  const TH = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.html?.(key, vars) ?? key;
   window.__SCHED_BANNER_INIT__ = 1;
 
   const $=(s,r=document)=>r.querySelector(s),
@@ -32,9 +34,9 @@
       if (label==="Pushover") return {active:!!(String(wh.pushover_token||"").trim()&&String(wh.pushover_user||"").trim()),label};
       return {active:label==="CrossWatch JSON"?urls.length>0:!!url,label};
     },
-    chipText={pairs:"Sync pairs",sched:"Scheduler",watch:"Watcher",hook:"Webhook",health:"CrossWatch health"},
+    chipText={pairs:T("navigation.settingsMenu.pairs"),sched:T("dashboard.banner.scheduler"),watch:T("dashboard.status.usageWatcher"),hook:T("dashboard.widgets.activity.webhook"),health:T("dashboard.banner.health")},
     chipIcon={pairs:"sync_alt",sched:"calendar_month",watch:"visibility",hook:"webhook",health:"arrow_upward"},
-    chipNav={pairs:{target:"pairs",label:"Open sync pair settings"},sched:{target:"scheduling",label:"Open scheduler settings"},watch:{target:"watcher",label:"Open watcher settings"},hook:{target:"webhook",label:"Open webhook settings"},health:{target:"maintenance",label:"Open Maintenance tools"}},
+    chipNav={pairs:{target:"pairs",label:T("dashboard.banner.openPairs")},sched:{target:"scheduling",label:T("dashboard.banner.openScheduler")},watch:{target:"watcher",label:T("dashboard.banner.openWatcher")},hook:{target:"webhook",label:T("dashboard.banner.openWebhook")},health:{target:"maintenance",label:T("dashboard.banner.openMaintenance")}},
     S={cfg:null,pairs:{total:0,active:0},sched:{enabled:false,running:false,next:0,advanced:false,captures:0,webhooks:false,webhookLabel:"",warning:false,warnings:[]},evt:{enabled:false,count:0},watch:{...blank(),alive:false},hook:blank(),system:{health:{known:false,ok:false,status:"checking"}},timers:{sched:null,scrob:null,health:null,wait:null,rotate:null},debounce:null,last:{watcher:"",webhook:""}};
   const SHARED_WATCH_KEY="__CW_CURRENT_WATCHING_SHARED__",SHARED_WATCH_TTL_MS=3000,WATCHER_UNAVAILABLE_GRACE_MS=35000;
   let scrobPollSeq=0;
@@ -194,16 +196,16 @@ html.cw-theme-original #ops-card{--hub-service-good:#57b58a;--hub-service-bad:#e
     if (!v) return "-";
     const n=+v, dt=new Date(Number.isFinite(n)&&n>0?(n<1e10?n*1000:n):v);
     if (isNaN(+dt)) return "-";
-    const time=dt.toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"}), now=new Date();
+    const loc=(window.CW?.I18n || window.__cwI18n)?.locale||[], time=dt.toLocaleTimeString(loc,{hour:"2-digit",minute:"2-digit"}), now=new Date();
     if (!day || dt.toDateString()===now.toDateString()) return time;
     const tom=new Date(now); tom.setDate(now.getDate()+1);
-    return dt.toDateString()===tom.toDateString()?`tomorrow ${time}`:`${dt.toLocaleDateString([],{weekday:"short"})} ${time}`;
+    return dt.toDateString()===tom.toDateString()?T("dashboard.banner.tomorrowAt",{time}):`${dt.toLocaleDateString(loc,{weekday:"short"})} ${time}`;
   }
 
   function runAge(date, now=Date.now()) {
     const seconds=Math.max(0,Math.floor((now-date.getTime())/1000)), unit=seconds<3600?"minute":seconds<86400?"hour":"day",
       amount=Math.floor(seconds/({minute:60,hour:3600,day:86400}[unit]));
-    return seconds<60?"Just now":new Intl.RelativeTimeFormat(undefined,{numeric:"auto"}).format(-amount,unit);
+    return seconds<60?T("dashboard.banner.justNow"):new Intl.RelativeTimeFormat((window.CW?.I18n || window.__cwI18n)?.locale,{numeric:"auto"}).format(-amount,unit);
   }
 
   function lastSyncState(summary, now=Date.now()) {
@@ -211,16 +213,16 @@ html.cw-theme-original #ops-card{--hub-service-good:#57b58a;--hub-service-bad:#e
     const number=Number(raw), date=new Date(Number.isFinite(number)?(number<1e12?number*1000:number):raw);
     const valid=!!raw&&Number.isFinite(date.getTime())&&date.getTime()>0,
       failed=valid&&!running&&summary.exit_code!=null&&summary.exit_code!==0;
-    return {label:running?"Sync started":"Last sync",date:valid?date:null,failed,text:valid?`${runAge(date,now)}${failed?" \u00b7 Failed":""}`:"No runs recorded"};
+    return {label:running?T("dashboard.banner.syncStarted"):T("dashboard.banner.lastSync"),date:valid?date:null,failed,text:valid?`${runAge(date,now)}${failed?` \u00b7 ${T("common.status.failed")}`:""}`:T("dashboard.banner.noRuns")};
   }
 
   function sharedLastSync(){
     const summary=CW().getRunSummary?.();
-    return summary?lastSyncState(summary):{label:"Last sync",date:null,failed:false,text:"Unavailable"};
+    return summary?lastSyncState(summary):{label:T("dashboard.banner.lastSync"),date:null,failed:false,text:T("common.status.unavailable")};
   }
 
   function lastSyncTip(state) {
-    const exact=state.date?.toLocaleString([],{year:"numeric",month:"short",day:"numeric",hour:"2-digit",minute:"2-digit",timeZoneName:"short"});
+    const exact=state.date?.toLocaleString((window.CW?.I18n || window.__cwI18n)?.locale||[],{year:"numeric",month:"short",day:"numeric",hour:"2-digit",minute:"2-digit",timeZoneName:"short"});
     return `${state.label}: ${state.text}${exact?`\n${exact}`:""}`;
   }
 
@@ -229,24 +231,24 @@ html.cw-theme-original #ops-card{--hub-service-good:#57b58a;--hub-service-bad:#e
     const pm=CW()?.ProviderMeta;
     const base=s.replace(/trakt$/,"");
     const viaMeta=typeof pm?.label==="function"?pm.label(base):"";
-    if (viaMeta && viaMeta !== "?") return s.endsWith("trakt") ? `${viaMeta} webhook` : viaMeta;
+    if (viaMeta && viaMeta !== "?") return s.endsWith("trakt") ? T("dashboard.banner.providerWebhook",{name:viaMeta}) : viaMeta;
     if (s==="plex") return "Plex";
     if (s==="emby") return "Emby";
     if (s==="jellyfin") return "Jellyfin";
-    if (s==="plextrakt") return "Plex webhook";
-    if (s==="embytrakt") return "Emby webhook";
-    if (s==="jellyfintrakt") return "Jellyfin webhook";
+    if (s==="plextrakt") return T("dashboard.banner.providerWebhook",{name:"Plex"});
+    if (s==="embytrakt") return T("dashboard.banner.providerWebhook",{name:"Emby"});
+    if (s==="jellyfintrakt") return T("dashboard.banner.providerWebhook",{name:"Jellyfin"});
     return String(src||"");
   };
   const instanceLabel=(value,friendly="")=>{
     const label=String(friendly||"").trim();
     if (label) return label;
     const raw=String(value||"").trim();
-    if (!raw || raw.toLowerCase()==="default") return "Default";
+    if (!raw || raw.toLowerCase()==="default") return T("common.labels.default");
     return raw;
   };
   const streamTitle=(item)=>{
-    const title=String(item?.title||"").trim()||"Untitled";
+    const title=String(item?.title||"").trim()||T("common.media.untitled");
     const season=item?.season==null||item.season===""?null:Number(item.season);
     const episode=item?.episode==null||item.episode===""?null:Number(item.episode);
     if (!Number.isInteger(season)||season<0||!Number.isInteger(episode)||episode<0) return title;
@@ -343,7 +345,7 @@ html.cw-theme-original #ops-card{--hub-service-good:#57b58a;--hub-service-bad:#e
     const schedHasWarning=el.chip?.id==="chip-sched"&&(!!S.sched?.warning||schedWarnings.length>0);
     if (schedHasWarning) {
       el.value.innerHTML=`<span class="material-symbols-rounded cw-sched-warning-icon" aria-hidden="true">warning</span>`;
-      el.value.setAttribute("aria-label","Scheduler issue");
+      el.value.setAttribute("aria-label",T("dashboard.banner.schedulerIssue"));
     } else {
       el.value.removeAttribute("aria-label");
     }
@@ -355,7 +357,7 @@ html.cw-theme-original #ops-card{--hub-service-good:#57b58a;--hub-service-bad:#e
       el.badges.style.display=badgeHtml?"inline-flex":"none";
     }
     tip=String(tip||"").trim().replace(/\s*\u2022\s*/,"\n");
-    if (el.chip?.id==="chip-sched"&&schedWarnings.length) tip=[tip,...schedWarnings.map(text=>`Warning: ${text}`)].filter(Boolean).join("\n");
+    if (el.chip?.id==="chip-sched"&&schedWarnings.length) tip=[tip,...schedWarnings.map(text=>T("dashboard.banner.warning",{text}))].filter(Boolean).join("\n");
     const action=el.chip.dataset.navLabel||"";
     const aria=[tip,action].filter(Boolean).join("\n");
     renderTip(el,tip,action);
@@ -371,7 +373,7 @@ html.cw-theme-original #ops-card{--hub-service-good:#57b58a;--hub-service-bad:#e
       line=document.createElement("div");
       line.id="cw-mobile-last-schedule";
       line.className="cw-mobile-last-schedule";
-      line.innerHTML='<span class="material-symbols-rounded" aria-hidden="true">schedule</span><span class="cw-mobile-last-schedule-copy"><span>Last sync</span><time></time></span>';
+      line.innerHTML='<span class="material-symbols-rounded" aria-hidden="true">schedule</span><span class="cw-mobile-last-schedule-copy"><span>'+TH("dashboard.banner.lastSync")+'</span><time></time></span>';
       row.insertAdjacentElement("afterend",line);
     }
     line.hidden=isManaged()||!S.sched.enabled;
@@ -405,40 +407,40 @@ html.cw-theme-original #ops-card{--hub-service-good:#57b58a;--hub-service-bad:#e
       schedBadges=[S.sched.captures?`C${S.sched.captures}`:"",S.evt.enabled&&S.evt.count?`E${S.evt.count}`:""].filter(Boolean),
       schedWarnings=(Array.isArray(S.sched.warnings)?S.sched.warnings:[]).map(x=>String(x||"").trim()).filter(Boolean),
       schedWarning=!!S.sched.warning||schedWarnings.length>0,
-      schedWebhookTip=S.sched.webhooks?` • scheduler webhooks active${S.sched.webhookLabel?` (${S.sched.webhookLabel})`:""}`:"";
+      schedWebhookTip=S.sched.webhooks?` • ${S.sched.webhookLabel?T("dashboard.banner.webhooksActiveNamed",{name:S.sched.webhookLabel}):T("dashboard.banner.webhooksActive")}`:"";
 
     const pairTotal=Number(S.pairs?.total)||0, pairActive=Number(S.pairs?.active)||0;
     paint(pairs,pairTotal===0?{
-      value:"none", ok:false, idle:true,
-      tip:managed?"Sync pairs\nStatus: none assigned":"Sync pairs\nStatus: none configured\nCreate a sync pair to enable synchronization"
+      value:T("dashboard.banner.value.none"), ok:false, idle:true,
+      tip:managed?T("dashboard.banner.pairs.noneAssigned"):T("dashboard.banner.pairs.noneConfigured")
     }:pairActive===0?{
-      value:"available", ok:false, disabled:true,
-      tip:`Sync pairs\nStatus: available but disabled\nConfigured: ${pairTotal}\nEnabled: 0`
+      value:T("dashboard.banner.value.available"), ok:false, disabled:true,
+      tip:T("dashboard.banner.pairs.disabled",{total:pairTotal})
     }:{
-      value:"active", ok:true,
-      tip:`Sync pairs\nStatus: active\nEnabled: ${pairActive} of ${pairTotal}`
+      value:T("dashboard.banner.value.active"), ok:true,
+      tip:T("dashboard.banner.pairs.active",{active:pairActive,total:pairTotal})
     });
 
     paint(sched,managed||!S.sched.enabled?{
       show:false
     }:{
-      value:schedWarning?"":(S.sched.running?"running":(S.sched.advanced?(S.sched.standard?"combined":"advanced"):"scheduled")),
-      meta:S.sched.next?`Next run ${clock(S.sched.next,true)}`:"",
+      value:schedWarning?"":T(`dashboard.banner.value.${S.sched.running?"running":(S.sched.advanced?(S.sched.standard?"combined":"advanced"):"scheduled")}`),
+      meta:S.sched.next?T("dashboard.banner.nextRun",{time:clock(S.sched.next,true)}):"",
       badges:schedBadges,
       live:S.sched.running&&!schedWarning,
       ok:!schedWarning,
-      tip:`Scheduler ${S.sched.running?"running":(S.sched.advanced?"advanced":"scheduled")}${S.sched.next?` • next ${clock(S.sched.next,true)}`:""}${S.sched.advanced?(S.sched.standard?" • standard and advanced plans":" • advanced mode"):""}${S.sched.captures?` • ${S.sched.captures} capture schedule${S.sched.captures===1?"":"s"}`:""}${S.evt.enabled&&S.evt.count?` • ${S.evt.count} event trigger${S.evt.count===1?"":"s"}`:""}${schedWebhookTip}\n${lastSyncTip(lastSync)}`
+      tip:`${T(`dashboard.banner.sched.${S.sched.running?"running":(S.sched.advanced?"advanced":"scheduled")}`)}${S.sched.next?` • ${T("dashboard.banner.sched.next",{time:clock(S.sched.next,true)})}`:""}${S.sched.advanced?` • ${T(S.sched.standard?"dashboard.banner.sched.bothPlans":"dashboard.banner.sched.advancedMode")}`:""}${S.sched.captures?` • ${T("dashboard.banner.sched.captures",{count:S.sched.captures})}`:""}${S.evt.enabled&&S.evt.count?` • ${T("dashboard.banner.sched.events",{count:S.evt.count})}`:""}${schedWebhookTip}\n${lastSyncTip(lastSync)}`
     });
 
     paint(watch,!S.watch.enabled?{
       show:false
     }:{
-      value:S.watch.alive?"":"unavailable",
+      value:S.watch.alive?"":T("dashboard.banner.value.unavailable"),
       meta:watchLive?streamTitle(watchItem):"",
       badges:S.watch.streams>1?[S.watch.streams]:[],
       progress:watchLive?visualProgress(watchItem):null,
       live:watchLive, ok:S.watch.alive, idle:!S.watch.alive,
-      tip:watchLive?tooltipFor(`Watcher • ${S.watch.streams} active stream${S.watch.streams===1?"":"s"}`,S.watch.items):`Watcher ${S.watch.alive?"running":"idle"}${S.watch.state?` • state ${S.watch.state}`:""}`
+      tip:watchLive?tooltipFor(T("dashboard.banner.watcherStreams",{count:S.watch.streams}),S.watch.items):`${T(S.watch.alive?"dashboard.banner.watcherRunning":"dashboard.banner.watcherIdle")}${S.watch.state?` • ${T("dashboard.banner.state",{state:S.watch.state})}`:""}`
     });
     emit("watcher",watchLive?{title:watchItem.title,progress:Number(watchItem.progress)||0,state:watchItem.state||"playing",_streams_count:S.watch.streams}:{state:"stopped"});
 
@@ -450,7 +452,7 @@ html.cw-theme-original #ops-card{--hub-service-good:#57b58a;--hub-service-bad:#e
       badges:S.hook.streams>1?[S.hook.streams]:[],
       progress:hookLive?visualProgress(hookItem):null,
       live:hookLive, ok:true, idle:false,
-      tip:hookLive?tooltipFor(`Webhook • ${S.hook.streams} active stream${S.hook.streams===1?"":"s"}`,S.hook.items):"Webhook listening"
+      tip:hookLive?tooltipFor(T("dashboard.banner.webhookStreams",{count:S.hook.streams}),S.hook.items):T("dashboard.banner.webhookListening")
     });
     emit("webhook",hookLive?{title:hookItem.title,progress:Number(hookItem.progress)||0,state:hookItem.state||"playing",_streams_count:S.hook.streams}:{state:"stopped"});
     $(".hub-group-monitoring",host)?.classList.toggle("is-hidden",[(managed?null:sched),watch,hook].filter(Boolean).every(item=>item.chip?.classList.contains("is-hidden")));
@@ -458,14 +460,14 @@ html.cw-theme-original #ops-card{--hub-service-good:#57b58a;--hub-service-bad:#e
     const healthState=S.system.health||{};
     if (health.icon) health.icon.textContent=healthState.known&&!healthState.ok?"arrow_downward":"arrow_upward";
     paint(health,!healthState.known?{
-      value:"checking", ok:false, disabled:true,
-      tip:"CrossWatch health\nStatus: checking"
+      value:T("dashboard.banner.value.checking"), ok:false, disabled:true,
+      tip:T("dashboard.banner.healthChecking")
     }:healthState.ok?{
-      value:"up", ok:true,
-      tip:"CrossWatch health\nStatus: up"
+      value:T("dashboard.banner.value.up"), ok:true,
+      tip:T("dashboard.banner.healthUp")
     }:{
-      value:"down", ok:false,
-      tip:["CrossWatch health","Status: down",healthState.status&&healthState.status!=="down"?`Response: ${healthState.status}`:""].filter(Boolean).join("\n")
+      value:T("dashboard.banner.value.down"), ok:false,
+      tip:[T("dashboard.banner.health"),T("dashboard.banner.statusDown"),healthState.status&&healthState.status!=="down"?T("dashboard.banner.response",{status:healthState.status}):""].filter(Boolean).join("\n")
     });
 
     host.style.display="flex";

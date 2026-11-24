@@ -1,5 +1,7 @@
 // assets/auth/auth.emby.js
 (function () {
+  const T = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.t?.(key, vars) ?? key;
+  const TH = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.html?.(key, vars) ?? key;
   "use strict";
 
   // --- utils
@@ -31,7 +33,7 @@
     sectionId: "sec-emby",
     selectId: "emby_instance",
     storageKey: "cw.ui.emby.auth.instance.v1",
-    title: "Select which Emby server/account this config applies to.",
+    title: T("connections.auth.gen.selectServerAccount", {provider: "Emby"}),
   });
 
   function getEmbyInstance() {
@@ -103,8 +105,8 @@
       Shared.mediaAuthGuide(root, {
         kind: "emby",
         label: "Emby",
-        title: "Connect to Emby",
-        copy: "Enter your Emby server URL, username and password, then sign in. Next, validate the settings, pick the user, and optionally whitelist libraries."
+        title: T("connections.auth.gen.connectTo", {provider: "Emby"}),
+        copy: T("connections.auth.emby.copy")
       });
       syncEmbySetupTabs();
     } catch {}
@@ -172,7 +174,7 @@
   function setConnected(has) {
     connected = !!has;
     const msg = Q("#emby_msg");
-    if (connected) setMsgBanner(msg, "ok", "Connected");
+    if (connected) setMsgBanner(msg, "ok", T("connections.auth.connected"));
     else setMsgBanner(msg, null, "");
     try { Shared.setConnectLocked("btn-emby-login", connected); } catch {}
     try { syncEmbySetupTabs(); } catch {}
@@ -202,7 +204,7 @@
     if (wlHandle) { wlHandle.render(); return; }
     wlHandle = window.cwWhitelistTable.mount({
       host,
-      features: [ { key: "hist", label: "History" }, { key: "rate", label: "Ratings" }, { key: "prog", label: "Progress" }, { key: "coll", label: "Collections" }, { key: "scr", label: "Scrobble", title: "Libraries watchers and webhooks read from. Scrobble destinations use History and Progress, or the libraries set on the route." } ],
+      features: [ { key: "hist", label: T("connections.auth.feat.history") }, { key: "rate", label: T("connections.auth.feat.ratings") }, { key: "prog", label: T("connections.auth.feat.progress") }, { key: "coll", label: T("connections.auth.feat.collections") }, { key: "scr", label: T("connections.auth.feat.scrobble"), title: T("connections.auth.feat.scrobbleTitle") } ],
       getLibs: () => lastLibraries,
       isOn: (fk, id) => setFor(fk).has(String(id)),
       selectedIds: () => ["hist", "rate", "prog", "coll", "scr"].flatMap((fk) => [...(setFor(fk) || [])]),
@@ -331,7 +333,7 @@
     const verify_ssl = !!(Q("#emby_verify_ssl")?.checked || Q("#emby_verify_ssl_dup")?.checked);
     const msg = Q("#emby_msg");
 
-    setMsgBanner(msg, "warn", "Signing in…");
+    setMsgBanner(msg, "warn", T("connections.auth.signingIn"));
 
     try {
       const r = await fetch(embyApi("/api/emby/login"), {
@@ -343,17 +345,17 @@
       if (!r.ok || j?.ok === false) throw new Error(String(j?.error || j?.detail || `HTTP ${r.status}`));
 
       setConnected(true);
-      setMsgBanner(msg, "ok", "Connected");
+      setMsgBanner(msg, "ok", T("connections.auth.connected"));
       hydrated = false;
       try { await hydrateFromConfig(true); } catch {}
     } catch (e) {
-      setMsgBanner(msg, "warn", String(e?.message || e || "Sign-in failed."));
+      setMsgBanner(msg, "warn", String(e?.message || e || T("connections.auth.signInFailed")));
     }
   }
 
   async function embyDeleteToken() {
     const msg = Q("#emby_msg");
-    setMsgBanner(msg, "warn", "Deleting…");
+    setMsgBanner(msg, "warn", T("connections.auth.deleting"));
     try {
       const r = await fetch(embyApi("/api/emby/token/delete"), {
         method: "POST",
@@ -368,12 +370,12 @@
       }
       if (!r.ok || j?.ok === false) throw new Error(String(j?.error || `HTTP ${r.status}`));
       setConnected(false);
-      setMsgBanner(msg, "ok", "Disconnected");
+      setMsgBanner(msg, "ok", T("connections.auth.disconnected"));
       hydrated = false;
       try { await hydrateFromConfig(true); } catch {}
       try { syncEmbySetupTabs(); } catch {}
     } catch (e) {
-      setMsgBanner(msg, "warn", String(e?.message || e || "Delete failed."));
+      setMsgBanner(msg, "warn", String(e?.message || e || T("connections.auth.deleteFailedShort")));
     }
   }
 
@@ -428,7 +430,7 @@
   async function embyPickUser(ev) {
     try { ev?.preventDefault?.(); } catch {}
     if (!window.cwMediaUserPicker || typeof window.cwMediaUserPicker.open !== "function") {
-      window.notify?.("User picker not available", "warn");
+      window.notify?.(T("connections.auth.pickerUnavailable"), "warn");
       return;
     }
     const inst = getEmbyInstance();
@@ -438,7 +440,7 @@
       server: (Q("#emby_server_url")?.value || Q("#emby_server")?.value || "").trim(),
       verifySsl: !!(Q("#emby_verify_ssl")?.checked || Q("#emby_verify_ssl_dup")?.checked),
       anchorEl: findEmbyPickUserButton() || Q("#emby_pick_user") || null,
-      title: "Pick Emby user",
+      title: T("connections.auth.gen.pickUser", {provider: "Emby"}),
       onPick: (u) => {
         const id = String(u?.id || "").trim();
         const name = String(u?.name || "").trim();
@@ -448,7 +450,7 @@
         if (nameEl && name) nameEl.value = name;
         const authNameEl = Q("#emby_user");
         if (authNameEl && name) authNameEl.value = name;
-        window.notify?.(name ? `Selected: ${name}` : "User selected", "ok");
+        window.notify?.(name ? T("connections.auth.selectedName", {name}) : T("connections.auth.userSelected"), "ok");
       },
     });
   }

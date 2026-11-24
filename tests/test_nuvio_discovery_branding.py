@@ -1,6 +1,7 @@
 # CrossWatch test scripts
 from __future__ import annotations
 
+from tests.i18n_source import english_source
 from pathlib import Path
 
 
@@ -29,9 +30,9 @@ def test_nuvio_auth_category_order_and_membership() -> None:
 
 
 def test_nuvio_provider_metadata_uses_png_and_generic_fallback() -> None:
-    meta = (ROOT / "assets" / "helpers" / "provider-meta.js").read_text(encoding="utf-8")
-    ui = (ROOT / "assets" / "helpers" / "providers-ui.js").read_text(encoding="utf-8")
-    loader = (ROOT / "assets" / "auth" / "auth_loader.js").read_text(encoding="utf-8")
+    meta = english_source((ROOT / "assets" / "helpers" / "provider-meta.js").read_text(encoding="utf-8"))
+    ui = english_source((ROOT / "assets" / "helpers" / "providers-ui.js").read_text(encoding="utf-8"))
+    loader = english_source((ROOT / "assets" / "auth" / "auth_loader.js").read_text(encoding="utf-8"))
 
     assert 'logoFile: "NUVIO.png"' in meta
     assert 'authGroupId: "sec-auth-clients"' in meta
@@ -53,8 +54,8 @@ def test_official_nuvio_png_asset_exists() -> None:
 
 
 def test_nuvio_modal_save_enables_for_selected_pending_profile() -> None:
-    ui = (ROOT / "assets" / "helpers" / "providers-ui.js").read_text(encoding="utf-8")
-    nuvio = (ROOT / "assets" / "auth" / "auth.nuvio.js").read_text(encoding="utf-8")
+    ui = english_source((ROOT / "assets" / "helpers" / "providers-ui.js").read_text(encoding="utf-8"))
+    nuvio = english_source((ROOT / "assets" / "auth" / "auth.nuvio.js").read_text(encoding="utf-8"))
 
     assert 'if (info.key === "NUVIO")' in ui
     assert 'profileRow && !profileRow.classList.contains("hidden") && String(panel?.querySelector("#nuvio_profile_select")?.value || "").trim()' in ui
@@ -62,11 +63,14 @@ def test_nuvio_modal_save_enables_for_selected_pending_profile() -> None:
     assert 'String(key || "").toUpperCase() === "NUVIO" && configured' in ui
     main_status = (ROOT / "assets" / "js" / "main-status.js").read_text(encoding="utf-8")
     assert "function providerProfileDetail" in main_status
-    assert "Nuvio profile:" in main_status
+    assert 'T("dashboard.status.providerProfile", { provider: "Nuvio", name })' in main_status
+    from cw_platform import i18n
+
+    assert i18n.t("en", "dashboard.status.providerProfile", provider="Nuvio", name="Kids") == "Nuvio profile: Kids"
     assert ".cw-connection-modal-panel[data-cw-connection-provider='nuvio']" in nuvio
     assert "let profileSelectionReady = false;" in nuvio
     assert "const showProfiles = !!(connected || authenticated || profileSelectionReady);" in nuvio
-    assert 'setStatus(false, "Choose a Nuvio profile to finish setup")' in nuvio
+    assert 'setStatus(false, T("Choose a {{provider}} profile to finish setup", {provider: "Nuvio"}))' in nuvio
     assert 'api("/api/nuvio/profile/select")' in nuvio
     assert "saveSelectedProfile" in nuvio
     assert "await window.CW?.ProvidersUI?.refreshAuthPresentation?.(true)" in nuvio

@@ -1,12 +1,14 @@
 /* tests/shelf-display.browser.mjs */
 /* CrossWatch - Shared shelf artwork, glass rows and collection media card browser coverage */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
+import './i18n-browser-setup.mjs';
 import test from "node:test";
 import assert from "node:assert/strict";
 import {readFile, mkdir} from "node:fs/promises";
 import {chromium, firefox} from "playwright";
+import {englishFrontendSource} from './i18n-test-helper.mjs';
 
-const frontend = await readFile(new URL("../ui_frontend.py",import.meta.url),"utf8");
+const frontend = englishFrontendSource();
 const formats = ["bluray","4k_bluray","4k_bluray","dvd","digital","hd_dvd","vcd","vhs","betamax","laserdisc"];
 const items = formats.map((format,index) => ({key:`movie:${index + 1}`,type:"movie",title:["Jerry & Marge Go Large","Toy Story","Toy Story 2","DVD edition","Digital edition"][index] || `${format.toUpperCase()} edition`,year:2000 + index,tmdb:String(index + 1),ids:{tmdb:String(index + 1)},art:{kind:"movie",tmdb:String(index + 1)},copies:[{format,packaging:index === 2 ? "steelbook" : "keepcase",shelf:"Movie night"}],shelf:{formats:[format],packaging:index === 2 ? "steelbook" : "keepcase",status:index === 3 ? "wishlist" : index === 1 ? "ordered" : "owned",copies:1,shelves:["Movie night"]}}));
 const poster = '<svg xmlns="http://www.w3.org/2000/svg" width="400" height="600"><defs><linearGradient id="g" x2="0" y2="1"><stop stop-color="#1c6792"/><stop offset="1" stop-color="#da973d"/></linearGradient></defs><rect width="400" height="600" fill="url(#g)"/><circle cx="200" cy="280" r="130" fill="#e9ae68"/><path d="M0 600L200 300L400 600" fill="#273654"/><text x="200" y="90" fill="white" font-size="38" text-anchor="middle" font-family="sans-serif">CROSSWATCH</text></svg>';

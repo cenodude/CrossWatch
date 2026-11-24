@@ -2,18 +2,21 @@
 /* CrossWatch - add and remove one title on providers from its provider icons */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 (function () {
+  const T = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.t?.(key, vars) ?? key;
+  const TH = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.html?.(key, vars) ?? key;
+  const PLURAL_KEYS = { record: "record", "resume point": "resumePoint", account: "account", play: "play" };
   const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
   const icon = (name) => `<span class="material-symbols-rounded" aria-hidden="true">${esc(name)}</span>`;
-  const numberFmt = new Intl.NumberFormat(window.__CW_LOCALE || navigator.language || undefined);
+  const numberFmt = new Intl.NumberFormat((window.CW?.I18n || window.__cwI18n)?.locale || window.__CW_LOCALE || undefined);
   const FEATURES = {
-    watchlist: { noun: "watchlist", present: "On your watchlist", missing: "Not on this watchlist", undo: true },
-    history: { noun: "history", present: "Watched here", missing: "Not watched here", undo: false },
-    ratings: { noun: "ratings", present: "Rated here", missing: "Not rated here", undo: true },
-    collection: { noun: "collection", present: "In your collection", missing: "Not in this collection", undo: true },
-    progress: { noun: "resume point", present: "Has a resume point", missing: "No resume point", undo: false },
+    watchlist: { noun: T("library.actions.noun.watchlist"), present: T("library.actions.present.watchlist"), missing: T("library.actions.missing.watchlist"), undo: true },
+    history: { noun: T("library.actions.noun.history"), present: T("library.actions.present.history"), missing: T("library.actions.missing.history"), undo: false },
+    ratings: { noun: T("library.actions.noun.ratings"), present: T("library.actions.present.ratings"), missing: T("library.actions.missing.ratings"), undo: true },
+    collection: { noun: T("library.actions.noun.collection"), present: T("library.actions.present.collection"), missing: T("library.actions.missing.collection"), undo: true },
+    progress: { noun: T("library.actions.noun.resumePoint"), present: T("library.actions.present.progress"), missing: T("library.actions.missing.progress"), undo: false },
   };
   const FEATURE_ICONS = { watchlist: "bookmark", history: "history", ratings: "star", collection: "video_library", progress: "resume" };
-  const FEATURE_LABELS = { watchlist: "Watchlist", history: "History", ratings: "Ratings", collection: "Collection" };
+  const FEATURE_LABELS = { watchlist: T("library.actions.feature.watchlist"), history: T("library.actions.feature.history"), ratings: T("library.actions.feature.ratings"), collection: T("library.actions.feature.collection") };
   const ARM_MS = 4200;
   const OK_MS = 900;
   const ID_KEYS = ["tmdb", "imdb", "tvdb", "trakt", "simkl", "anilist", "mal"];
@@ -25,8 +28,8 @@
   const cleanRef = (ref) => ({ provider: String(ref?.provider || "").toUpperCase(), instance: String(ref?.instance || "default") || "default" });
   const providerName = (provider) => window.CW?.ProviderMeta?.label?.(provider) || String(provider || "");
   const providerLogo = (provider) => window.CW?.ProviderMeta?.logoPath?.(provider) || "";
-  const plural = (count, word) => `${numberFmt.format(count)} ${word}${count === 1 ? "" : "s"}`;
-  const listNames = (names) => (names.length <= 1 ? names.join("") : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`);
+  const plural = (count, word) => T(`library.actions.count.${PLURAL_KEYS[word] || word}`, {count: Number(count) || 0});
+  const listNames = (names) => (names.length <= 1 ? names.join("") : `${names.slice(0, -1).join(", ")} ${T("library.actions.and")} ${names[names.length - 1]}`);
 
   function canWrite() {
     if (window.CW?.ProfileViewAs?.active) return false;
@@ -43,10 +46,10 @@
     try {
       const res = await fetch(url, init);
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error((typeof data?.detail === "string" && data.detail) || data?.message || data?.error || `Request failed (${res.status})`);
+      if (!res.ok) throw new Error((typeof data?.detail === "string" && data.detail) || data?.message || data?.error || T("library.actions.requestFailed", {status: String(res.status)}));
       return data;
     } catch (e) {
-      if (e?.name === "AbortError") throw new Error("The provider took too long to answer");
+      if (e?.name === "AbortError") throw new Error(T("library.actions.slow"));
       throw e;
     } finally {
       if (timer) window.clearTimeout(timer);
@@ -114,14 +117,14 @@
     const date = new Date(Number(epoch) * 1000);
     const format = window.CW?.ProfileDateTime?.format;
     const options = { day: "numeric", month: "short", year: "numeric" };
-    return typeof format === "function" ? format(date, options) : date.toLocaleDateString(undefined, options);
+    return typeof format === "function" ? format(date, options) : date.toLocaleDateString((window.CW?.I18n || window.__cwI18n)?.locale, options);
   };
   const fmtWhen = (epoch) => {
-    if (!Number(epoch)) return "Date unknown";
+    if (!Number(epoch)) return T("library.actions.dateUnknown");
     const date = new Date(Number(epoch) * 1000);
     const format = window.CW?.ProfileDateTime?.format;
     const options = { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" };
-    return typeof format === "function" ? format(date, options) : date.toLocaleString(undefined, options);
+    return typeof format === "function" ? format(date, options) : date.toLocaleString((window.CW?.I18n || window.__cwI18n)?.locale, options);
   };
 
   async function sendAdd(feature, ref, payload, name, rewatch = false) {
@@ -133,20 +136,20 @@
     });
     const row = (Array.isArray(data?.results) ? data.results : [])[0] || {};
     const excluded = Array.isArray(row.excluded) ? row.excluded[0]?.reason : "";
-    if (excluded === "unknown_watch_date_unsupported") return { ok: false, skipped: true, error: `${name} cannot preserve an unknown watch date` };
-    if (excluded === "unknown_rewatch_unsupported") return { ok: false, skipped: true, error: `${name} cannot safely sync an unknown-date rewatch` };
-    if (row.error === "rewatch_not_supported") return { ok: false, skipped: true, error: `${name} keeps one play per title` };
-    if (row.error === "undated_not_supported") return { ok: false, skipped: true, error: `${name} needs a watch date` };
-    if (row.error === "undated_rewatch_not_supported") return { ok: false, skipped: true, error: `Already watched on ${name}, another play needs a date` };
-    if (row.error === "provider_not_allowed") return { ok: false, error: `You cannot change ${name}` };
-    if (row.error === "unsupported_rating") return { ok: false, error: `${name} does not support that score. Choose a rating from its available scale.` };
-    if (row.error) return { ok: false, error: `${name} could not be updated` };
+    if (excluded === "unknown_watch_date_unsupported") return { ok: false, skipped: true, error: T("library.actions.err.unknownDate", {name}) };
+    if (excluded === "unknown_rewatch_unsupported") return { ok: false, skipped: true, error: T("library.actions.err.unknownRewatch", {name}) };
+    if (row.error === "rewatch_not_supported") return { ok: false, skipped: true, error: T("library.actions.keepsOne", {name}) };
+    if (row.error === "undated_not_supported") return { ok: false, skipped: true, error: T("library.actions.needsDate", {name}) };
+    if (row.error === "undated_rewatch_not_supported") return { ok: false, skipped: true, error: T("library.actions.alreadyWatched", {name}) };
+    if (row.error === "provider_not_allowed") return { ok: false, error: T("library.actions.err.notAllowed", {name}) };
+    if (row.error === "unsupported_rating") return { ok: false, error: T("library.actions.err.score", {name}) };
+    if (row.error) return { ok: false, error: T("library.actions.err.notUpdated", {name}) };
     const result = row.result || {};
     if (Number(result.confirmed) > 0) return { ok: true };
-    if (Number(result.unresolved) > 0) return { ok: false, error: `${name} could not match this title` };
-    if (Number(result.errors) > 0) return { ok: false, error: `${name} returned an error` };
+    if (Number(result.unresolved) > 0) return { ok: false, error: T("library.actions.err.noMatch", {name}) };
+    if (Number(result.errors) > 0) return { ok: false, error: T("library.actions.err.returned", {name}) };
     if (Number(result.skipped) > 0) return { ok: true, note: "already there" };
-    return row.ok ? { ok: true } : { ok: false, error: `${name} did not confirm the change` };
+    return row.ok ? { ok: true } : { ok: false, error: T("library.actions.err.notConfirmed", {name}) };
   }
 
   function queued(job) {
@@ -160,12 +163,12 @@
     const row = (Array.isArray(data?.results) ? data.results : [])[0] || {};
     if (row.error === "needs_live_match") return null;
     const result = row.result || {};
-    if (row.error === "provider_not_allowed") return { ok: false, error: `You cannot change ${name}` };
-    if (row.error) return { ok: false, error: `Removal failed on ${name}` };
+    if (row.error === "provider_not_allowed") return { ok: false, error: T("library.actions.err.notAllowed", {name}) };
+    if (row.error) return { ok: false, error: T("library.actions.err.removalFailed", {name}) };
     if (Number(result.removed) > 0) return { ok: true };
-    if (Number(result.unresolved) > 0) return { ok: false, error: `${name} did not find this title` };
-    if (Number(result.skipped) > 0) return { ok: false, skipped: true, error: `${name} cannot remove this type of title` };
-    return { ok: false, error: `${name} did not confirm the removal` };
+    if (Number(result.unresolved) > 0) return { ok: false, error: T("library.actions.err.notFound", {name}) };
+    if (Number(result.skipped) > 0) return { ok: false, skipped: true, error: T("library.actions.err.cannotRemoveType", {name}) };
+    return { ok: false, error: T("library.actions.err.removalNotConfirmed", {name}) };
   }
 
   function editorRemove(feature, ref, item, name) {
@@ -180,8 +183,8 @@
         return {
           ok: false,
           error: preview?.empty_reason === "pair_baseline_unavailable"
-            ? "Run your sync pairs first. CrossWatch only removes records it has seen in a sync"
-            : `${name} has no ${FEATURES[feature]?.noun || feature} record for this title`,
+            ? T("library.actions.runPairsFirst")
+            : T("library.actions.err.noRecord", {name, noun: FEATURES[feature]?.noun || feature}),
         };
       }
       const data = await request("/api/editor/send", {
@@ -195,11 +198,11 @@
       });
       const row = (Array.isArray(data?.results) ? data.results : [])[0] || {};
       const result = row.result || {};
-      if (row.error) return { ok: false, error: `Removal failed on ${name}` };
+      if (row.error) return { ok: false, error: T("library.actions.err.removalFailed", {name}) };
       if (Number(result.removed) > 0) return { ok: true };
-      if (Number(result.unresolved) > 0) return { ok: false, error: `${name} still reports this title` };
+      if (Number(result.unresolved) > 0) return { ok: false, error: T("library.actions.err.stillReports", {name}) };
       if (Number(result.skipped) > 0) return { ok: true, note: "already gone" };
-      return { ok: false, error: `${name} did not confirm the removal` };
+      return { ok: false, error: T("library.actions.err.removalNotConfirmed", {name}) };
     });
   }
 
@@ -214,7 +217,7 @@
 
   async function watchlistRemove(ref, item, name) {
     const [key, ...aliases] = watchlistKeys(item);
-    if (!key) return { ok: false, error: "This title has no watchlist record to remove" };
+    if (!key) return { ok: false, error: T("library.actions.noWatchlistKey") };
     const data = await request("/api/watchlist/delete", {
       provider: ref.provider,
       provider_instance: ref.instance,
@@ -222,8 +225,8 @@
     });
     if (Number(data?.deleted_ok) > 0) return { ok: true };
     const reason = data?.results?.[0]?.per_key?.[0]?.reason;
-    if (reason === "not_in_state") return { ok: false, error: `CrossWatch has no watchlist record for this title on ${name}` };
-    return { ok: false, error: data?.error ? `Removal failed on ${name}` : `${name} did not confirm the removal` };
+    if (reason === "not_in_state") return { ok: false, error: T("library.actions.err.noWatchlistRecord", {name}) };
+    return { ok: false, error: data?.error ? T("library.actions.err.removalFailed", {name}) : T("library.actions.err.removalNotConfirmed", {name}) };
   }
 
   function addTask(feature, ref, item, name, extra = {}) {
@@ -241,9 +244,9 @@
   function progressTask(action, ref, record, name) {
     const url = action === "mark_watched" ? "/api/playback_progress/actions/mark_watched" : "/api/playback_progress/actions/remove";
     const exec = async () => {
-      if (!record) return { ok: false, error: `No resume point on ${name}` };
+      if (!record) return { ok: false, error: T("library.actions.err.noResume", {name}) };
       const data = await request(url, { provider: record.provider, instance_id: record.instance_id, remote_id: record.remote_id, canonical_key: record.canonical_key, record });
-      return data?.ok ? { ok: true } : { ok: false, error: data?.message || `${name} did not confirm the change` };
+      return data?.ok ? { ok: true } : { ok: false, error: data?.message || T("library.actions.err.notConfirmed", {name}) };
     };
     return { ref: cleanRef(ref), op: action, name, exec };
   }
@@ -287,9 +290,9 @@
       node.dataset.tone = tone;
       const symbol = tone === "work" ? "progress_activity" : tone === "ok" ? "check_circle" : "error";
       const buttons = [
-        actions.retry ? `<button type="button" data-ia-toast="retry">${esc(actions.retryLabel || "Retry")}</button>` : "",
-        actions.undo ? `<button type="button" data-ia-toast="undo">${icon("undo")}Undo</button>` : "",
-        tone !== "work" ? `<button type="button" class="cw-ia-toast-close" data-ia-toast="close" aria-label="Dismiss">${icon("close")}</button>` : "",
+        actions.retry ? `<button type="button" data-ia-toast="retry">${esc(actions.retryLabel || T("library.actions.retry"))}</button>` : "",
+        actions.undo ? `<button type="button" data-ia-toast="undo">${icon("undo")}${TH("library.actions.undo")}</button>` : "",
+        tone !== "work" ? `<button type="button" class="cw-ia-toast-close" data-ia-toast="close" aria-label="${TH("library.actions.dismiss")}">${icon("close")}</button>` : "",
       ].join("");
       const bar = tone === "work" ? `<span class="cw-ia-toast-bar is-progress" style="width:${Math.max(4, Math.min(100, pct))}%"></span>` : `<span class="cw-ia-toast-bar is-timer${tone === "bad" ? " is-long" : ""}"></span>`;
       node.innerHTML = `<span class="cw-ia-toast-icon${tone === "work" ? " is-spinning" : ""}">${icon(symbol)}</span><span class="cw-ia-toast-text">${esc(text)}</span>${buttons}${bar}`;
@@ -342,7 +345,7 @@
       try {
         result = await task.exec();
       } catch (e) {
-        result = { ok: false, error: e?.message || "Request failed" };
+        result = { ok: false, error: e?.message || T("library.actions.requestFailedShort") };
       }
       done += 1;
       (result.ok ? ok : failed).push({ task, result });
@@ -352,13 +355,13 @@
     const names = (rows) => listNames(rows.map((row) => row.task.name));
     let text;
     if (!failed.length) text = job.done(ok.map((row) => row.task));
-    else if (!ok.length) text = failed.length === 1 ? failed[0].result.error : `Failed on ${names(failed)}`;
-    else text = `${ok.length} of ${total} done · ${names(failed)} failed`;
+    else if (!ok.length) text = failed.length === 1 ? failed[0].result.error : T("library.actions.failedOn", {names: names(failed)});
+    else text = T("library.actions.partial", {done: String(ok.length), total: String(total), names: names(failed)});
     const actions = {};
     if (failed.length && failed.some((row) => !row.result.skipped)) {
       const retry = failed.filter((row) => !row.result.skipped).map((row) => row.task);
       actions.retry = () => void run({ ...job, tasks: retry });
-      actions.retryLabel = retry.length === 1 ? `Retry ${retry[0].name}` : "Retry";
+      actions.retryLabel = retry.length === 1 ? T("library.actions.retryName", {name: retry[0].name}) : T("library.actions.retry");
     }
     if (ok.length && typeof job.undo === "function") {
       const undoJob = job.undo(ok.map((row) => row.task));
@@ -382,15 +385,15 @@
     const { feature, item } = ctx;
     const fields = options.fields || {};
     const tasks = refs.map((ref) => addTask(feature, ref, item, refLabel(ref, list), { fields: options.fieldsFor ? options.fieldsFor(ref) : fields, rewatch: options.rewatchFor?.(ref), play: options.play }));
-    const verb = options.verb || (feature === "ratings" ? "Rating on" : feature === "history" ? "Adding the watch to" : "Adding to");
+    const verbKey = feature === "ratings" ? "ratingOn" : feature === "history" ? "addingWatch" : "addingTo";
     return {
       feature,
       item,
       scope: ctx.scope,
       onChanged: ctx.onChanged,
       tasks,
-      working: `${verb} ${count(tasks, (n) => `${n} providers`)}…`,
-      done: options.done || ((okTasks) => `${feature === "ratings" ? "Rated on" : feature === "history" ? "Watch added to" : "Added to"} ${count(okTasks, (n) => `${n} providers`)}`),
+      working: T(`library.actions.job.${verbKey}`, {target: count(tasks, (n) => T("library.actions.count.provider", {count: n}))}),
+      done: options.done || ((okTasks) => T(`library.actions.job.${feature === "ratings" ? "ratedOn" : feature === "history" ? "watchAdded" : "addedTo"}`, {target: count(okTasks, (n) => T("library.actions.count.provider", {count: n}))})),
       undo: FEATURES[feature]?.undo && !options.noUndo ? (okTasks) => removeJob(ctx, okTasks.map((task) => task.ref), list, { noUndo: true, play: options.play }) : null,
     };
   }
@@ -404,8 +407,8 @@
       scope: ctx.scope,
       onChanged: ctx.onChanged,
       tasks,
-      working: `${options.verb || "Removing from"} ${count(tasks, (n) => `${n} providers`)}…`,
-      done: options.done || ((okTasks) => `Removed from ${count(okTasks, (n) => `${n} providers`)}`),
+      working: T("library.actions.job.removingFrom", {target: count(tasks, (n) => T("library.actions.count.provider", {count: n}))}),
+      done: options.done || ((okTasks) => T("library.actions.job.removedFrom", {target: count(okTasks, (n) => T("library.actions.count.provider", {count: n}))})),
       undo: FEATURES[feature]?.undo && !options.noUndo
         ? (okTasks) => addJob(ctx, okTasks.map((task) => task.ref), list, {
           noUndo: true,
@@ -422,15 +425,15 @@
   }
 
   const REASONS = {
-    read_only: "Read-only source",
-    anime_only: "Anime only",
-    type_not_supported: "Does not support this type",
-    provider_unavailable: "Unavailable right now",
+    read_only: T("library.actions.reason.readOnly"),
+    anime_only: T("library.actions.reason.animeOnly"),
+    type_not_supported: T("library.actions.reason.type"),
+    provider_unavailable: T("library.actions.reason.unavailable"),
   };
   const accountName = (ref, list = []) => {
     const row = list.find((entry) => refKey(entry) === refKey(ref));
     if (row?.instance_label) return row.instance_label;
-    return !ref.instance || ref.instance === "default" ? "Default" : ref.instance;
+    return !ref.instance || ref.instance === "default" ? T("library.actions.default") : ref.instance;
   };
   const logoHtml = (provider, cls = "cw-ia-logo") => {
     const logo = providerLogo(provider);
@@ -488,10 +491,10 @@
     const writable = (ref) => list.some((row) => refKey(row) === refKey(ref));
     const isOther = (ref) => others.some((row) => refKey(row) === refKey(ref));
     const missingRefs = () => (ctx.refs.missing || []).map(cleanRef).filter((ref) => writable(ref) && !isOther(ref));
-    const pairNote = () => `Not in a sync pair for ${FEATURES[ctx.feature].noun}`;
+    const pairNote = () => T("library.actions.notInPair", {noun: FEATURES[ctx.feature].noun});
     const hiddenReason = (ref) => {
       const row = hidden.find((entry) => refKey(entry) === refKey(ref));
-      return row ? REASONS[row.reason] || "Cannot be changed here" : "";
+      return row ? REASONS[row.reason] || T("library.actions.cannotChange") : "";
     };
     const progressRows = () => (Array.isArray(ctx?.progressRows) ? ctx.progressRows : []);
     const focusRow = () => progressRows().find((row) => row.rid === ctx?.focusRow) || null;
@@ -643,17 +646,17 @@
 
     function scoreText(value, scale = scoreScale()) {
       const projected = projectedScore(value, scale);
-      return projected == null ? "Not rated" : scale.labels?.[projected] || `${projected * scale.display_factor}/${scale.max}`;
+      return projected == null ? T("library.actions.notRated") : scale.labels?.[projected] || `${projected * scale.display_factor}/${scale.max}`;
     }
 
     function ratingStars() {
       const scale = scoreScale();
-      if (scale.unavailable) return '<p class="cw-ia-note">Rating choices are unavailable for a selected provider. Reload and try again.</p>';
+      if (scale.unavailable) return '<p class="cw-ia-note">' + TH("library.actions.ratingUnavailable") + '</p>';
       const half = scale.values.some(value => !Number.isInteger(value * scale.display_factor));
-      const label = value => value == null ? "Not rated" : scale.labels?.[value] || `${value * scale.display_factor}`;
+      const label = value => value == null ? T("library.actions.notRated") : scale.labels?.[value] || `${value * scale.display_factor}`;
       const slots = half && !scale.labels ? Array.from({length: 20}, (_, i) => (i + 1) / 2) : scale.values;
-      const buttons = slots.map(value => `<button type="button" class="${scale.labels ? "cw-ia-seg" : "cw-ia-star"}${half && Number.isInteger(value) ? " is-right" : ""}${(scale.labels ? value === score : value <= score) ? " is-lit" : ""}${value === score ? " is-on" : ""}" data-ia-act="score" data-ia-score="${value}"${scale.values.includes(value) ? "" : " disabled"} aria-label="${scale.labels ? esc(label(value)) : `Rate ${label(value)} out of ${scale.max}`}" aria-pressed="${value === score}">${scale.labels ? esc(label(value)) : icon("star")}</button>`).join("");
-      return `<div class="cw-ia-score"><div class="cw-ia-score-summary"><span>Your score</span><strong><b data-ia-score-value>${esc(label(score))}</b>${scale.labels || score == null ? "" : `<small>/${scale.max}</small>`}</strong></div><div class="cw-ia-rating-choices ${scale.labels ? "cw-ia-segs" : `cw-ia-stars${half ? "" : " is-whole"}`}" style="--ia-score-count:${scale.values.length}" role="group" aria-label="Your rating">${buttons}</div>${scale.values.length ? "" : '<p class="cw-ia-note">These providers have no shared rating choices. Rate each provider separately.</p>'}</div>`;
+      const buttons = slots.map(value => `<button type="button" class="${scale.labels ? "cw-ia-seg" : "cw-ia-star"}${half && Number.isInteger(value) ? " is-right" : ""}${(scale.labels ? value === score : value <= score) ? " is-lit" : ""}${value === score ? " is-on" : ""}" data-ia-act="score" data-ia-score="${value}"${scale.values.includes(value) ? "" : " disabled"} aria-label="${scale.labels ? esc(label(value)) : TH("library.actions.rateOutOf", {value: String(label(value)), max: String(scale.max)})}" aria-pressed="${value === score}">${scale.labels ? esc(label(value)) : icon("star")}</button>`).join("");
+      return `<div class="cw-ia-score"><div class="cw-ia-score-summary"><span>${TH("library.actions.yourScore")}</span><strong><b data-ia-score-value>${esc(label(score))}</b>${scale.labels || score == null ? "" : `<small>/${scale.max}</small>`}</strong></div><div class="cw-ia-rating-choices ${scale.labels ? "cw-ia-segs" : `cw-ia-stars${half ? "" : " is-whole"}`}" style="--ia-score-count:${scale.values.length}" role="group" aria-label="${TH("library.actions.yourRating")}">${buttons}</div>${scale.values.length ? "" : '<p class="cw-ia-note">' + TH("library.actions.noShared") + '</p>'}</div>`;
     }
 
     function previewScore(value) {
@@ -663,7 +666,7 @@
         if (scale.labels) button.classList.toggle("is-on", Number(button.dataset.iaScore) === value);
       });
       const label = el.querySelector("[data-ia-score-value]");
-      if (label) label.textContent = value == null ? "Not rated" : scale.labels?.[value] || String(value * scale.display_factor);
+      if (label) label.textContent = value == null ? T("library.actions.notRated") : scale.labels?.[value] || String(value * scale.display_factor);
     }
 
     function head(symbol, title, sub, logoProvider = "") {
@@ -673,34 +676,34 @@
 
     function links() {
       const out = [];
-      if (ctx.feature === "history" && typeof ctx.openHistory === "function") out.push(item("history", "history", "Watch history and rewatches", "accent"));
-      if (typeof ctx.openDetails === "function") out.push(item("details", "dashboard", "Open details", "accent"));
+      if (ctx.feature === "history" && typeof ctx.openHistory === "function") out.push(item("history", "history", T("library.actions.historyRewatches"), "accent"));
+      if (typeof ctx.openDetails === "function") out.push(item("details", "dashboard", T("library.actions.openDetails"), "accent"));
       return out.length ? `<div class="cw-ia-list">${out.join("")}</div>` : "";
     }
 
     function addLabel(target) {
-      if (ctx.feature === "ratings") return `Rate ${scoreText(score)} on ${target}`;
-      if (ctx.feature === "history") return when === "copy" ? `Copy the watch of ${fmtDate(ctx.epoch)} to ${target}` : `Mark watched on ${target}`;
-      if (ctx.feature === "collection") return `Add to ${target} collection`;
-      return `Add to ${target} watchlist`;
+      if (ctx.feature === "ratings") return T("library.actions.rateOn", {score: String(scoreText(score)), target});
+      if (ctx.feature === "history") return when === "copy" ? T("library.actions.copyWatch", {date: fmtDate(ctx.epoch), target}) : T("library.actions.markWatchedOn", {target});
+      if (ctx.feature === "collection") return T("library.actions.addCollection", {target});
+      return T("library.actions.addWatchlist", {target});
     }
 
     function removeLabel(target) {
-      if (ctx.feature === "ratings") return `Remove rating on ${target}`;
-      if (ctx.feature === "history") return `Remove all watches for this title from ${target}`;
-      if (ctx.feature === "collection") return `Remove from ${target} collection`;
-      return `Remove from ${target} watchlist`;
+      if (ctx.feature === "ratings") return T("library.actions.removeRating", {target});
+      if (ctx.feature === "history") return T("library.actions.removeAllFrom", {target});
+      if (ctx.feature === "collection") return T("library.actions.removeCollection", {target});
+      return T("library.actions.removeWatchlist", {target});
     }
 
     const dateReady = () => ctx.feature !== "history" || when !== "custom" || /^\d{4}-\d{2}-\d{2}$/.test(customDate);
 
     function whenHtml() {
       if (ctx.feature !== "history") return "";
-      const options = [...(ctx.epoch ? [["copy", "Same date", `Same date as the existing watch, ${fmtDate(ctx.epoch)}`]] : []), ["now", "Now", "Watched now"],
-        ...(ctx.releaseDate ? [["release", "Release", `On release, ${ctx.releaseDate}`]] : []), ["custom", "Pick date", "Pick a watch date"]];
+      const options = [...(ctx.epoch ? [["copy", T("library.actions.sameDate"), T("library.actions.sameDateHint", {date: fmtDate(ctx.epoch)})]] : []), ["now", T("library.actions.now"), T("library.actions.watchedNow")],
+        ...(ctx.releaseDate ? [["release", T("library.actions.release"), T("library.actions.onReleaseDate", {date: ctx.releaseDate})]] : []), ["custom", T("library.actions.pickDate"), T("library.actions.pickWatchDate")]];
       const segs = options.map(([value, label, title]) => `<button type="button" role="radio" aria-checked="${when === value}" class="cw-ia-seg${when === value ? " is-on" : ""}" data-ia-act="when" data-ia-when="${value}" title="${esc(title)}">${esc(label)}</button>`).join("");
-      const date = when === "custom" ? `<label class="cw-ia-date"><span>Watched on</span><input type="date" data-ia-act="date" value="${esc(customDate)}" max="${esc(new Date().toISOString().slice(0, 10))}"></label>` : "";
-      return `<div class="cw-ia-when"><div class="cw-ia-segs" role="radiogroup" aria-label="When did you watch it">${segs}</div>${date}</div>`;
+      const date = when === "custom" ? `<label class="cw-ia-date"><span>${TH("library.actions.watchedOn")}</span><input type="date" data-ia-act="date" value="${esc(customDate)}" max="${esc(new Date().toISOString().slice(0, 10))}"></label>` : "";
+      return `<div class="cw-ia-when"><div class="cw-ia-segs" role="radiogroup" aria-label="${TH("library.actions.whenWatched")}">${segs}</div>${date}</div>`;
     }
 
     function focusHtml() {
@@ -713,13 +716,13 @@
       const body = [];
       const unpaired = list.some((row) => refKey(row) === refKey(focus) && row.in_pair === false);
       if (!writable(focus)) {
-        body.push(`<p class="cw-ia-note">${icon("lock")}${esc(hiddenReason(focus) || "Not one of your accounts for this")}</p>`);
+        body.push(`<p class="cw-ia-note">${icon("lock")}${esc(hiddenReason(focus) || T("library.actions.notYours"))}</p>`);
       } else if (present) {
         if (feature === "ratings") {
           body.push(ratingStars());
         }
         const armed = isArmed("one");
-        body.push(item("remove-one", armed ? "warning" : "delete", armed ? "Click again to remove all watches for this title" : removeLabel(name), "danger"));
+        body.push(item("remove-one", armed ? "warning" : "delete", armed ? T("library.actions.clickRemoveAll") : removeLabel(name), "danger"));
       } else {
         if (feature === "ratings") body.push(ratingStars());
         body.push(whenHtml());
@@ -734,66 +737,66 @@
       const present = (refs.present || []).map((ref) => ({ ...ref, ...cleanRef(ref) }));
       const missing = missingRefs();
       const total = present.length + missing.length;
-      const title = !missing.length ? (feature === "history" ? "Watched on every account" : "On every account") : `On ${present.length} of ${total} accounts`;
-      const sub = missing.length ? `Missing on ${listNames(missing.map((ref) => providerName(ref.provider)))}` : FEATURES[feature].present;
+      const title = !missing.length ? (feature === "history" ? T("library.actions.watchedEvery") : T("library.actions.onEvery")) : T("library.actions.onOf", {present: String(present.length), total: String(total)});
+      const sub = missing.length ? T("library.actions.missingOn", {names: listNames(missing.map((ref) => providerName(ref.provider)))}) : FEATURES[feature].present;
       const rows = [...present.map((ref) => ({ ref, on: true })), ...missing.map((ref) => ({ ref, on: false }))].map(({ ref, on }) => {
         const key = refKey(ref);
         const canWrite = writable(ref);
         const rating = on && feature === "ratings" ? ratingOf(ctx, ref) : null;
-        const pill = on ? `<span class="cw-ia-pill is-on">${esc(rating != null ? scoreText(rating, scaleFor(ref)) : "On")}</span>` : `<span class="cw-ia-pill is-off">Missing</span>`;
+        const pill = on ? `<span class="cw-ia-pill is-on">${esc(rating != null ? scoreText(rating, scaleFor(ref)) : T("library.actions.on"))}</span>` : `<span class="cw-ia-pill is-off">${TH("library.actions.missingPill")}</span>`;
         const armed = isArmed(`row:${key}`);
         const action = !canWrite
-          ? `<span class="cw-ia-lock" title="${esc(hiddenReason(ref) || "Not one of your accounts for this")}">${icon("lock")}</span>`
+          ? `<span class="cw-ia-lock" title="${esc(hiddenReason(ref) || T("library.actions.notYours"))}">${icon("lock")}</span>`
           : on
-            ? `<button type="button" class="cw-ia-link is-danger${armed ? " is-armed" : ""}" data-ia-act="row" data-ia-ref="${esc(key)}" data-ia-on="1">${armed ? "Confirm" : "Remove"}</button>`
-            : `<button type="button" class="cw-ia-link" data-ia-act="${feature === "ratings" && !scoreScale().values.length ? "choose-rating" : "row"}" data-ia-ref="${esc(key)}" data-ia-on="0"${feature === "ratings" && scaleFor(ref).unavailable ? " disabled" : ""}>${feature === "ratings" ? scoreScale().values.length ? `Rate ${scoreText(score, scaleFor(ref))}` : "Choose rating" : "Add"}</button>`;
+            ? `<button type="button" class="cw-ia-link is-danger${armed ? " is-armed" : ""}" data-ia-act="row" data-ia-ref="${esc(key)}" data-ia-on="1">${armed ? TH("library.actions.confirm") : T("library.actions.remove")}</button>`
+            : `<button type="button" class="cw-ia-link" data-ia-act="${feature === "ratings" && !scoreScale().values.length ? "choose-rating" : "row"}" data-ia-ref="${esc(key)}" data-ia-on="0"${feature === "ratings" && scaleFor(ref).unavailable ? " disabled" : ""}>${feature === "ratings" ? scoreScale().values.length ? TH("library.actions.rateValue", {score: String(scoreText(score, scaleFor(ref)))}) : T("library.actions.chooseRating") : T("library.actions.add")}</button>`;
         return `<div class="cw-ia-row${on ? " is-on" : ""}">${logoHtml(ref.provider)}<span class="cw-ia-row-copy"><strong>${esc(providerName(ref.provider))}</strong><small>${esc(accountName(ref, list))}</small></span>${pill}${action}</div>`;
       }).join("");
       const removable = present.filter(writable);
       const foot = [];
-      if (missing.length && (feature !== "ratings" || scoreScale().values.length)) foot.push(`<button type="button" class="cw-ia-btn is-primary" data-ia-act="add-all"${dateReady() && (feature !== "ratings" || scoreScale().values.includes(score)) ? "" : " disabled"}>${esc(missing.length === 1 ? addLabel(providerName(missing[0].provider)).replace(/ (watchlist|collection)$/, "") : `Add to ${missing.length} missing`)}</button>`);
+      if (missing.length && (feature !== "ratings" || scoreScale().values.length)) foot.push(`<button type="button" class="cw-ia-btn is-primary" data-ia-act="add-all"${dateReady() && (feature !== "ratings" || scoreScale().values.includes(score)) ? "" : " disabled"}>${esc(missing.length === 1 ? addLabel(providerName(missing[0].provider)).replace(/ (watchlist|collection)$/, "") : T("library.actions.addMissing", {count: missing.length}))}</button>`);
       if (removable.length > 1) {
         const armed = isArmed("all");
-        foot.push(`<button type="button" class="cw-ia-btn is-danger${armed ? " is-armed" : ""}" data-ia-act="remove-all">${esc(armed ? "Click again to confirm" : "Remove from all")}</button>`);
+        foot.push(`<button type="button" class="cw-ia-btn is-danger${armed ? " is-armed" : ""}" data-ia-act="remove-all">${esc(armed ? T("library.actions.clickConfirm") : T("library.actions.removeFromAll"))}</button>`);
       }
-      return `${head(FEATURE_ICONS[feature], title, sub)}${feature === "ratings" && missing.length ? `<div class="cw-ia-list">${ratingStars()}</div>` : ""}${missing.length ? whenHtml() : ""}${section("Your accounts")}<div class="cw-ia-rows">${rows || `<p class="cw-ia-note">${icon("info")}None of your accounts can hold this.</p>`}</div>${links()}${foot.length ? `<div class="cw-ia-foot">${foot.join("")}</div>` : ""}`;
+      return `${head(FEATURE_ICONS[feature], title, sub)}${feature === "ratings" && missing.length ? `<div class="cw-ia-list">${ratingStars()}</div>` : ""}${missing.length ? whenHtml() : ""}${section(T("library.actions.yourAccounts"))}<div class="cw-ia-rows">${rows || `<p class="cw-ia-note">${icon("info")}${TH("library.actions.noneCanHold")}</p>`}</div>${links()}${foot.length ? `<div class="cw-ia-foot">${foot.join("")}</div>` : ""}`;
     }
 
     function progressHtml() {
       const row = focusRow();
       if (ctx.focusRow != null) {
-        if (!row) return `${head("resume", "Resume point", "This resume point is gone")}`;
+        if (!row) return `${head("resume", T("library.actions.resumePoint"), T("library.actions.resumeGone"))}`;
         const body = [];
-        if (rowAllows(row, "mark_watched")) body.push(item("pg-watched-one", "check_circle", "Mark as watched", "accent"));
-        if (rowAllows(row, "remove")) body.push(item("pg-clear-one", "delete", "Remove the resume point", "danger"));
-        if (!body.length) body.push(`<p class="cw-ia-note">${icon("lock")}${esc(row.provider_label)} does not allow changes here</p>`);
+        if (rowAllows(row, "mark_watched")) body.push(item("pg-watched-one", "check_circle", T("library.actions.markWatched"), "accent"));
+        if (rowAllows(row, "remove")) body.push(item("pg-clear-one", "delete", T("library.actions.removeResume"), "danger"));
+        if (!body.length) body.push(`<p class="cw-ia-note">${icon("lock")}${TH("library.actions.noChanges", {name: row.provider_label})}</p>`);
         return `${head("", row.label, `${Math.round(Number(row.record?.progress_percent) || 0)}% watched`, row.provider)}<div class="cw-ia-list">${body.join("")}</div>`;
       }
       const rows = progressRows();
       const list2 = rows.map((entry) => {
         const pct = Math.round(Number(entry.record?.progress_percent) || 0);
         const actions = [
-          rowAllows(entry, "mark_watched") ? `<button type="button" class="cw-ia-link" data-ia-act="pg-watched-row" data-ia-rid="${esc(entry.rid)}">Watched</button>` : "",
-          rowAllows(entry, "remove") ? `<button type="button" class="cw-ia-link is-danger" data-ia-act="pg-clear-row" data-ia-rid="${esc(entry.rid)}">Remove</button>` : "",
+          rowAllows(entry, "mark_watched") ? `<button type="button" class="cw-ia-link" data-ia-act="pg-watched-row" data-ia-rid="${esc(entry.rid)}">${TH("library.actions.watched")}</button>` : "",
+          rowAllows(entry, "remove") ? `<button type="button" class="cw-ia-link is-danger" data-ia-act="pg-clear-row" data-ia-rid="${esc(entry.rid)}">${TH("library.actions.remove")}</button>` : "",
         ].join("");
         return `<div class="cw-ia-row is-on">${logoHtml(entry.provider)}<span class="cw-ia-row-copy"><strong>${esc(entry.label)}</strong><small>${esc(`${pct}% watched`)}</small></span>${actions || `<span class="cw-ia-lock">${icon("lock")}</span>`}</div>`;
       }).join("");
       const clearable = rows.filter((entry) => rowAllows(entry, "remove"));
       const watchable = rows.filter((entry) => rowAllows(entry, "mark_watched"));
       const foot = [];
-      if (watchable.length > 1) foot.push(`<button type="button" class="cw-ia-btn is-primary" data-ia-act="pg-watched-all">Mark all as watched</button>`);
+      if (watchable.length > 1) foot.push(`<button type="button" class="cw-ia-btn is-primary" data-ia-act="pg-watched-all">${TH("library.actions.markAllWatched")}</button>`);
       if (clearable.length > 1) {
         const armed = isArmed("all");
-        foot.push(`<button type="button" class="cw-ia-btn is-danger${armed ? " is-armed" : ""}" data-ia-act="pg-clear-all">${esc(armed ? "Click again to confirm" : "Remove all")}</button>`);
+        foot.push(`<button type="button" class="cw-ia-btn is-danger${armed ? " is-armed" : ""}" data-ia-act="pg-clear-all">${esc(armed ? T("library.actions.clickConfirm") : T("library.actions.removeAll"))}</button>`);
       }
-      return `${head("resume", plural(rows.length, "resume point"), listNames([...new Set(rows.map((entry) => entry.provider_label))]))}${section("Resume points")}<div class="cw-ia-rows">${list2}</div>${foot.length ? `<div class="cw-ia-foot">${foot.join("")}</div>` : ""}`;
+      return `${head("resume", plural(rows.length, "resume point"), listNames([...new Set(rows.map((entry) => entry.provider_label))]))}${section(T("library.actions.resumePoints"))}<div class="cw-ia-rows">${list2}</div>${foot.length ? `<div class="cw-ia-foot">${foot.join("")}</div>` : ""}`;
     }
 
     function everythingHtml() {
       const rows = ctx.groups.map((group) => {
         const refs = groupRefs(group);
         const on = refs.length > 0 && !ctx.off.has(group.feature);
-        const note = refs.length ? listNames(refs.map((ref) => providerName(ref.provider))) : "Nothing CrossWatch can remove";
+        const note = refs.length ? listNames(refs.map((ref) => providerName(ref.provider))) : T("library.actions.nothingToRemove");
         return `<label class="cw-ia-row cw-ia-check${refs.length ? "" : " is-empty"}">
           <input type="checkbox" data-ia-act="ev-toggle" data-ia-feature="${esc(group.feature)}"${on ? " checked" : ""}${refs.length ? "" : " disabled"}>
           <span class="cw-ia-logo is-icon">${icon(FEATURE_ICONS[group.feature] || "check")}</span>
@@ -803,14 +806,14 @@
       }).join("");
       const total = activeGroups().reduce((sum, group) => sum + groupRefs(group).length, 0);
       const armed = isArmed("all");
-      return `${head("delete_sweep", "Remove from everything", ctx.item?.title || "This title")}<div class="cw-ia-rows">${rows}</div><p class="cw-ia-note">${icon("info")}Removal clears every watch on your provider(s).</p><div class="cw-ia-foot"><button type="button" class="cw-ia-btn is-danger${armed ? " is-armed" : ""}" data-ia-act="ev-remove"${total ? "" : " disabled"}>${esc(!total ? "Nothing selected" : armed ? "Click again to confirm" : `Remove ${plural(total, "record")}`)}</button></div>`;
+      return `${head("delete_sweep", T("library.actions.removeEverything"), ctx.item?.title || T("library.actions.thisTitle"))}<div class="cw-ia-rows">${rows}</div><p class="cw-ia-note">${icon("info")}${TH("library.actions.clearsEvery")}</p><div class="cw-ia-foot"><button type="button" class="cw-ia-btn is-danger${armed ? " is-armed" : ""}" data-ia-act="ev-remove"${total ? "" : " disabled"}>${esc(!total ? T("library.actions.nothingSelected") : armed ? T("library.actions.clickConfirm") : T("library.actions.removeRecords", {what: plural(total, "record")}))}</button></div>`;
     }
 
     function render() {
       if (!ctx || !el) return;
-      el.setAttribute("aria-label", ctx.mode === "everything" ? "Remove from everything" : `${ctx.item?.title || "Title"} ${FEATURES[ctx.feature]?.noun || ""}`);
+      el.setAttribute("aria-label", ctx.mode === "everything" ? T("library.actions.removeEverything") : `${ctx.item?.title || T("library.actions.title")} ${FEATURES[ctx.feature]?.noun || ""}`);
       if (list.loading) {
-        el.innerHTML = `${head("progress_activity", "Checking your accounts", ctx.item?.title || "")}`;
+        el.innerHTML = `${head("progress_activity", T("library.actions.checkingAccounts"), ctx.item?.title || "")}`;
       } else if (ctx.mode === "everything") {
         el.innerHTML = everythingHtml();
       } else if (ctx.feature === "progress") {
@@ -831,8 +834,8 @@
         scope: current.scope,
         onChanged: current.onChanged,
         tasks,
-        working: `${kind === "mark_watched" ? "Marking as watched:" : "Removing:"} ${many(tasks)}…`,
-        done: (okTasks) => `${kind === "mark_watched" ? "Marked as watched:" : "Removed:"} ${many(okTasks)}`,
+        working: T(kind === "mark_watched" ? "library.actions.job.markingWatched" : "library.actions.job.removing", {target: many(tasks)}),
+        done: (okTasks) => T(kind === "mark_watched" ? "library.actions.job.markedWatched" : "library.actions.job.removed", {target: many(okTasks)}),
       });
     }
 
@@ -852,7 +855,7 @@
         if (!isArmed("all")) return arm("all");
         const tasks = activeGroups().flatMap((group) => groupRefs(group).map((ref) => removeTask(group.feature, ref, group.item, `${providerName(ref.provider)} ${FEATURES[group.feature].noun}`, { scope: group.scope })));
         close(true);
-        void run({ feature: "everything", item: current.item, scope: null, onChanged: current.onChanged, tasks, working: `Removing ${plural(tasks.length, "record")}…`, done: (okTasks) => `Removed ${plural(okTasks.length, "record")}` });
+        void run({ feature: "everything", item: current.item, scope: null, onChanged: current.onChanged, tasks, working: T("library.actions.job.removing", {target: plural(tasks.length, "record")}), done: (okTasks) => T("library.actions.job.removed", {target: plural(okTasks.length, "record")}) });
         return;
       }
       if (action.startsWith("pg-")) {
@@ -1058,11 +1061,11 @@
 
     function blockReason(ref) {
       const target = writable(ref);
-      if (!target) return "Not one of your accounts for this";
-      if (when === "release" && !ctx.releaseDate) return "No release date known";
-      if (when === "unknown" && !target.undated_write) return "Needs a watch date";
-      if (when === "unknown" && holds(ref)) return "Already watched here, another play needs a date";
-      if (holds(ref) && !target.rewatch_write) return "Keeps one play per title";
+      if (!target) return T("library.actions.notYours");
+      if (when === "release" && !ctx.releaseDate) return T("library.actions.noRelease");
+      if (when === "unknown" && !target.undated_write) return T("library.actions.needsWatchDate");
+      if (when === "unknown" && holds(ref)) return T("library.actions.alreadyWatchedHere");
+      if (holds(ref) && !target.rewatch_write) return T("library.actions.keepsOnePlay");
       return "";
     }
 
@@ -1112,42 +1115,42 @@
       let title;
       let disabled = false;
       if (entry) {
-        title = !target ? `On ${name}` : clearsAll(play, ref) ? `Remove all watches for this title from ${name}` : `Remove this play from ${name}`;
+        title = !target ? T("library.actions.onName", {name}) : clearsAll(play, ref) ? T("library.actions.removeAllFrom", {target: name}) : T("library.actions.removePlayFrom", {name});
         disabled = !target;
       } else if (!target) {
         return "";
       } else if (holds(ref) && !target.rewatch_write) {
-        title = `${name} keeps one play per title`;
+        title = T("library.actions.keepsOne", {name});
         disabled = true;
       } else if (!Number(play.epoch) && !target.undated_write) {
-        title = `${name} needs a watch date`;
+        title = T("library.actions.needsDate", {name});
         disabled = true;
       } else if (!Number(play.epoch) && holds(ref)) {
-        title = `Already watched on ${name}, another play needs a date`;
+        title = T("library.actions.alreadyWatched", {name});
         disabled = true;
       } else {
-        title = holds(ref) && keepsOne(ref) ? `Copy this watch to ${name}. It keeps one play, so its older play is replaced` : `Copy this watch to ${name}`;
+        title = holds(ref) && keepsOne(ref) ? T("library.actions.copyReplace", {name}) : T("library.actions.copyTo", {name});
       }
       return `<button type="button" class="cw-ia-chip${entry ? " is-on" : ""}" data-ia-ref="${esc(refKey(ref))}" data-ia-play="${index}" data-ia-sheet="chip" title="${esc(title)}" aria-label="${esc(title)}"${disabled ? " disabled" : ""}>${logoHtml(ref.provider, "cw-ia-chip-logo")}<i aria-hidden="true"></i></button>`;
     }
 
     function playsHtml(rows, cols) {
-      if (!data) return `<p class="cw-ia-empty">${icon("progress_activity")}Loading plays…</p>`;
+      if (!data) return `<p class="cw-ia-empty">${icon("progress_activity")}${TH("library.actions.loadingPlays")}</p>`;
       if (data.error) return `<p class="cw-ia-empty is-bad">${icon("error")}${esc(data.error)}</p>`;
-      if (!rows.length) return `<p class="cw-ia-empty">${icon("visibility_off")}Not watched on any of your accounts yet.</p>`;
+      if (!rows.length) return `<p class="cw-ia-empty">${icon("visibility_off")}${TH("library.actions.notWatchedAny")}</p>`;
       return rows.map((play, index) => {
         const key = `play:${index}`;
         const refs = (play.present || []).map(cleanRef);
         const writableRefs = refs.filter(writable);
         const armedRow = isArmed(key);
         const wipes = writableRefs.filter((ref) => clearsAll(play, ref)).map((ref) => `${providerName(ref.provider)} · ${accountName(ref, list)}`);
-        const action = !wipes.length ? "Remove this play everywhere"
-          : wipes.length === writableRefs.length ? "Remove all watches for this title"
-          : `Remove this play; remove all watches for this title from ${listNames(wipes)}`;
-        const label = armedRow ? `Click again to ${action[0].toLowerCase()}${action.slice(1)}` : action;
+        const action = !wipes.length ? T("library.actions.removeEverywhere")
+          : wipes.length === writableRefs.length ? T("library.actions.removeAllTitle")
+          : T("library.actions.removePlayAndAll", {names: listNames(wipes)});
+        const label = armedRow ? T("library.actions.clickAgainTo", {action: `${action[0].toLowerCase()}${action.slice(1)}`}) : action;
         const where = refs.map((ref) => `${providerName(ref.provider)} · ${accountName(ref, list)}`).join(", ");
         const warning = armedRow && wipes.length
-          ? `<p class="cw-ia-warn">${icon("warning")}${esc(`This removes all watches for this title from ${listNames(wipes)}.${wipes.length < writableRefs.length ? " Only this play is removed from the other selected accounts." : ""}`)}</p>`
+          ? `<p class="cw-ia-warn">${icon("warning")}${esc(`${T("library.actions.removesAllFrom", {names: listNames(wipes)})}${wipes.length < writableRefs.length ? ` ${T("library.actions.onlyThisPlay")}` : ""}`)}</p>`
           : "";
         return `<div class="cw-ia-play${armedRow ? " is-armed" : ""}">
           <span class="cw-ia-play-copy"><strong>${esc(fmtWhen(play.epoch))}</strong><small>${esc(where)}</small></span>
@@ -1160,7 +1163,7 @@
 
     function sendToHtml(cols) {
       const own = cols.filter((ref) => writable(ref));
-      if (!own.length) return `<p class="cw-ia-empty">${icon("lock")}None of your accounts can receive history from here.</p>`;
+      if (!own.length) return `<p class="cw-ia-empty">${icon("lock")}${TH("library.actions.noneReceive")}</p>`;
       const groups = new Map();
       for (const ref of own) {
         if (!groups.has(ref.provider)) groups.set(ref.provider, []);
@@ -1168,7 +1171,7 @@
       }
       const state = (ref) => {
         const reason = blockReason(ref);
-        const gate = writable(ref)?.rewatch_gate === "pro_vip" && holds(ref) ? "Rewatches need a Pro or VIP account" : "";
+        const gate = writable(ref)?.rewatch_gate === "pro_vip" && holds(ref) ? T("library.actions.proVip") : "";
         return { reason, gate, on: !reason && picked.has(refKey(ref)) };
       };
       const box = (on) => `<span class="cw-ia-acc-box" aria-hidden="true">${on ? icon("check") : ""}</span>`;
@@ -1177,7 +1180,7 @@
           const ref = refs[0];
           const { reason, gate, on } = state(ref);
           const account = accountName(ref, list);
-          const sub = reason || (account === "Default" ? "" : account);
+          const sub = reason || (account === T("library.actions.default") ? "" : account);
           return `<button type="button" class="cw-ia-dest${on ? " is-on" : ""}" data-ia-sheet="pick" data-ia-ref="${esc(refKey(ref))}" aria-pressed="${on}" title="${esc(reason || gate || `${providerName(provider)} · ${account}`)}"${reason ? " disabled" : ""}>${logoHtml(provider)}<span class="cw-ia-dest-copy"><strong>${esc(providerName(provider))}</strong>${sub ? `<small>${esc(sub)}</small>` : ""}</span>${box(on)}</button>`;
         }
         const accounts = refs.map((ref) => {
@@ -1193,14 +1196,14 @@
       if (!host || !ctx) return;
       const cols = columns();
       const rows = plays();
-      const title = ctx.item?.title || "Title";
+      const title = ctx.item?.title || T("library.actions.title");
       const loading = !data;
       const undated = list.some((row) => row.undated_write);
       if (when === "unknown" && !undated) when = "now";
-      const options = [["now", "Now"], ["release", "On release"], ["custom", "Pick date"], ...(undated ? [["unknown", "No date"]] : [])];
+      const options = [["now", T("library.actions.now")], ["release", T("library.actions.onRelease")], ["custom", T("library.actions.pickDate")], ...(undated ? [["unknown", T("library.actions.noDate")]] : [])];
       const segs = options.map(([value, label]) => {
         const disabled = value === "release" && !ctx.releaseDate;
-        return `<button type="button" role="radio" aria-checked="${when === value}" class="cw-ia-seg${when === value ? " is-on" : ""}" data-ia-sheet="when" data-ia-when="${value}"${disabled ? ' disabled title="No release date known"' : ""}>${esc(label)}</button>`;
+        return `<button type="button" role="radio" aria-checked="${when === value}" class="cw-ia-seg${when === value ? " is-on" : ""}" data-ia-sheet="when" data-ia-when="${value}"${disabled ? ' disabled title="' + TH("library.actions.noRelease") + '"' : ""}>${esc(label)}</button>`;
       }).join("");
       const own = cols.filter((ref) => writable(ref));
       const pickable = own.filter((ref) => !blockReason(ref));
@@ -1208,31 +1211,31 @@
       const anyPlays = rows.length > 0 || holders().length > 0;
       const notes = [];
       for (const ref of chosen) {
-        if (holds(ref) && keepsOne(ref)) notes.push(`${providerName(ref.provider)} keeps one play per title, so this replaces its older play`);
+        if (holds(ref) && keepsOne(ref)) notes.push(T("library.actions.replacesOlder", {name: providerName(ref.provider)}));
       }
       const leftOut = hiddenRows.map((row) => `${providerName(row.provider)} (${(REASONS[row.reason] || "not available").toLowerCase()})`);
       const dateOk = when !== "custom" || /^\d{4}-\d{2}-\d{2}$/.test(customDate);
-      const addLabel = !chosen.length ? "Pick where to send it" : `${anyPlays ? "Log a rewatch on" : "Mark watched on"} ${plural(chosen.length, "account")}`;
+      const addLabel = !chosen.length ? T("library.actions.pickWhere") : T(anyPlays ? "library.actions.logRewatchOn" : "library.actions.markWatchedOn", {target: plural(chosen.length, "account")});
       const clearable = holders().some((ref) => writable(ref)) || rows.some((play) => (play.present || []).some(writable));
       const clearArmed = isArmed("clear");
       const allPicked = pickable.length > 0 && pickable.every((ref) => picked.has(refKey(ref)));
-      const count = loading ? "loading" : data?.truncated ? `newest ${plural(rows.length, "play")} shown` : plural(rows.length, "play");
+      const count = loading ? T("library.actions.loadingLower") : data?.truncated ? T("library.actions.newestShown", {what: plural(rows.length, "play")}) : plural(rows.length, "play");
       host.innerHTML = `<header class="cw-ia-sheet-head">
           <span class="cw-ia-sheet-poster">${ctx.poster ? `<img src="${esc(ctx.poster)}" alt="" onerror="this.remove()">` : ""}</span>
           <span class="cw-ia-sheet-title"><h2 id="cw-ia-sheet-title">${esc(title)}</h2><small>Watch history · ${esc(count)}</small></span>
-          <button type="button" class="cw-ia-icon-btn" data-ia-sheet="close" aria-label="Close">${icon("close")}</button>
+          <button type="button" class="cw-ia-icon-btn" data-ia-sheet="close" aria-label="${TH("library.actions.close")}">${icon("close")}</button>
         </header>
         <div class="cw-ia-plays${data && !data.error && !rows.length ? " is-empty" : ""}">${playsHtml(rows, cols)}</div>
         <div class="cw-ia-log">
-          <div class="cw-ia-section">Log a play</div>
-          <div class="cw-ia-segs" role="radiogroup" aria-label="When did you watch it">${segs}</div>
-          ${when === "custom" ? `<label class="cw-ia-date"><span>Watched on</span><input type="date" data-ia-sheet="date" value="${esc(customDate)}" max="${esc(new Date().toISOString().slice(0, 10))}"></label>` : ""}
-          <div class="cw-ia-section cw-ia-section-row"><span>Send to</span>${pickable.length ? `<button type="button" class="cw-ia-link" data-ia-sheet="pick-all">${allPicked ? "Clear" : "Select all"}</button>` : ""}</div>
+          <div class="cw-ia-section">${TH("library.actions.logPlay")}</div>
+          <div class="cw-ia-segs" role="radiogroup" aria-label="${TH("library.actions.whenWatched")}">${segs}</div>
+          ${when === "custom" ? `<label class="cw-ia-date"><span>${TH("library.actions.watchedOn")}</span><input type="date" data-ia-sheet="date" value="${esc(customDate)}" max="${esc(new Date().toISOString().slice(0, 10))}"></label>` : ""}
+          <div class="cw-ia-section cw-ia-section-row"><span>${TH("library.actions.sendTo")}</span>${pickable.length ? `<button type="button" class="cw-ia-link" data-ia-sheet="pick-all">${allPicked ? T("library.actions.clear") : T("library.actions.selectAll")}</button>` : ""}</div>
           <div class="cw-ia-groups">${loading ? "" : sendToHtml(cols)}</div>
           ${leftOut.length ? `<p class="cw-ia-muted">${esc(`Not listed: ${listNames(leftOut)}.`)}</p>` : ""}
           ${notes.length ? `<p class="cw-ia-hint">${esc(notes.join(" · "))}</p>` : ""}
           <button type="button" class="cw-ia-btn is-primary is-wide" data-ia-sheet="add"${chosen.length && dateOk && !loading ? "" : " disabled"}>${esc(addLabel)}</button>
-          ${clearable ? `<button type="button" class="cw-ia-btn is-quiet-danger is-wide${clearArmed ? " is-armed" : ""}" data-ia-sheet="clear">${esc(clearArmed ? "Click again to remove all watches for this title everywhere" : "Remove all watches for this title everywhere")}</button>` : ""}
+          ${clearable ? `<button type="button" class="cw-ia-btn is-quiet-danger is-wide${clearArmed ? " is-armed" : ""}" data-ia-sheet="clear">${TH(clearArmed ? "library.actions.clearAllArmed" : "library.actions.clearAll")}</button>` : ""}
         </div>`;
     }
 
@@ -1306,10 +1309,10 @@
         const index = button.dataset.iaPlay;
         if (present) {
           const all = clearsAll(play, ref);
-          void run({ ...job, tasks: [removeTask("history", ref, playItem(play, ref), name, { play: index })], working: `Removing ${all ? "all watches for this title" : "this play"} from ${name}…`, done: () => `${all ? "All watches for this title" : "Play"} removed from ${name}` });
+          void run({ ...job, tasks: [removeTask("history", ref, playItem(play, ref), name, { play: index })], working: T(all ? "library.actions.job.removingAllFrom" : "library.actions.job.removingPlayFrom", {target: name}), done: () => T(all ? "library.actions.job.allRemovedFrom" : "library.actions.job.playRemovedFrom", {target: name}) });
         } else {
           const fields = Number(play.epoch) ? { watched_at: isoFromEpoch(play.epoch) } : { watched: true, _cw_watched_state: true };
-          void run({ ...job, tasks: [addTask("history", ref, ctx.item, name, { fields, rewatch: holds(ref), play: index })], working: `Copying the watch to ${name}…`, done: () => `Watch copied to ${name}` });
+          void run({ ...job, tasks: [addTask("history", ref, ctx.item, name, { fields, rewatch: holds(ref), play: index })], working: T("library.actions.job.copying", {target: name}), done: () => T("library.actions.job.copied", {target: name}) });
         }
         return;
       }
@@ -1319,16 +1322,16 @@
         armed = { key: "", until: 0 };
         const play = plays()[Number(index)];
         const refs = (play?.present || []).map(cleanRef).filter(writable);
-        const removal = refs.every((ref) => clearsAll(play, ref)) ? "all watches for this title"
-          : refs.some((ref) => clearsAll(play, ref)) ? "selected history" : "this play";
+        const removal = refs.every((ref) => clearsAll(play, ref)) ? T("library.actions.what.all")
+          : refs.some((ref) => clearsAll(play, ref)) ? T("library.actions.what.selected") : T("library.actions.what.play");
         void run({
           ...job,
           tasks: refs.map((ref) => removeTask("history", ref, playItem(play, ref), label(ref), { play: index })),
-          working: `Removing ${removal} from ${refs.length === 1 ? label(refs[0]) : `${refs.length} accounts`}…`,
+          working: T("library.actions.job.removingWhat", {what: removal, target: refs.length === 1 ? label(refs[0]) : T("library.actions.count.account", {count: refs.length})}),
           done: (okTasks) => {
             const all = okTasks.filter((task) => clearsAll(play, task.ref)).map((task) => task.name);
             const single = okTasks.filter((task) => !clearsAll(play, task.ref)).map((task) => task.name);
-            return [all.length ? `All watches for this title removed from ${listNames(all)}` : "", single.length ? `Play removed from ${listNames(single)}` : ""].filter(Boolean).join(". ");
+            return [all.length ? T("library.actions.job.allRemovedFrom", {target: listNames(all)}) : "", single.length ? T("library.actions.job.playRemovedFrom", {target: listNames(single)}) : ""].filter(Boolean).join(". ");
           },
         });
         return;
@@ -1341,8 +1344,8 @@
         void run({
           ...job,
           tasks: refs.map((ref) => removeTask("history", ref, titleItem, label(ref))),
-          working: `Removing all watches for this title from ${refs.length === 1 ? label(refs[0]) : `${refs.length} accounts`}…`,
-          done: (okTasks) => `All watches for this title removed from ${okTasks.length === 1 ? okTasks[0].name : `${okTasks.length} accounts`}`,
+          working: T("library.actions.job.removingAllFrom", {target: refs.length === 1 ? label(refs[0]) : T("library.actions.count.account", {count: refs.length})}),
+          done: (okTasks) => T("library.actions.job.allRemovedFrom", {target: okTasks.length === 1 ? okTasks[0].name : T("library.actions.count.account", {count: okTasks.length})}),
         });
         return;
       }
@@ -1356,8 +1359,8 @@
         void run({
           ...job,
           tasks: refs.map((ref) => addTask("history", ref, ctx.item, label(ref), { fields, rewatch: holds(ref) })),
-          working: `${rewatchAny ? "Logging the rewatch on" : "Marking watched on"} ${refs.length === 1 ? label(refs[0]) : `${refs.length} accounts`}…`,
-          done: (okTasks) => `${rewatchAny ? "Rewatch logged on" : "Marked watched on"} ${okTasks.length === 1 ? okTasks[0].name : `${okTasks.length} accounts`}`,
+          working: T(rewatchAny ? "library.actions.job.loggingRewatch" : "library.actions.job.markingOn", {target: refs.length === 1 ? label(refs[0]) : T("library.actions.count.account", {count: refs.length})}),
+          done: (okTasks) => T(rewatchAny ? "library.actions.job.rewatchLogged" : "library.actions.job.markedOn", {target: okTasks.length === 1 ? okTasks[0].name : T("library.actions.count.account", {count: okTasks.length})}),
         });
       }
     }
@@ -1393,7 +1396,7 @@
         void loadNotes(found.rows.filter((row) => row.provider === "TRAKT"), mine);
       } catch (e) {
         if (mine !== loadSeq || !ctx) return;
-        data = { plays: [], error: e?.message || "Plays could not be loaded" };
+        data = { plays: [], error: e?.message || T("library.actions.playsFailed") };
       }
       picked = new Set([...picked].filter((key) => list.some((row) => refKey(row) === key)));
       render();

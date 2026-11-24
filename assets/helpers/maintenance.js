@@ -2,6 +2,8 @@
 /* Refactored and expanded maintenance helper with toolbar messages and action handling */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 (function(){
+  const T = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.t?.(key, vars) ?? key;
+  const TH = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.html?.(key, vars) ?? key;
   function toolbarMessage(text, delay = 1800){
     const m = document.getElementById("tb_msg");
     if (!m) return;
@@ -62,24 +64,24 @@
       url: "/api/maintenance/reset-state",
       body: { mode: "clear_both" },
       onSuccess: applySyncStateReset,
-      successText: "Clear State – started ✓",
-      failText: "Clear State – failed"
+      successText: T("maintenance.quick.clearStateOk"),
+      failText: T("maintenance.quick.clearStateFail")
     });
   }
 
   async function clearCache(){
     return runAction({
       url: "/api/maintenance/clear-cache",
-      successText: "Clear Cache – done ✓",
-      failText: "Clear Cache – failed"
+      successText: T("maintenance.quick.clearCacheOk"),
+      failText: T("maintenance.quick.clearCacheFail")
     });
   }
 
   async function resetStats(){
     return runAction({
       url: "/api/maintenance/reset-stats",
-      successText: "Reset Statistics – done ✓",
-      failText: "Reset Statistics – failed",
+      successText: T("maintenance.quick.resetStatsOk"),
+      failText: T("maintenance.quick.resetStatsFail"),
       delay: 2200,
       onSuccess: async () => { try { await window.refreshStats?.(true); } catch {} }
     });
@@ -88,8 +90,8 @@
   async function resetCurrentlyPlaying(){
     return runAction({
       url: "/api/maintenance/reset-currently-watching",
-      successText: "Reset Currently Playing – done ✓",
-      failText: "Reset Currently Playing – failed",
+      successText: T("maintenance.quick.resetPlayingOk"),
+      failText: T("maintenance.quick.resetPlayingFail"),
       delay: 2200
     });
   }

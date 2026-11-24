@@ -2,6 +2,9 @@
 /* CrossWatch - Shared sync topology state */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 
+const I18N = () => globalThis.window?.CW?.I18n || globalThis.window?.__cwI18n;
+const T = (key, vars) => I18N()?.t?.(key, vars) ?? key;
+const TH = (key, vars) => I18N()?.html?.(key, vars) ?? key;
 import { analyzeTopology, pairsForProfile } from "./analysis.js";
 import { baselineMatches, savedBaseline, topologySnapshot } from "./baseline.js";
 
@@ -17,5 +20,5 @@ export function currentTopology() {
   return { ...result,
     profileId, snapshot, baseline, baselineReady: baseline !== undefined, acknowledged: baselineMatches(snapshot, baseline),
     profileLabel: profile?.id ? (profile.label || profile.id) : "",
-    scope: profile?.label || "All configured pairs" };
+    scope: profile?.label || T("modals.topology.allConfigured") };
 }

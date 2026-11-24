@@ -1,6 +1,7 @@
 ﻿/* tests/profile-mobile.browser.mjs */
 /* CrossWatch - Profile artwork and touch workflows at phone widths */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude */
+import './i18n-browser-setup.mjs';
 import test from "node:test";
 import assert from "node:assert/strict";
 import {execFileSync} from "node:child_process";

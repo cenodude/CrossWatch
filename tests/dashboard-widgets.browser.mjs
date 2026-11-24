@@ -2,14 +2,16 @@
 /* CrossWatch - Overview widget presentation and Main isolation checks */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude */
 
+import './i18n-browser-setup.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {execFileSync} from 'node:child_process';
 import {readFile,mkdir} from 'node:fs/promises';
 import {chromium} from 'playwright';
+import {englishFrontendSource} from './i18n-test-helper.mjs';
 
 const profileHTML=execFileSync('python',['-c',"import ui_frontend; print(ui_frontend.get_hub_html({'is_admin':True,'username':'preview'}))"],{encoding:'utf8',maxBuffer:1024*1024});
-const mainSource=await readFile(new URL('../ui_frontend.py',import.meta.url),'utf8');
+const mainSource=englishFrontendSource();
 const mainHTML=mainSource.slice(mainSource.indexOf('<!doctype html>'),mainSource.indexOf('</html>',mainSource.indexOf('<!doctype html>'))+7);
 
 for(const [profile,width,theme='flat-dark'] of [[true,1440],[true,390],[false,1440],[false,390],[true,390,'original'],[true,390,'flat-light']]) test(`${theme}: ${profile?'Overview':'Main'} shared widgets at ${width}px`,async t=>{

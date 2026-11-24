@@ -165,6 +165,7 @@ html[data-cw-theme="flat-light"] .cw-pc-watchlist .pc-info-block{background:line
 #setup-host .sw-brand-title{font-size:20px;font-weight:800;text-transform:uppercase;letter-spacing:.01em}
 #setup-host .sw-subtitle{color:var(--sw-muted);font-size:14px;margin-top:3px}
 #setup-host .sw-version{margin-left:auto;flex-shrink:0;padding:6px 14px;border-radius:999px;background:var(--sw-panel);border:1px solid var(--sw-border);font-size:13px;font-weight:800}
+#setup-host .sw-language{margin-left:auto;flex-shrink:0}#setup-host .sw-language+.sw-version{margin-left:0}#setup-host .sw-language select{padding:6px 12px;border-radius:999px;background:var(--sw-panel);border:1px solid var(--sw-border);color:inherit;font:inherit;font-size:13px;font-weight:700}
 #setup-host .sw-body{padding:0 28px 14px;overflow:auto;min-height:0;overscroll-behavior:contain}
 #setup-host .sw-hero{position:relative;isolation:isolate;min-height:140px;padding:8px 6px 14px}
 #setup-host .sw-hero-copy{position:relative;z-index:1;max-width:76%;pointer-events:none}

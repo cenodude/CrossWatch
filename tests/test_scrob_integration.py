@@ -5,12 +5,14 @@ from pathlib import Path
 from typing import Any, cast
 
 import pytest
+from tests.i18n_source import english_source
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 def read(rel: str) -> str:
-    return (ROOT / rel).read_text(encoding="utf-8", errors="ignore")
+    text = (ROOT / rel).read_text(encoding="utf-8", errors="ignore")
+    return english_source(text) if rel.startswith("assets/") or rel == "ui_frontend.py" else text
 
 
 @pytest.fixture()
@@ -263,7 +265,7 @@ def test_scrob_connection_modal_stages_auth_until_settings_save():
     api = read("api/authenticationAPI.py")
 
     assert '/api/scrob/save?validate_only=1' in ui
-    assert "Scrob connected - save settings to apply" in ui
+    assert 'T("{{provider}} connected - save settings to apply", {provider: "Scrob"})' in ui
     assert "window.__cwScrobPendingAuth" in ui
     assert "_cwValidateScrobSecret" in save
     assert "/api/scrob/save?instance=${encodeURIComponent(_cwNormInst(inst))}&validate_only=1" in save

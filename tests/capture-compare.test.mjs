@@ -4,6 +4,11 @@ import {readFile} from 'node:fs/promises';
 import vm from 'node:vm';
 import * as data from '../assets/js/capture-compare/data.js';
 import * as model from '../assets/js/capture-compare/model.js';
+import './i18n-vm-setup.mjs';
+import {englishI18n} from './i18n-test-helper.mjs';
+
+globalThis.window ??= {};
+globalThis.window.__cwI18n ??= englishI18n();
 
 test('captured title statuses are distinct from watched plays', () => {
   const row = {type:'show',title:'A show',record_type:'title_status',status:'on_hold',native_status:'Hold',rewatching:true,watchlisted:false};

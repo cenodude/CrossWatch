@@ -1,5 +1,7 @@
 /* restart_apply.js - Protocol apply/restart UI helpers */
 (() => {
+  const T = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.t?.(key, vars) ?? key;
+  const TH = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.html?.(key, vars) ?? key;
   "use strict";
 
   const CW_PROTO_PENDING_KEY = "cw_pending_proto_change_v1";
@@ -209,9 +211,9 @@
     o.innerHTML = `  <div class="cw-ao-card" role="dialog" aria-modal="true" aria-live="polite">
     <div class="cw-ao-top">
       <div class="cw-ao-spinner" aria-hidden="true"></div>
-      <div class="cw-ao-title" id="cw-ao-title">Applying changes</div>
+      <div class="cw-ao-title" id="cw-ao-title">${TH("settings.restart.applying")}</div>
     </div>
-    <div class="cw-ao-sub" id="cw-ao-sub">Restarting container / service…</div>
+    <div class="cw-ao-sub" id="cw-ao-sub">${TH("settings.restart.restarting")}</div>
 
     <div class="cw-ao-timer" id="cw-ao-timer" style="--p:0">
       <div class="cw-ao-ring" id="cw-ao-ring" aria-hidden="true">
@@ -221,7 +223,7 @@
       <div class="cw-ao-bar" aria-hidden="true"><div class="cw-ao-bar-fill" id="cw-ao-bar-fill"></div></div>
     </div>
 
-    <div class="cw-ao-foot" id="cw-ao-foot">You’ll be redirected automatically.</div>
+    <div class="cw-ao-foot" id="cw-ao-foot">${TH("settings.restart.redirect")}</div>
   </div>`;
     document.body.appendChild(o);
   }
@@ -262,8 +264,8 @@ function cwShowApplyOverlay(title, subtitle, seconds) {
   const s = o.querySelector("#cw-ao-sub");
   const timer = o.querySelector("#cw-ao-timer");
 
-  if (t) t.textContent = String(title || "Applying changes");
-  if (s) s.textContent = String(subtitle || "Restarting container / service…");
+  if (t) t.textContent = String(title || T("settings.restart.applying"));
+  if (s) s.textContent = String(subtitle || T("settings.restart.restarting"));
 
   const sec = Number.isFinite(Number(seconds)) ? Number(seconds) : DEFAULT_RESTART_SECONDS;
   if (timer) {
@@ -341,12 +343,12 @@ function cwShowApplyOverlay(title, subtitle, seconds) {
     b.innerHTML = `
   <div class="cw-rb-card" role="status" aria-live="polite">
     <div>
-      <div class="cw-rb-title">Restart required</div>
-      <div class="cw-rb-sub" id="cw-rb-sub">A restart is required to apply changes.</div>
+      <div class="cw-rb-title">${TH("settings.restart.requiredTitle")}</div>
+      <div class="cw-rb-sub" id="cw-rb-sub">${TH("settings.restart.requiredSub")}</div>
     </div>
     <div class="cw-rb-actions">
-      <button type="button" class="primary" id="cw-rb-apply" style="display:none">Apply NOW</button>
-      <button type="button" class="danger" id="cw-rb-dismiss">Dismiss</button>
+      <button type="button" class="primary" id="cw-rb-apply" style="display:none">${TH("settings.restart.applyNow")}</button>
+      <button type="button" class="danger" id="cw-rb-dismiss">${TH("settings.restart.dismiss")}</button>
     </div>
   </div>
 `;
@@ -378,7 +380,7 @@ function cwShowApplyOverlay(title, subtitle, seconds) {
     if (!b) return;
 
     const sub = b.querySelector("#cw-rb-sub");
-    if (sub) sub.textContent = String(message || "Restart required");
+    if (sub) sub.textContent = String(message || T("settings.restart.requiredTitle"));
 
     let opts = maybeOpts || {};
     if (hrefOrOpts && typeof hrefOrOpts === "object" && !Array.isArray(hrefOrOpts)) opts = hrefOrOpts;
@@ -388,7 +390,7 @@ function cwShowApplyOverlay(title, subtitle, seconds) {
     const apply = b.querySelector("#cw-rb-apply");
     if (apply) {
       const show = (typeof opts.showApply === "boolean") ? opts.showApply : cwHasPendingProtoMismatch();
-      apply.textContent = String(opts.applyText || (cwHasPendingProtoMismatch() ? "Apply NOW" : "Restart NOW"));
+      apply.textContent = String(opts.applyText || (cwHasPendingProtoMismatch() ? T("settings.restart.applyNow") : T("settings.restart.restartNow")));
       apply.style.display = show ? "" : "none";
       apply.disabled = false;
     }
@@ -413,14 +415,14 @@ function cwShowApplyOverlay(title, subtitle, seconds) {
       return;
     }
 
-    cwShowRestartBanner("Protocol changed: restart required", { showApply: true, applyText: "Apply NOW", kind: "protocol" });
+    cwShowRestartBanner(T("settings.restart.protocol"), { showApply: true, applyText: T("settings.restart.applyNow"), kind: "protocol" });
   }
 
   function cwQueueProtocolApply(proto, url) {
     const want = String(proto || "").toLowerCase() === "https" ? "https" : "http";
     const p = { kind: "protocol", proto: want, url: url || cwBuildProtoUrl(want), ts: Date.now() };
     cwSetPendingProto(p);
-    cwShowRestartBanner("Protocol changed: restart required", { showApply: true, applyText: "Apply NOW", kind: "protocol" });
+    cwShowRestartBanner(T("settings.restart.protocol"), { showApply: true, applyText: T("settings.restart.applyNow"), kind: "protocol" });
   }
 
   async function _postJson(url, body) {
@@ -443,7 +445,7 @@ function cwShowApplyOverlay(title, subtitle, seconds) {
     const targetUrl = p.url || cwBuildProtoUrl(p.proto) || window.location.href;
 
     cwHideRestartBanner();
-    cwShowApplyOverlay("Protocol change: applying", "Logging out, restarting CrossWatch…", DEFAULT_RESTART_SECONDS);
+    cwShowApplyOverlay(T("settings.restart.protocolApplying"), T("settings.restart.loggingOut"), DEFAULT_RESTART_SECONDS);
 
     const btn = document.getElementById("cw-rb-apply");
     if (btn) btn.disabled = true;
@@ -461,7 +463,7 @@ function cwShowApplyOverlay(title, subtitle, seconds) {
     }
 
     if (!ok) {
-      cwShowApplyOverlay("Apply failed", "Restart request failed", 0);
+      cwShowApplyOverlay(T("settings.restart.applyFailed"), T("settings.restart.requestFailed"), 0);
       setTimeout(cwHideApplyOverlay, 2400);
       return;
     }
@@ -483,7 +485,7 @@ function cwShowApplyOverlay(title, subtitle, seconds) {
 
   async function cwRestartCrossWatchWithOverlay() {
     const seconds = DEFAULT_RESTART_SECONDS;
-    cwShowApplyOverlay("Restarting CrossWatch", "Restarting container / service…", seconds);
+    cwShowApplyOverlay(T("settings.restart.restartingCw"), T("settings.restart.restarting"), seconds);
 
     let ok = false;
     let err = "";
@@ -499,7 +501,7 @@ function cwShowApplyOverlay(title, subtitle, seconds) {
     }
 
     if (!ok) {
-      cwShowApplyOverlay("Restart failed", err ? `Restart request failed (${err})` : "Restart request failed", 0);
+      cwShowApplyOverlay(T("settings.restart.failed"), err ? T("settings.restart.requestFailedWith", {error: String(err)}) : T("settings.restart.requestFailed"), 0);
       setTimeout(cwHideApplyOverlay, 2400);
       return;
     }

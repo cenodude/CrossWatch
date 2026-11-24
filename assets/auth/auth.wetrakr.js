@@ -2,6 +2,8 @@
 /* CrossWatch - WeTrakr PKCE browser login and account details */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 (function () {
+  const T = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.t?.(key, vars) ?? key;
+  const TH = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.html?.(key, vars) ?? key;
   if (window.cwAuth?.wetrakr) return;
   const Shared = window.CW.AuthShared;
   const el = Shared.el;
@@ -17,7 +19,7 @@
   }
 
   function errorText(code) {
-    return ({ access_blocked: "WeTrakr blocked the connection. Contact WeTrakr support.", account_access_denied: "WeTrakr did not grant access to your account.", invalid_account: "WeTrakr did not return a valid account.", invalid_response: "WeTrakr returned an incomplete login response.", missing_client_id: "The WeTrakr application ID is missing.", invalid_client: "WeTrakr rejected the application ID.", invalid_flow: "This login is no longer active. Connect again.", expired_flow: "This login expired. Connect again.", invalid_code: "The authorization code is missing, invalid or expired.", rate_limited: "WeTrakr is limiting requests. Please wait before trying again.", access_denied: "Access was declined.", network_error: "Could not reach WeTrakr.", server_error: "WeTrakr is temporarily unavailable.", reconnect_required: "Your connection expired. Connect again.", account_unavailable: "Could not verify your WeTrakr account." })[code] || "WeTrakr login failed. Please try again.";
+    return (["access_blocked", "account_access_denied", "invalid_account", "invalid_response", "missing_client_id", "invalid_client", "invalid_flow", "expired_flow", "invalid_code", "rate_limited", "access_denied", "network_error", "server_error", "reconnect_required", "account_unavailable"].includes(code) ? T(`connections.auth.wetrakr.err.${code}`) : T("connections.auth.wetrakr.err.fallback"));
   }
 
   function setStatus(connected, message) {
@@ -59,7 +61,7 @@
   function tick() {
     if (!flow) return;
     const seconds = Math.max(0, Math.ceil((flow.expires_at * 1000 - Date.now()) / 1000));
-    el("wetrakr_login_timer").textContent = `Login session: ${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")} remaining`;
+    el("wetrakr_login_timer").textContent = T("connections.auth.sessionClock", {time: `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`});
     if (!seconds && !submitting) {
       void cancel();
       setStatus(false, errorText("expired_flow"));
@@ -75,7 +77,7 @@
     const button = el("wetrakr_oauth_start");
     button.classList.add("busy");
     button.disabled = true;
-    popup = Shared.openWaitWindow("WeTrakr", "Preparing the WeTrakr approval page...");
+    popup = Shared.openWaitWindow("WeTrakr", T("connections.auth.wetrakr.preparing"));
     const win = popup;
     try {
       if (previous) await post("oauth/cancel", previous.instance, { flow_id: previous.flow_id });
@@ -94,9 +96,9 @@
       showPending(true);
       tick();
       timer = setInterval(tick, 1000);
-      setStatus(false, "Approve in WeTrakr, then paste the code here.");
+      setStatus(false, T("connections.auth.wetrakr.approve"));
       if (win && !win.closed) { win.location.replace(url.href); popup = null; }
-      else Shared.notify("Use the approval link to open WeTrakr.");
+      else Shared.notify(T("connections.auth.wetrakr.useLink"));
       el("wetrakr_code").focus();
     } catch (error) {
       if (current === generation) {
@@ -111,13 +113,13 @@
   async function finish() {
     if (!flow || submitting) return;
     const code = String(el("wetrakr_code")?.value || "").trim();
-    if (!code) { setStatus(false, "Paste the authorization code from WeTrakr first."); return; }
+    if (!code) { setStatus(false, T("connections.auth.wetrakr.pasteFirst")); return; }
     submitting = true;
     const current = generation, active = flow;
     const button = el("wetrakr_oauth_finish");
     button.classList.add("busy");
     button.disabled = true;
-    setStatus(false, "Verifying your WeTrakr account...");
+    setStatus(false, T("connections.auth.wetrakr.verifying"));
     try {
       const response = await post("oauth/finish", active.instance, { code, flow_id: active.flow_id });
       if (current !== generation) return;
@@ -131,9 +133,9 @@
       await refresh();
       document.dispatchEvent(new CustomEvent("cw-provider-connected", { bubbles: true, detail: { provider: "wetrakr", key: "WETRAKR", instance: active.instance } }));
       window.dispatchEvent(new Event("auth-changed"));
-      Shared.notify("WeTrakr connected");
+      Shared.notify(T("connections.auth.wetrakr.connected"));
     } catch (_) {
-      if (current === generation) setStatus(false, "Could not complete the connection. Try again or restart login.");
+      if (current === generation) setStatus(false, T("connections.auth.wetrakr.incomplete"));
     } finally {
       if (current === generation) { submitting = false; button.classList.remove("busy"); button.disabled = false; }
     }
@@ -145,14 +147,14 @@
       const response = await Shared.fetchJSON(api("status", instance), { cache: "no-store" });
       if (current !== generation || instance !== profile.getInstance() || flow || starting) return;
       const data = response.data || {}, connected = response.ok && !!data.connected;
-      const plan = data.plan === "vip" ? "VIP" : data.plan === "free" ? "Free" : "";
-      setStatus(connected, connected ? `Connected${data.username ? " as " + data.username : ""}${plan ? " / " + plan : ""}` : data.error ? errorText(data.error) : data.reauth_required ? errorText("reconnect_required") : "Not connected");
+      const plan = data.plan === "vip" ? "VIP" : data.plan === "free" ? T("connections.auth.wetrakr.free") : "";
+      setStatus(connected, connected ? `${data.username ? T("connections.auth.connectedAs", {name: data.username}) : T("connections.auth.connected")}${plan ? " / " + plan : ""}` : data.error ? errorText(data.error) : data.reauth_required ? errorText("reconnect_required") : T("connections.auth.notConnected"));
       el("wetrakr_account")?.classList.toggle("hidden", !connected);
-      if (el("wetrakr_plan")) el("wetrakr_plan").textContent = plan ? `Account: ${plan}` : "";
-      const usage = data.plan_usage, labels = { lists: "Lists", list_items: "List items", notes: "Notes" };
-      if (el("wetrakr_limits")) el("wetrakr_limits").textContent = (Array.isArray(usage?.features) ? usage.features : []).filter(item => item?.type === "quota" && labels[item.key]).map(item => `${labels[item.key]}: ${item.used ?? 0}${usage.tier === "free" ? " / " + item.limit : " used"}`).join(" / ");
+      if (el("wetrakr_plan")) el("wetrakr_plan").textContent = plan ? T("connections.auth.wetrakr.account", {plan}) : "";
+      const usage = data.plan_usage, labels = { lists: T("connections.auth.wetrakr.lists"), list_items: T("connections.auth.wetrakr.listItems"), notes: T("connections.auth.wetrakr.notes") };
+      if (el("wetrakr_limits")) el("wetrakr_limits").textContent = (Array.isArray(usage?.features) ? usage.features : []).filter(item => item?.type === "quota" && labels[item.key]).map(item => `${labels[item.key]}: ${item.used ?? 0}${usage.tier === "free" ? " / " + item.limit : ` ${T("connections.auth.wetrakr.used")}`}`).join(" / ");
     } catch (_) {
-      if (current === generation && !flow && !starting) setStatus(false, "Could not verify WeTrakr");
+      if (current === generation && !flow && !starting) setStatus(false, T("connections.auth.wetrakr.verifyFailed"));
     }
   }
 
@@ -161,7 +163,7 @@
     await cancel();
     const response = await post("disconnect", instance);
     if (Shared.reportProviderUsage(response)) return;
-    if (!response.ok || !response.data?.ok) { Shared.notify("Could not disconnect WeTrakr"); return; }
+    if (!response.ok || !response.data?.ok) { Shared.notify(T("connections.auth.wetrakr.disconnectFailed")); return; }
     window.dispatchEvent(new Event("auth-changed"));
     await refresh();
   }
@@ -173,7 +175,7 @@
       const button = el(id);
       if (button && !button.dataset.wetrakrWired) {
         button.dataset.wetrakrWired = "1";
-        button.addEventListener("click", () => { void action().catch(() => Shared.notify("Could not update WeTrakr")); });
+        button.addEventListener("click", () => { void action().catch(() => Shared.notify(T("connections.auth.wetrakr.updateFailed"))); });
       }
     }
     const input = el("wetrakr_code");

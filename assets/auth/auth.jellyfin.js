@@ -1,5 +1,7 @@
 // assets/auth/auth.jellyfin.js
 (function () {
+  const T = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.t?.(key, vars) ?? key;
+  const TH = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.html?.(key, vars) ?? key;
   "use strict";
 
   const Shared = window.CW && window.CW.AuthShared;
@@ -31,7 +33,7 @@
     sectionId: "sec-jellyfin",
     selectId: "jellyfin_instance",
     storageKey: "cw.ui.jellyfin.auth.instance.v1",
-    title: "Select which Jellyfin server/account this config applies to.",
+    title: T("connections.auth.gen.selectServerAccount", {provider: "Jellyfin"}),
   });
 
   function getJfyInstance() {
@@ -104,8 +106,8 @@
       Shared.mediaAuthGuide(root, {
         kind: "jellyfin",
         label: "Jellyfin",
-        title: "Connect to Jellyfin",
-        copy: "Enter your Jellyfin server URL, then connect with Quick Connect (recommended) or your username and password. Next, validate the settings, pick the user, and optionally whitelist libraries."
+        title: T("connections.auth.gen.connectTo", {provider: "Jellyfin"}),
+        copy: T("connections.auth.jf.copy")
       });
       syncJfySetupTabs();
     } catch {}
@@ -172,9 +174,9 @@
 
   function connectedLabel(method) {
     const m = String(method || "").toLowerCase();
-    if (m === "quick_connect") return "Connected using Quick Connect";
-    if (m === "password") return "Connected using password";
-    return "Connected";
+    if (m === "quick_connect") return T("connections.auth.jf.qc");
+    if (m === "password") return T("connections.auth.jf.password");
+    return T("connections.auth.connected");
   }
 
   function setConnected(has, method) {
@@ -215,7 +217,7 @@
     if (wlHandle) { wlHandle.render(); return; }
     wlHandle = window.cwWhitelistTable.mount({
       host,
-      features: [ { key: "hist", label: "History" }, { key: "rate", label: "Ratings" }, { key: "prog", label: "Progress" }, { key: "coll", label: "Collections" }, { key: "scr", label: "Scrobble", title: "Libraries watchers and webhooks read from. Scrobble destinations use History and Progress, or the libraries set on the route." } ],
+      features: [ { key: "hist", label: T("connections.auth.feat.history") }, { key: "rate", label: T("connections.auth.feat.ratings") }, { key: "prog", label: T("connections.auth.feat.progress") }, { key: "coll", label: T("connections.auth.feat.collections") }, { key: "scr", label: T("connections.auth.feat.scrobble"), title: T("connections.auth.feat.scrobbleTitle") } ],
       getLibs: () => lastLibraries,
       isOn: (fk, id) => setFor(fk).has(String(id)),
       selectedIds: () => ["hist", "rate", "prog", "coll", "scr"].flatMap((fk) => [...(setFor(fk) || [])]),
@@ -344,7 +346,7 @@
         body: JSON.stringify({ server, username, password, verify_ssl }), cache: "no-store"
       });
       const j = await r.json().catch(() => ({}));
-      if (!r.ok || j?.ok === false) { setMsgBanner(msg, 'warn', 'Login failed'); return; }
+      if (!r.ok || j?.ok === false) { setMsgBanner(msg, 'warn', T("connections.auth.loginFailed")); return; }
       put("#jfy_server_url", server); put("#jfy_username", username);
       if (j?.user_id) put("#jfy_user_id", j.user_id);
       setConnected(true, "password"); if (Q("#jfy_pass")) Q("#jfy_pass").value = "";
@@ -375,13 +377,13 @@
       if (r.ok && (j.ok !== false)) {
         const pass = document.querySelector('#jfy_pass'); if (pass) pass.value = '';
         setConnected(false);
-        if (msg) { msg.className = 'msg'; msg.textContent = 'Disconnected'; }
+        if (msg) { msg.className = 'msg'; msg.textContent = T("connections.auth.disconnected"); }
         try { syncJfySetupTabs(); } catch {}
       } else {
-        if (msg) { msg.className = 'msg warn'; msg.textContent = 'Could not remove token.'; }
+        if (msg) { msg.className = 'msg warn'; msg.textContent = T("connections.auth.removeTokenFailed"); }
       }
     } catch {
-      if (msg) { msg.className = 'msg warn'; msg.textContent = 'Error removing token.'; }
+      if (msg) { msg.className = 'msg warn'; msg.textContent = T("connections.auth.removeTokenError"); }
     } finally {
       if (delBtn) { delBtn.disabled = false; delBtn.classList.remove('busy'); }
     }
@@ -411,7 +413,7 @@
   async function jfyPickUser(ev) {
     try { ev?.preventDefault?.(); } catch {}
     if (!window.cwMediaUserPicker || typeof window.cwMediaUserPicker.open !== "function") {
-      window.notify?.("User picker not available", "warn");
+      window.notify?.(T("connections.auth.pickerUnavailable"), "warn");
       return;
     }
     const inst = getJfyInstance();
@@ -421,7 +423,7 @@
       server: (Q("#jfy_server_url")?.value || Q("#jfy_server")?.value || "").trim(),
       verifySsl: !!(Q("#jfy_verify_ssl")?.checked || Q("#jfy_verify_ssl_dup")?.checked),
       anchorEl: Q("#jfy_pick_user") || null,
-      title: "Pick Jellyfin user",
+      title: T("connections.auth.gen.pickUser", {provider: "Jellyfin"}),
       onPick: (u) => {
         const id = String(u?.id || "").trim();
         const name = String(u?.name || "").trim();
@@ -431,7 +433,7 @@
         if (nameEl && name) nameEl.value = name;
         const authNameEl = Q("#jfy_user");
         if (authNameEl && name) authNameEl.value = name;
-        window.notify?.(name ? `Selected: ${name}` : "User selected", "ok");
+        window.notify?.(name ? T("connections.auth.selectedName", {name}) : T("connections.auth.userSelected"), "ok");
       },
     });
   }
@@ -535,10 +537,10 @@
         setMethodNote("");
         if (stored !== "password") selectMethod("quick", { persist: false });
       } else if (d.supported && !d.enabled) {
-        setMethodNote("Quick Connect is disabled on this server. Use username & password.", "warn");
+        setMethodNote(T("connections.auth.jf.qcDisabled"), "warn");
         selectMethod("password", { persist: false });
       } else if (d.reason && d.reason !== "missing_server") {
-        setMethodNote("Could not verify Quick Connect support: " + (d.error || d.reason), "warn");
+        setMethodNote(T("connections.auth.jf.qcVerifyFailed", {error: String(d.error || d.reason)}), "warn");
       } else {
         setMethodNote("");
       }
@@ -567,7 +569,7 @@
     const left = Math.max(0, Math.round((qcDeadline - Date.now()) / 1000));
     const mm = Math.floor(left / 60);
     const ss = String(left % 60).padStart(2, "0");
-    el.textContent = left > 0 ? `Expires in ${mm}:${ss}` : "";
+    el.textContent = left > 0 ? T("connections.auth.expiresIn", {time: `${mm}:${ss}`}) : "";
   }
 
   function jfyQcStop(opts = {}) {
@@ -596,9 +598,9 @@
         const state = data && data.state;
         if (state === "authorized") return { state: "authorized" };
         if (state === "waiting") return { state: "pending" };
-        return { state: "terminal", message: (data && data.error) || "Quick Connect request expired. Restart to try again." };
+        return { state: "terminal", message: (data && data.error) || T("connections.auth.jf.qcExpired") };
       },
-      onPending: () => { const s = Q("#jfy_qc_status"); if (s) s.textContent = "Waiting for authorization…"; },
+      onPending: () => { const s = Q("#jfy_qc_status"); if (s) s.textContent = T("connections.auth.waitingAuth"); },
       onAuthorized: async (data) => {
         jfyQcStop();
         if (data.server) put("#jfy_server_url", data.server);
@@ -610,12 +612,12 @@
       },
       onTerminal: (verdict) => {
         jfyQcStop();
-        setMethodNote((verdict && verdict.message) || "Quick Connect request expired. Restart to try again.", "warn");
+        setMethodNote((verdict && verdict.message) || T("connections.auth.jf.qcExpired"), "warn");
         qcShowRestart();
       },
       onTimeout: () => {
         jfyQcStop({ cancel: true });
-        setMethodNote("Quick Connect timed out. Restart to try again.", "warn");
+        setMethodNote(T("connections.auth.jf.qcTimeout"), "warn");
         qcShowRestart();
       },
     });
@@ -635,12 +637,12 @@
 
   async function jfyQcStart() {
     const server = (Q("#jfy_server")?.value || "").trim();
-    if (!server) { setMethodNote("Enter a server URL first.", "warn"); return; }
-    if (!jfyQcPageUrl(server, "0")) { setMethodNote("Enter a valid server URL, for example http://192.168.1.10:8096.", "warn"); return; }
+    if (!server) { setMethodNote(T("connections.auth.jf.urlFirst"), "warn"); return; }
+    if (!jfyQcPageUrl(server, "0")) { setMethodNote(T("connections.auth.jf.validUrl"), "warn"); return; }
     const verify_ssl = !!(Q("#jfy_verify_ssl")?.checked || Q("#jfy_verify_ssl_dup")?.checked);
     jfyQcStop({ cancel: true });
     setMethodNote("");
-    const win = Shared.openWaitWindow("Jellyfin", "Contacting your Jellyfin server...", "JELLYFIN");
+    const win = Shared.openWaitWindow("Jellyfin", T("connections.auth.gen.contactingServer", {provider: "Jellyfin"}), "JELLYFIN");
     const closeWin = () => { try { if (win && !win.closed) win.close(); } catch {} };
     const start = Q("#btn-jfy-qc-start"); if (start) { start.disabled = true; start.classList.add("busy"); }
     try {
@@ -651,7 +653,7 @@
       const d = await r.json().catch(() => ({}));
       if (!r.ok || d?.ok === false || !d?.code) {
         closeWin();
-        setMethodNote(d?.error || "Could not start Quick Connect.", "warn");
+        setMethodNote(d?.error || T("connections.auth.jf.qcStartFailed"), "warn");
         if (d?.reason === "disabled") selectMethod("password");
         return;
       }
@@ -659,12 +661,12 @@
       if (!url) {
         closeWin();
       } else if (win && !win.closed) {
-        Shared.showWaitCode(win, { key: "JELLYFIN", label: "Jellyfin", code: String(d.code), url, message: "Enter this code in Jellyfin Quick Connect" });
+        Shared.showWaitCode(win, { key: "JELLYFIN", label: "Jellyfin", code: String(d.code), url, message: T("connections.auth.jf.enterCode") });
       } else {
         try { window.open(url, "_blank", "noopener"); } catch {}
       }
       const code = Q("#jfy_qc_code"); if (code) code.textContent = d.code || "------";
-      const st = Q("#jfy_qc_status"); if (st) st.textContent = "Waiting for authorization…";
+      const st = Q("#jfy_qc_status"); if (st) st.textContent = T("connections.auth.waitingAuth");
       qcDeadline = Date.now() + Math.min(QC_MAX_MS, (Number(d.expires_in) || 600) * 1000);
       qcSetState(true);
       qcUpdateTimer();
@@ -672,7 +674,7 @@
       ensureJfyQcPoller().start({ intervalMs: QC_POLL_MS, deadlineMs: qcDeadline });
     } catch {
       closeWin();
-      setMethodNote("Could not start Quick Connect.", "warn");
+      setMethodNote(T("connections.auth.jf.qcStartFailed"), "warn");
     } finally {
       if (start) { start.disabled = false; start.classList.remove("busy"); }
     }
@@ -687,15 +689,15 @@
     if (!code || code === "------") return;
     let ok = false;
     ok = (await window.cwCopyText?.(code)) === true;
-    if (!ok) { window.notify?.("Copy failed", "warn"); return; }
+    if (!ok) { window.notify?.(T("connections.auth.copyFailed"), "warn"); return; }
     btn.classList.add("copied");
     btn.innerHTML = QC_ICON_CHECK;
-    btn.title = "Copied!";
+    btn.title = T("connections.auth.copiedBang");
     if (qcCopyRevert) clearTimeout(qcCopyRevert);
     qcCopyRevert = setTimeout(() => {
       btn.classList.remove("copied");
       btn.innerHTML = QC_ICON_COPY;
-      btn.title = "Copy code";
+      btn.title = T("connections.auth.copyCode");
     }, 1400);
   }
 

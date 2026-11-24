@@ -1,5 +1,7 @@
 // assets/auth/auth.bingebase.js
 (function () {
+  const T = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.t?.(key, vars) ?? key;
+  const TH = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.html?.(key, vars) ?? key;
   if (window._bingebasePatched) return;
   window._bingebasePatched = true;
 
@@ -60,7 +62,7 @@
   function expireCode() {
     try { poller?.stop?.(); } catch {}
     clearInterval(countdownTimer);
-    const st = el("bingebase_qc_status"); if (st) st.textContent = "Link code expired. Restart to try again.";
+    const st = el("bingebase_qc_status"); if (st) st.textContent = T("connections.auth.codeExpiredRestart");
     const t = el("bingebase_qc_timer"); if (t) t.textContent = "";
     const cancel = el("bingebase_device_cancel"), restart = el("bingebase_device_restart");
     if (cancel) cancel.classList.add("hidden");
@@ -70,7 +72,7 @@
     const code = txt(data?.user_code);
     const codeInput = el("bingebase_device_code"); if (codeInput) codeInput.value = code || "";
     const codeEl = el("bingebase_qc_code"); if (codeEl) codeEl.textContent = code || "----";
-    const st = el("bingebase_qc_status"); if (st) st.textContent = "Waiting for approval...";
+    const st = el("bingebase_qc_status"); if (st) st.textContent = T("connections.auth.waitingApproval");
     expiresAt = Number(data?.expires_at || 0) || Math.floor(Date.now() / 1000) + Number(data?.expires_in || 600);
     clearInterval(countdownTimer);
     countdownTimer = setInterval(updateCountdown, 1000);
@@ -79,15 +81,15 @@
   }
   async function copyCode() {
     const code = ((el("bingebase_qc_code") && el("bingebase_qc_code").textContent) || (el("bingebase_device_code") && el("bingebase_device_code").value) || "").replace(/\s+/g, "").trim();
-    await Shared.copyText(code, el("bingebase_qc_copy"), { copiedText: "Copied", emptyMessage: "No code to copy yet." });
+    await Shared.copyText(code, el("bingebase_qc_copy"), { copiedText: T("connections.auth.copied"), emptyMessage: T("connections.auth.noCode") });
   }
   function friendlyError(status) {
     const s = String(status || "").toLowerCase();
-    if (s === "authorization_pending") return "Still waiting for approval.";
-    if (s === "expired" || s === "expired_token") return "The code expired. Restart to try again.";
-    if (s === "slow_down" || s === "rate_limited") return "BingeBase asked us to slow down. Waiting a bit.";
-    if (s === "no_device_code") return "Start a device login first.";
-    return "BingeBase authorization failed.";
+    if (s === "authorization_pending") return T("connections.auth.stillWaiting");
+    if (s === "expired" || s === "expired_token") return T("connections.auth.codeExpiredRestart2");
+    if (s === "slow_down" || s === "rate_limited") return T("connections.auth.bb.slowDown");
+    if (s === "no_device_code") return T("connections.auth.startDevice");
+    return T("connections.auth.gen.authFailedDot", {provider: "BingeBase"});
   }
   function revealDeviceWebhook(url) {
     const wh = el("bingebase_webhook_url");
@@ -109,10 +111,10 @@
       const connected = !!d.connected;
       const webhookConfigured = !!d.webhook_configured;
       const apiKeyConfigured = !!d.api_key_configured;
-      if (connected && webhookConfigured) note("Connected; realtime webhook ready.", true, true);
-      else if (connected) note("Connected.", true, true);
-      else if (webhookConfigured) note("Webhook URL staged for realtime scrobbling.", true, false);
-      else note("Not connected.", false);
+      if (connected && webhookConfigured) note(T("connections.auth.connectedWebhook"), true, true);
+      else if (connected) note(T("connections.auth.connectedDot"), true, true);
+      else if (webhookConfigured) note(T("connections.auth.webhookStaged"), true, false);
+      else note(T("connections.auth.notConnectedDot"), false);
       const wh = el("bingebase_webhook_url");
       if (wh) {
         try { wh.type = "password"; } catch (_) {}
@@ -144,18 +146,18 @@
           if (s && !["authorization_pending", "pending"].includes(s)) return { state: "terminal", message: friendlyError(s) };
           return { state: "pending" };
         },
-        onPending: () => { const st = el("bingebase_qc_status"); if (st) st.textContent = "Waiting for approval..."; },
+        onPending: () => { const st = el("bingebase_qc_status"); if (st) st.textContent = T("connections.auth.waitingApproval"); },
         onAuthorized: (data) => {
           stopPoll();
-          note("BingeBase connected.", true);
+          note(T("connections.auth.gen.connectedDot", {provider: "BingeBase"}), true);
           emitConnected();
           try { window.invalidateConfigCache?.(); } catch {}
           try { window.dispatchEvent(new CustomEvent("auth-changed")); } catch {}
           void hydrate().then(() => revealDeviceWebhook(data?.generated_webhook_url));
         },
-        onExpired: () => { expireCode(); note("The BingeBase code expired.", false); },
-        onTerminal: (verdict) => { stopPoll(); note(verdict?.message || "BingeBase authorization failed.", false); },
-        onTimeout: () => { expireCode(); note("The BingeBase code expired.", false); },
+        onExpired: () => { expireCode(); note(T("connections.auth.gen.codeExpired", {provider: "BingeBase"}), false); },
+        onTerminal: (verdict) => { stopPoll(); note(verdict?.message || T("connections.auth.gen.authFailedDot", {provider: "BingeBase"}), false); },
+        onTimeout: () => { expireCode(); note(T("connections.auth.gen.codeExpired", {provider: "BingeBase"}), false); },
       });
     }
     const interval = Number(data?.interval || 5) * 1000;
@@ -163,10 +165,10 @@
   }
   async function startDevice() {
     stopPoll();
-    const win = Shared.openWaitWindow("BingeBase", "Requesting a BingeBase code...", "BINGEBASE");
+    const win = Shared.openWaitWindow("BingeBase", T("connections.auth.gen.requestingCode", {provider: "BingeBase"}), "BINGEBASE");
     const startBtn = el("bingebase_device_start");
     if (startBtn) { startBtn.disabled = true; startBtn.classList.add("busy"); }
-    note("Requesting a BingeBase link code...", true, false);
+    note(T("connections.auth.gen.requestingLinkCode", {provider: "BingeBase"}), true, false);
     try {
       const r = await fetchJSON(bbApi("/api/bingebase/device/start"), { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}", cache: "no-store" });
       const d = r.data || {};
@@ -174,14 +176,14 @@
       const url = txt(d.verification_uri || d.verification_url) || VERIFY_URL;
       setCode(d);
       startPolling(d);
-      note("Enter the code at bingebase.com/activate.", true, false);
+      note(T("connections.auth.bb.enterCode"), true, false);
       if (!writeForwardingPage(win, txt(d.user_code), url)) {
-        note("Popup blocked - open bingebase.com/activate and enter the code.", false);
+        note(T("connections.auth.bb.popup"), false);
       }
     } catch (e) {
       try { if (win && !win.closed) win.close(); } catch (_) {}
       stopPoll();
-      note("Could not start BingeBase device login.", false);
+      note(T("connections.auth.gen.deviceStartFailed", {provider: "BingeBase"}), false);
     } finally {
       if (startBtn) { startBtn.disabled = false; startBtn.classList.remove("busy"); }
     }
@@ -189,7 +191,7 @@
   async function cancelDevice() {
     try { await fetchJSON(bbApi("/api/bingebase/device/cancel"), { method: "POST", cache: "no-store" }); } catch (_) {}
     stopPoll();
-    note("BingeBase login cancelled.", false);
+    note(T("connections.auth.gen.cancelledDot", {provider: "BingeBase"}), false);
   }
   function cfgBlock(cfg, create) {
     return profile ? profile.cfgBlock(cfg, create !== false) : {};
@@ -220,11 +222,11 @@
       const codeEl = el("bingebase_qc_code"); if (codeEl) codeEl.textContent = "----";
       Shared.maskSecret(el("bingebase_webhook_url"), false);
       Shared.maskSecret(el("bingebase_api_key"), false);
-      note("BingeBase disconnected.", false);
+      note(T("connections.auth.gen.disconnectedDot", {provider: "BingeBase"}), false);
       try { window.invalidateConfigCache?.(); } catch {}
       try { window.dispatchEvent(new CustomEvent("auth-changed")); } catch {}
     } catch (_) {
-      note("Could not delete BingeBase connection.", false);
+      note(T("connections.auth.gen.couldNotDeleteConnection", {provider: "BingeBase"}), false);
     }
   }
   function init() {

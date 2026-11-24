@@ -1,5 +1,7 @@
 // auth.plex.js - Plex auth
 (function (w, d) {
+  const T = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.t?.(key, vars) ?? key;
+  const TH = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.html?.(key, vars) ?? key;
 
   const Shared = w.CW && w.CW.AuthShared;
   const $ = (s) => d.getElementById(s);
@@ -30,7 +32,7 @@ const plexProfile = Shared.createProfileAdapter({
   sectionId: "sec-plex",
   selectId: "plex_instance",
   storageKey: "cw.ui.plex.auth.instance.v1",
-  title: "Select which Plex account this config applies to.",
+  title: T("connections.auth.gen.selectAccount", {provider: "Plex"}),
 });
 
 function getPlexInstance() {
@@ -114,8 +116,8 @@ function ensurePlexInstanceUI() {
       Shared.mediaAuthGuide(root, {
         kind: "plex",
         label: "Plex",
-        title: "Link Plex, then tune the server",
-        copy: "Click Connect Plex to get a link code. CrossWatch shows the code, then opens plex.tv/link so you can enter it and approve access. Next, validate the server URL and optionally whitelist libraries."
+        title: T("connections.auth.plex.title"),
+        copy: T("connections.auth.plex.copy")
       });
       syncPlexSetupTabs();
     } catch {}
@@ -300,21 +302,21 @@ function ensurePlexInstanceUI() {
       el.textContent = "";
       return;
     }
-    const name = String(user?.username || "This friend").trim() || "This friend";
+    const name = String(user?.username || T("connections.auth.plex.thisFriend")).trim() || T("connections.auth.plex.thisFriend");
     el.classList.remove("hidden");
-    el.textContent = `${name} is a Plex friend/shared account, not a Plex Home user. CrossWatch can only use Plex's server-scoped shared token for History and Progress. Ratings and Watchlist still need that friend's own Plex profile/authentication, and Plex may remove this token path later.`;
+    el.textContent = T("connections.auth.plex.friend", {name});
   }
 
   function setPlexSuccess(on, text) {
     try { getPlexState().connected = !!on; } catch {}
-    if (on) setPlexBanner("ok", text || "Connected");
+    if (on) setPlexBanner("ok", text || T("connections.auth.connected"));
     else { setPlexBanner(null, ""); setPlexBannerDetail(null, ""); }
     try { Shared.setConnectLocked(["btn-connect-plex", "btn-plex-restart"], !!on); } catch {}
     try { syncPlexSetupTabs(); } catch {}
   }
 
   function setPlexConnected() {
-    setPlexSuccess(true, "Connected");
+    setPlexSuccess(true, T("connections.auth.connected"));
     setPlexBannerDetail(null, "");
     schedulePlexPmsProbe(200);
   }
@@ -346,7 +348,7 @@ function ensurePlexInstanceUI() {
     const el = $("plex_qc_timer"); if (!el) return;
     const left = Math.max(0, Math.round((plexQcDeadline - Date.now()) / 1000));
     const mm = Math.floor(left / 60), ss = String(left % 60).padStart(2, "0");
-    el.textContent = left > 0 ? `Expires in ${mm}:${ss}` : "";
+    el.textContent = left > 0 ? T("connections.auth.expiresIn", {time: `${mm}:${ss}`}) : "";
   }
 
   function plexQcStop() {
@@ -360,7 +362,7 @@ function ensurePlexInstanceUI() {
     if (plexQcTimer) { clearInterval(plexQcTimer); plexQcTimer = null; }
     try { if (plexTokenPoller) plexTokenPoller.stop(); } catch {}
     plexQcDeadline = 0;
-    const st = $("plex_qc_status"); if (st) st.textContent = "Link code expired. Restart to try again.";
+    const st = $("plex_qc_status"); if (st) st.textContent = T("connections.auth.codeExpiredRestart");
     const el = $("plex_qc_timer"); if (el) el.textContent = "";
     plexQcShowRestart();
   }
@@ -370,15 +372,15 @@ function ensurePlexInstanceUI() {
     if (!code || code === "----") return;
     let ok = false;
     ok = (await window.cwCopyText?.(code)) === true;
-    if (!ok) { notify("Copy failed"); return; }
+    if (!ok) { notify(T("connections.auth.copyFailed")); return; }
     btn.classList.add("copied");
     btn.innerHTML = PLEX_ICON_CHECK;
-    btn.title = "Copied!";
+    btn.title = T("connections.auth.copiedBang");
     if (plexQcCopyRevert) clearTimeout(plexQcCopyRevert);
     plexQcCopyRevert = setTimeout(() => {
       btn.classList.remove("copied");
       btn.innerHTML = PLEX_ICON_COPY;
-      btn.title = "Copy code";
+      btn.title = T("connections.auth.copyCode");
     }, 1400);
   }
 
@@ -421,12 +423,12 @@ function ensurePlexInstanceUI() {
       }
       const base = String(j?.server_url || "").trim();
       const sc = Number(j?.status);
-      let msg = "Connected, but PMS is not reachable - validate settings.";
-      if (!base) msg = "Connected, but no PMS URL is set - validate settings.";
-      else if (sc === 401 || sc === 403) msg = "Connected, but PMS rejected the token - validate settings.";
+      let msg = T("connections.auth.plex.pmsUnreachable");
+      if (!base) msg = T("connections.auth.plex.noUrl");
+      else if (sc === 401 || sc === 403) msg = T("connections.auth.plex.rejected");
       try { window.CW.AuthShared.showConnectionWarning(msg); } catch {}
     } catch {
-      try { window.CW.AuthShared.showConnectionWarning("Connected, but PMS is not reachable - validate settings."); } catch {}
+      try { window.CW.AuthShared.showConnectionWarning(T("connections.auth.plex.pmsUnreachable")); } catch {}
     }
   }
 
@@ -438,17 +440,17 @@ function ensurePlexInstanceUI() {
     const connectBtn = $("btn-connect-plex");
     if (connectBtn) { connectBtn.disabled = true; connectBtn.classList.add("busy"); }
 
-    const win = Shared.openWaitWindow("Plex", "Requesting a Plex link code...", "PLEX");
+    const win = Shared.openWaitWindow("Plex", T("connections.auth.gen.requestingLinkCode", {provider: "Plex"}), "PLEX");
 
     let data = null;
     try {
       const r = await fetch(plexApi("/api/plex/pin/new"), { method: "POST", cache: "no-store" });
       data = await r.json();
-      if (!r.ok || data?.ok === false) throw new Error(data?.error || "PIN request failed");
+      if (!r.ok || data?.ok === false) throw new Error(data?.error || T("connections.auth.plex.pinFailed"));
     } catch (e) {
       console.warn("plex pin fetch failed", e);
       try { if (win && !win.closed) win.close(); } catch {}
-      setPlexBanner("warn", "Could not request a Plex link code.");
+      setPlexBanner("warn", T("connections.auth.plex.couldNot"));
       if (connectBtn) { connectBtn.disabled = false; connectBtn.classList.remove("busy"); }
       return;
     }
@@ -456,11 +458,11 @@ function ensurePlexInstanceUI() {
     const pin = String(data.code || data.pin || data.id || "").trim();
     const pinEl = $("plex_pin"); if (pinEl) pinEl.value = pin;
     const codeEl = $("plex_qc_code"); if (codeEl) codeEl.textContent = pin || "----";
-    const statusEl = $("plex_qc_status"); if (statusEl) statusEl.textContent = "Waiting for authorization…";
+    const statusEl = $("plex_qc_status"); if (statusEl) statusEl.textContent = T("connections.auth.waitingAuth");
     const helpEl = $("plex_qc_help");
     if (helpEl) helpEl.textContent = win
-      ? "Opening plex.tv/link — enter this code there and approve CrossWatch."
-      : "Open plex.tv/link and enter this code to approve CrossWatch.";
+      ? T("connections.auth.plex.opening")
+      : T("connections.auth.plex.open");
 
     plexQcDeadline = Date.now() + PLEX_QC_MAX_MS;
     plexQcSetState(true);
@@ -468,7 +470,7 @@ function ensurePlexInstanceUI() {
     plexQcTimer = setInterval(plexQcUpdateTimer, 1000);
 
     if (!Shared.showWaitCode(win, { key: "PLEX", label: "Plex", code: pin, url: "https://plex.tv/link" })) {
-      notify("Popup blocked - open plex.tv/link and enter the code.");
+      notify(T("connections.auth.plex.popup"));
     }
 
     if (connectBtn) { connectBtn.disabled = false; connectBtn.classList.remove("busy"); }
@@ -496,7 +498,7 @@ function ensurePlexInstanceUI() {
       },
       onAuthorized: async (cfg) => {
         try { plexQcStop(); } catch {}
-        try { setPlexSuccess(true, "Connected"); } catch {}
+        try { setPlexSuccess(true, T("connections.auth.connected")); } catch {}
         try { d.dispatchEvent(new CustomEvent("cw-provider-connected", { bubbles: true, detail: { provider: "plex", key: "PLEX" } })); } catch {}
         try {
           const tok = String(getPlexCfgBlock(cfg || {}).account_token || "").trim();
@@ -540,18 +542,18 @@ async function plexDeleteToken() {
       try { const codeEl = $("plex_qc_code"); if (codeEl) codeEl.textContent = "----"; } catch {}
       try { const st = getPlexState(); st.libs = []; st.connected = false; } catch {}
       try { __plexUsersByInst.delete(getPlexInstance()); } catch {}
-      try { setPlexBanner("warn", "Disconnected"); } catch {}
-      try { setPlexBannerDetail("warn", "Token deleted and saved."); } catch {}
-      try { notify("Plex disconnected (saved)."); } catch {}
+      try { setPlexBanner("warn", T("connections.auth.disconnected")); } catch {}
+      try { setPlexBannerDetail("warn", T("connections.auth.plex.deleted")); } catch {}
+      try { notify(T("connections.auth.plex.disconnectedSaved")); } catch {}
       try { refreshPlexLibraries(); } catch {}
       try { syncPlexSetupTabs(); } catch {}
     } else {
-      const msg = String(j?.error || j?.message || "").trim() || "Could not remove Plex token.";
+      const msg = String(j?.error || j?.message || "").trim() || T("connections.auth.plex.removeFailed");
       try { setPlexBannerDetail("warn", msg); } catch {}
     }
   } catch (e) {
     console.warn("plex delete token failed", e);
-    try { setPlexBannerDetail("warn", "Error removing Plex token."); } catch {}
+    try { setPlexBannerDetail("warn", T("connections.auth.plex.removeError")); } catch {}
   } finally {
     try { if (btn) { btn.disabled = false; btn.classList.remove("busy"); } } catch {}
   }
@@ -938,7 +940,7 @@ const tags = [
       server: $("plex_server_url")?.value?.trim() || "",
       verifySsl: !!$("plex_verify_ssl")?.checked,
       anchorEl: btn,
-      title: "Pick Plex user",
+      title: T("connections.auth.gen.pickUser", {provider: "Plex"}),
       onPick: (u) => {
         const uname = String(u?.name || "").trim();
         const uid = String(u?.id || "").trim();
@@ -1016,7 +1018,7 @@ const tags = [
         (document.getElementById("plex_server_url")?.value?.trim() || "") &&
         getPlexState().connected;
       if (!libs.length && hasServer) {
-        notify("No libraries could be loaded from Plex. Check the Server URL and make sure this is a Plex server your account can access.");
+        notify(T("connections.auth.plex.noLibs"));
       }
     } catch {}
 
@@ -1027,7 +1029,7 @@ const tags = [
   async function refreshPlexLibraries() {
     try {
       const host = document.getElementById("plex_lib_matrix");
-      if (host) host.innerHTML = '<div class="sub">Loading libraries…</div>';
+      if (host) host.innerHTML = '<div class="sub">' + TH("connections.auth.loadingLibs") + '</div>';
     } catch {}
     try { getPlexState().libs = []; } catch {}
     const hydrate = hydratePlexFromConfigRaw().catch(() => {});
@@ -1054,11 +1056,11 @@ const tags = [
     w.__plexWlHandle = w.cwWhitelistTable.mount({
       host,
       features: [
-        { key: "hist", label: "History" },
-        { key: "rate", label: "Ratings" },
-        { key: "prog", label: "Progress" },
-        { key: "coll", label: "Collections" },
-        { key: "scr",  label: "Scrobble", title: "Libraries watchers and webhooks read from. Scrobble destinations use History and Progress, or the libraries set on the route." },
+        { key: "hist", label: T("connections.auth.feat.history") },
+        { key: "rate", label: T("connections.auth.feat.ratings") },
+        { key: "prog", label: T("connections.auth.feat.progress") },
+        { key: "coll", label: T("connections.auth.feat.collections") },
+        { key: "scr",  label: T("connections.auth.feat.scrobble"), title: T("connections.auth.feat.scrobbleTitle") },
       ],
       getLibs: () => getPlexState().libs || [],
       isOn: (fk, id) => st[setKey[fk]].has(String(id)),

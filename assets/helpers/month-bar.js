@@ -2,12 +2,14 @@
 /* CrossWatch - Month timeline bar shared by the profile page and the tracker */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 (function () {
+  const T = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.t?.(key, vars) ?? key;
+  const TH = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.html?.(key, vars) ?? key;
   const ZOOM_STEPS = [1, 1.6, 2.5, 4];
   const esc = (value) => String(value ?? "").replace(/[&<>"]/g, (m) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;" }[m]));
   const pad = (value) => String(value).padStart(2, "0");
-  const numberFmt = new Intl.NumberFormat();
+  const numberFmt = new Intl.NumberFormat((window.CW?.I18n || window.__cwI18n)?.locale);
   const defaultMonthLabel = (() => {
-    const fmt = new Intl.DateTimeFormat(undefined, { month: "long", year: "numeric", timeZone: "UTC" });
+    const fmt = new Intl.DateTimeFormat((window.CW?.I18n || window.__cwI18n)?.locale, { month: "long", year: "numeric", timeZone: "UTC" });
     return (year, month) => fmt.format(new Date(Date.UTC(year, month - 1, 1)));
   })();
 
@@ -68,12 +70,12 @@
       node.hidden = false;
       node.innerHTML = `<div class="cw-hist-timeline-head">
           <span class="material-symbols-rounded" aria-hidden="true">timeline</span>
-          <strong>Timeline</strong>
-          <small>${esc(`${numberFmt.format(keys.length)} active ${keys.length === 1 ? "month" : "months"} · click to jump · Ctrl + scroll to zoom`)}</small>
-          <div class="cw-hist-zoom" role="group" aria-label="Timeline zoom">
-            <button type="button" data-timeline-zoom="-1" title="Zoom out" aria-label="Zoom out"><span class="material-symbols-rounded" aria-hidden="true">zoom_out</span></button>
+          <strong>${TH("library.timeline.title")}</strong>
+          <small>${TH("library.timeline.hint", {count: keys.length, n: numberFmt.format(keys.length)})}</small>
+          <div class="cw-hist-zoom" role="group" aria-label="${TH("library.timeline.zoom")}">
+            <button type="button" data-timeline-zoom="-1" title="${TH("library.timeline.zoomOut")}" aria-label="${TH("library.timeline.zoomOut")}"><span class="material-symbols-rounded" aria-hidden="true">zoom_out</span></button>
             <span class="cw-hist-zoom-level"></span>
-            <button type="button" data-timeline-zoom="1" title="Zoom in" aria-label="Zoom in"><span class="material-symbols-rounded" aria-hidden="true">zoom_in</span></button>
+            <button type="button" data-timeline-zoom="1" title="${TH("library.timeline.zoomIn")}" aria-label="${TH("library.timeline.zoomIn")}"><span class="material-symbols-rounded" aria-hidden="true">zoom_in</span></button>
           </div>
         </div>
         <div class="cw-hist-bars${entering ? " is-entering" : ""}" style="--zoom:${ZOOM_STEPS[level]}">${bars}</div>

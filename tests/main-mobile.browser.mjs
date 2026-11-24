@@ -2,12 +2,14 @@
 /* CrossWatch - Mobile sync statistics and recent activity layout checks */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude */
 
+import './i18n-browser-setup.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFile,mkdir} from 'node:fs/promises';
 import {chromium} from 'playwright';
+import {englishFrontendSource} from './i18n-test-helper.mjs';
 
-const source=await readFile(new URL('../ui_frontend.py',import.meta.url),'utf8');
+const source=englishFrontendSource();
 const start=source.indexOf('<!doctype html>');
 const html=source.slice(start,source.indexOf('</html>',start)+7);
 

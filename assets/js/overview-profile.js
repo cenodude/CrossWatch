@@ -1,9 +1,10 @@
 /* assets/js/overview-profile.js */
 /* CrossWatch overview account/profile scope */
 (function () {
+  const T = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.t?.(key, vars) ?? key;
+  const TH = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.html?.(key, vars) ?? key;
   const DEFAULT_INSTANCE = "default";
   const DEFAULT_SCOPE = "__default__";
-  const DEFAULT_SCOPE_LABEL = "Admin";
   const $ = (sel, root = document) => root.querySelector(sel);
   const esc = (value) => String(value ?? "").replace(/[&<>"]/g, (m) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;" }[m]));
   const providerKey = (value) => window.CW?.ProviderMeta?.keyOf?.(value) || String(value || "").trim().toUpperCase();
@@ -135,8 +136,8 @@
       menu.prepend(block);
     }
     block.innerHTML = `
-      <div class="cw-menu-view-as-head"><span class="material-symbols-rounded" aria-hidden="true">visibility</span><span><small>Viewing as</small><strong>${esc(viewed.label)}</strong></span></div>
-      <button class="cw-menu-item" type="button" role="menuitem" data-cw-nav-view-as-stop><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">visibility_off</span><span>Stop viewing as</span></button>
+      <div class="cw-menu-view-as-head"><span class="material-symbols-rounded" aria-hidden="true">visibility</span><span><small>${TH("profile.menu.viewingAs")}</small><strong>${esc(viewed.label)}</strong></span></div>
+      <button class="cw-menu-item" type="button" role="menuitem" data-cw-nav-view-as-stop><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">visibility_off</span><span>${TH("profile.menu.stop")}</span></button>
       <div class="cw-menu-sep" role="separator" aria-hidden="true"></div>`;
   }
 
@@ -157,7 +158,7 @@
     } else if (!viewed) badge?.remove();
     renderViewAsMenu(viewed);
     if (viewed) {
-      link.title = `Viewing as ${viewed.label}`;
+      link.title = T("profile.menu.viewingAsName", {name: viewed.label});
       link.setAttribute("aria-label", `${link.title}. Open menu`);
       if (viewed.avatar_url) setNavAvatar(avatar, viewed.avatar_url);
       else {
@@ -167,9 +168,9 @@
       }
       return;
     }
-    const fallback = authUser?.is_admin ? "Administrator" : "Profile";
+    const fallback = authUser?.is_admin ? T("profile.appUsers.admin") : T("profile.menu.profile");
     const label = String(authUser?.display_name || authUser?.label || authUser?.username || fallback).trim();
-    link.title = label ? `Open ${label} menu` : "Open profile menu";
+    link.title = label ? T("profile.menu.openNamed", {name: label}) : T("profile.menu.open");
     link.setAttribute("aria-label", link.title);
     setNavAvatar(avatar, currentAvatarUrl(authUser?.avatar_url));
   }
@@ -195,8 +196,8 @@
 
   function viewAsRows() {
     return [
-      { id: "", label: "All profiles", icon: "groups" },
-      { id: DEFAULT_SCOPE, label: DEFAULT_SCOPE_LABEL, icon: "admin_panel_settings" },
+      { id: "", label: T("profile.menu.allProfiles"), icon: "groups" },
+      { id: DEFAULT_SCOPE, label: T("profile.menu.adminScope"), icon: "admin_panel_settings" },
       ...profiles.map((row) => ({ id: row.id, label: row.label, avatar: currentAvatarUrl(row.avatar_url) })),
     ];
   }
@@ -233,17 +234,17 @@
       sep.dataset.cwNavViewAsSep = "1";
       main.prepend(entry, sep);
     }
-    entry.innerHTML = `<span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">visibility</span><span>View as</span><span class="cw-menu-view-as-value">${esc(current.label)}</span><span class="material-symbols-rounded cw-menu-view-as-chevron" aria-hidden="true">chevron_right</span>`;
-    entry.setAttribute("aria-label", `View as: ${current.label}`);
+    entry.innerHTML = `<span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">visibility</span><span>${TH("profile.menu.viewAs")}</span><span class="cw-menu-view-as-value">${esc(current.label)}</span><span class="material-symbols-rounded cw-menu-view-as-chevron" aria-hidden="true">chevron_right</span>`;
+    entry.setAttribute("aria-label", T("profile.menu.viewAsName", {name: current.label}));
     if (!panel) {
       panel = document.createElement("div");
       panel.dataset.cwAccountPanel = "view-as";
       panel.hidden = true;
       main.after(panel);
     }
-    panel.innerHTML = `<button class="cw-menu-item" type="button" role="menuitem" data-cw-account-view="main"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">arrow_back</span><span>Back</span></button>
+    panel.innerHTML = `<button class="cw-menu-item" type="button" role="menuitem" data-cw-account-view="main"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">arrow_back</span><span>${TH("profile.menu.back")}</span></button>
       <div class="cw-menu-sep" role="separator"></div>
-      <div class="cw-menu-view-as-list" role="group" aria-label="View as profile">${rows.map((row) => {
+      <div class="cw-menu-view-as-list" role="group" aria-label="${TH("profile.menu.viewAsProfile")}">${rows.map((row) => {
         const on = row.id === activeId;
         return `<button class="cw-menu-item cw-menu-view-as-pick" type="button" role="menuitemradio" aria-checked="${on}" data-cw-nav-view-as-pick="${esc(row.id)}">${viewAsMark(row)}<span>${esc(row.label)}</span>${on ? '<span class="material-symbols-rounded cw-menu-view-as-check" aria-hidden="true">check</span>' : ""}</button>`;
       }).join("")}</div>`;
@@ -353,7 +354,7 @@
     get isAdmin() { return isAdmin; },
     get id() { return activeId; },
     get isDefaultView() { return isAdmin && activeId === DEFAULT_SCOPE; },
-    get label() { return activeId === DEFAULT_SCOPE ? DEFAULT_SCOPE_LABEL : activeProfile()?.label || ""; },
+    get label() { return activeId === DEFAULT_SCOPE ? T("profile.menu.adminScope") : activeProfile()?.label || ""; },
     get profile() { return activeProfile(); },
     get filter() { return activeFilter(); },
     instanceForProvider,

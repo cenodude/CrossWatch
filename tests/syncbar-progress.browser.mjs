@@ -1,6 +1,7 @@
 /* tests/syncbar-progress.browser.mjs */
 /* CrossWatch - Sync bar layout checks in Chromium with the real stylesheets */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
+import './i18n-browser-setup.mjs';
 import test from "node:test";
 import assert from "node:assert/strict";
 import {readFile} from "node:fs/promises";

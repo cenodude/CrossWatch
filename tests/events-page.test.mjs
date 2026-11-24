@@ -7,6 +7,8 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
 import {pageBackLink,returnFromEvents} from '../assets/js/page-return.js';
+import './i18n-vm-setup.mjs';
+import {englishI18n} from './i18n-test-helper.mjs';
 
 test('skipped ratings display a readable reason without reporting failure', async () => {
   const source = await readFile(new URL('../assets/js/events/index.js', import.meta.url), 'utf8');
@@ -114,6 +116,7 @@ test('Events retains the view on return and isolates a new route or profile', as
 
 test('sync runs are grouped per pair with quiet runs folded', async () => {
   globalThis.window ??= {};
+  globalThis.window.__cwI18n ??= englishI18n();
   const {runGroups, runRowsHTML} = await import('../assets/js/events/titles.js');
   const pair = (src, dst, extra = {}) => ({src_provider: src, src_instance: 'default', dst_provider: dst, dst_instance: 'default', feature: 'watchlist', ...extra});
   const runs = [

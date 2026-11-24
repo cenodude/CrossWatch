@@ -3,6 +3,8 @@
 (function () {
   const NS = (window.CW ||= {});
   const Editor = (NS.Editor ||= {});
+  const T = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.t?.(key, vars) ?? key;
+  const TH = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.html?.(key, vars) ?? key;
 
   function compareValues(aVal, bVal) {
     if (typeof aVal === "number" && typeof bVal === "number") {
@@ -115,11 +117,11 @@
       const controls = document.createElement("div");
       controls.className = "cw-mobile-sort";
       const label = document.createElement("label");
-      label.textContent = "Sort by";
+      label.textContent = T("editor.table.sortBy");
       const select = document.createElement("select");
       select.className = "cw-select";
       select.dataset.cwNativeSelect = "true";
-      select.setAttribute("aria-label", "Sort by");
+      select.setAttribute("aria-label", T("editor.table.sortBy"));
       select.onchange = () => ctx.host.querySelector(`th[data-sort="${select.value}"]`)?.click();
       label.appendChild(select);
       const direction = document.createElement("button");
@@ -136,7 +138,7 @@
       select.value = state.sortKey;
       const direction = controls.querySelector("button");
       direction.innerHTML = `<span class="material-symbol" aria-hidden="true">${state.sortDir === "desc" ? "arrow_downward" : "arrow_upward"}</span>`;
-      direction.setAttribute("aria-label", state.sortDir === "desc" ? "Descending, switch to ascending" : "Ascending, switch to descending");
+      direction.setAttribute("aria-label", state.sortDir === "desc" ? T("editor.table.descending") : T("editor.table.ascending"));
       direction.title = direction.getAttribute("aria-label");
     }
     ctx.sortHeaders.forEach(th => {
@@ -263,8 +265,8 @@
       if (ctx.empty) {
         const label = ctx.empty.querySelector(".cw-empty-text");
         const icon = ctx.empty.querySelector(".cw-empty-icon");
-        if (label) label.textContent = state.loadError ? "Could not load Editor data. Try Refresh."
-          : state.loading ? "Loading Editor data…" : "Nothing to show here. Try another list or provider, or use Quick add.";
+        if (label) label.textContent = state.loadError ? T("editor.table.loadFailed")
+          : state.loading ? T("editor.table.loading") : T("editor.table.nothing");
         if (icon) icon.textContent = state.loadError ? "error_outline" : state.loading ? "hourglass_empty" : "table_rows";
         const main = ctx.empty.closest(".cw-main");
         if (main) main.classList.add("cw-main-empty");
@@ -272,7 +274,7 @@
       if (ctx.pager) ctx.pager.style.display = "none";
       if (ctx.summaryVisible) ctx.summaryVisible.textContent = "0";
       if (ctx.summaryTotal) ctx.summaryTotal.textContent = String(totalAll || 0);
-      ctx.setStatus(state.loading ? "Loading Editor data…" : "0 rows visible");
+      ctx.setStatus(state.loading ? T("editor.table.loading") : T("editor.table.zeroRows"));
       state.pageRids = [];
       ctx.syncSelectPageCheckbox();
       ctx.syncBulkBar();
@@ -333,15 +335,15 @@
     if (ctx.summaryVisible) ctx.summaryVisible.textContent = String(vis);
     if (ctx.summaryTotal) ctx.summaryTotal.textContent = String(totalAll);
 
-    if (ctx.pageInfo) ctx.pageInfo.textContent = `Page ${state.page + 1} of ${pageCount} • ${unitLabel === "rows" ? "Rows" : "Titles"} ${first}-${last} of ${totalUnits}`;
+    if (ctx.pageInfo) ctx.pageInfo.textContent = T(unitLabel === "rows" ? "editor.table.pageRows" : "editor.table.pageTitles", {page: state.page + 1, pages: pageCount, first, last, total: totalUnits});
     if (ctx.pager) ctx.pager.style.display = pageCount > 1 ? "flex" : "none";
     if (ctx.prevBtn) ctx.prevBtn.disabled = state.page <= 0;
     if (ctx.nextBtn) ctx.nextBtn.disabled = state.page >= pageCount - 1;
 
     if (totalUnits > vis) {
-      ctx.setRowsStatus(`${vis} ${unitLabel} visible (${unitLabel} ${first}-${last} of ${totalUnits} filtered, ${totalAll} rows total)`);
+      ctx.setRowsStatus(T(unitLabel === "rows" ? "editor.table.visibleFilteredRows" : "editor.table.visibleFilteredTitles", {visible: vis, first, last, filtered: totalUnits, total: totalAll}));
     } else {
-      ctx.setRowsStatus(`${vis} ${unitLabel} visible, ${totalAll} rows total`);
+      ctx.setRowsStatus(T(unitLabel === "rows" ? "editor.table.visibleRows" : "editor.table.visibleTitles", {visible: vis, total: totalAll}));
     }
   }
 

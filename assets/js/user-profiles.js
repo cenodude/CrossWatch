@@ -3,6 +3,8 @@
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 (function (w, d) {
   if (w.cwUserProfilesManager) return;
+  const T = (key, vars) => (w.CW?.I18n || w.__cwI18n)?.t?.(key, vars) ?? key;
+  const TH = (key, vars) => (w.CW?.I18n || w.__cwI18n)?.html?.(key, vars) ?? key;
 
   const HOST_ID = "cw-user-profile-manager";
   const MODAL_HOST_ID = "cw-upm-floating-host";
@@ -29,28 +31,28 @@
   const RESOURCE_KEYS = ["sync_pairs", "watcher_routes", "webhook_routes"];
   const RESOURCE_ICONS = { sync_pairs: "sync_alt", watcher_routes: "sensors", webhook_routes: "webhook" };
   const STEPS = [
-    { key: "name", label: "Name", note: "Who it is for", icon: "badge" },
-    { key: "accounts", label: "Accounts", note: "Provider accounts", icon: "hub" },
-    { key: "resources", label: "Pairs and routes", note: "What syncs and scrobbles", icon: "sync_alt" },
-    { key: "login", label: "Sign-in", note: "Optional login", icon: "key" },
-    { key: "review", label: "Review", note: "Check and create", icon: "fact_check" },
+    { key: "name", label: T("profile.manager.step.name"), note: T("profile.manager.step.nameNote"), icon: "badge" },
+    { key: "accounts", label: T("profile.manager.step.accounts"), note: T("profile.manager.step.accountsNote"), icon: "hub" },
+    { key: "resources", label: T("profile.manager.step.resources"), note: T("profile.manager.step.resourcesNote"), icon: "sync_alt" },
+    { key: "login", label: T("profile.manager.step.login"), note: T("profile.manager.step.loginNote"), icon: "key" },
+    { key: "review", label: T("profile.manager.step.review"), note: T("profile.manager.step.reviewNote"), icon: "fact_check" },
   ];
-  const ACCESS_LABELS = { full: "Full access", readonly: "Read-only", monitor: "Monitor" };
-  const ACCESS_NOTES = { full: "Can view and change their own data.", readonly: "Can look around, but not change anything.", monitor: "Status screens only." };
+  const ACCESS_LABELS = { full: T("profile.manager.access.full"), readonly: T("profile.manager.access.readonly"), monitor: T("profile.manager.access.monitor") };
+  const ACCESS_NOTES = { full: T("profile.manager.access.fullNote"), readonly: T("profile.manager.access.readonlyNote"), monitor: T("profile.manager.access.monitorNote") };
   const ACCESS_ICONS = { full: "edit_square", readonly: "visibility", monitor: "monitor_heart" };
   const SETTINGS_GRANTS = [
-    ["pairs", "Sync pairs", "Add, change and run their own pairs."],
-    ["scrobbler", "Scrobbler", "Their own watcher routes and webhooks."],
-    ["schedule", "Schedule", "When their own pairs run."],
-    ["connections", "Reconnect", "Sign in again to their own accounts."],
+    ["pairs", T("profile.manager.grant.pairs"), T("profile.manager.grant.pairsNote")],
+    ["scrobbler", T("profile.manager.grant.scrobbler"), T("profile.manager.grant.scrobblerNote")],
+    ["schedule", T("profile.manager.grant.schedule"), T("profile.manager.grant.scheduleNote")],
+    ["connections", T("profile.manager.grant.connections"), T("profile.manager.grant.connectionsNote")],
   ];
   const OIDC_CLAIMS = [
-    ["preferred_username", "Username", "badge", "Links on their first sign-in with exactly this username, including upper and lower case."],
-    ["email", "Email", "mail", "Links on their first sign-in with this email, once the provider has verified it."],
-    ["sub", "Subject", "fingerprint", "The account ID from your identity provider. Links right away."],
+    ["preferred_username", T("profile.manager.claim.username"), "badge", T("profile.manager.claim.usernameNote")],
+    ["email", T("profile.manager.claim.email"), "mail", T("profile.manager.claim.emailNote")],
+    ["sub", T("profile.manager.claim.subject"), "fingerprint", T("profile.manager.claim.subjectNote")],
   ];
-  const NAME_IDEAS = ["Me", "Partner", "Kids", "Guests", "Living room"];
-  const STRENGTH_LABELS = ["", "Too short", "Okay", "Good", "Strong"];
+  const NAME_IDEAS = [T("profile.manager.idea.me"), T("profile.manager.idea.partner"), T("profile.manager.idea.kids"), T("profile.manager.idea.guests"), T("profile.manager.idea.living")];
+  const STRENGTH_LABELS = ["", T("profile.manager.strength.short"), T("profile.manager.strength.okay"), T("profile.manager.strength.good"), T("profile.manager.strength.strong")];
   const MIN_PASSWORD = 8;
 
   const $ = (id) => d.getElementById(id);
@@ -75,7 +77,7 @@
       const label = w.CW?.ProviderMeta?.label?.(provider);
       if (label) return label;
     } catch {}
-    return txt(provider).replace(/_/g, " ") || "Provider";
+    return txt(provider).replace(/_/g, " ") || T("profile.manager.provider");
   }
 
   function providerKey(provider) {
@@ -136,7 +138,7 @@
     return (Array.isArray(providerInstances[provider]) ? providerInstances[provider] : [])
       .map((row) => ({
         id: txt(row?.id || "default") || "default",
-        label: txt(row?.display_label || row?.label || row?.id || "Default"),
+        label: txt(row?.display_label || row?.label || row?.id || T("profile.manager.default")),
       }))
       .filter((row) => row.id && !isDefaultInstanceId(row.id))
       .sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: "base", numeric: true }));
@@ -193,7 +195,7 @@
   function grantsSummary(login) {
     if (login.access !== "full") return "";
     const on = SETTINGS_GRANTS.filter(([key]) => login.grants?.[key] !== false).map(([, label]) => label);
-    return on.length ? `Settings: ${on.join(", ")}` : "No settings access";
+    return on.length ? T("profile.manager.settingsList", {list: on.join(", ")}) : T("profile.manager.noSettings");
   }
 
   function oidcDraft(user) {
@@ -258,9 +260,9 @@
   }
 
   function resourceTitle(key) {
-    if (key === "sync_pairs") return "Sync pairs";
-    if (key === "watcher_routes") return "Watcher routes";
-    return "Webhook routes";
+    if (key === "sync_pairs") return T("profile.manager.grant.pairs");
+    if (key === "watcher_routes") return T("profile.manager.res.pairs");
+    return T("profile.manager.res.webhooks");
   }
 
   function resourceRequiredMap() {
@@ -318,16 +320,16 @@
       const visibleIds = new Set(resourceRows(key).map((row) => txt(row.id)));
       return total + values.filter((value) => visibleIds.has(txt(value))).length;
     }, 0);
-    return `Providers: ${providers} - Resources: ${resources}`;
+    return T("profile.manager.providersResources", {providers: String(providers), resources: String(resources)});
   }
 
   function assignedUserSummary(profile) {
     const names = profileLogins(profile?.id)
       .map((user) => txt(user?.username || user?.label || user?.id))
       .filter(Boolean);
-    if (!names.length) return "No login";
+    if (!names.length) return T("profile.manager.noLogin");
     const visible = names.slice(0, 3).join(", ");
-    return `Can log in as ${visible}${names.length > 3 ? ` +${names.length - 3} more` : ""}`;
+    return T("profile.manager.canLogInAs", {names: `${visible}${names.length > 3 ? ` +${names.length - 3}` : ""}`});
   }
 
   function instanceAssignedProfile(provider, instance) {
@@ -370,8 +372,8 @@
       <button type="button" class="cw-auth-service-card cw-auth-add-card cw-upm-profile-card cw-upm-add-card" data-action="new-profile">
         <span class="cw-auth-add-mark cw-upm-add-mark"><span class="material-symbols-rounded" aria-hidden="true">add</span></span>
         <span class="cw-auth-service-copy cw-upm-card-copy">
-          <strong>Add profile</strong>
-          <small>Accounts, pairs and an optional login.</small>
+          <strong>${TH("profile.manager.add")}</strong>
+          <small>${TH("profile.manager.addHint")}</small>
         </span>
         <span class="cw-upm-card-arrow material-symbols-rounded" aria-hidden="true">arrow_forward</span>
       </button>`;
@@ -445,15 +447,15 @@
 
   function loginSummary() {
     const login = modalDraft?.login || {};
-    if (login.user_id) return login.enabled ? `Logs in as ${login.username}` : `Login ${login.username} is disabled`;
-    return login.wanted ? `Will log in as ${login.username || "..."}` : "No login";
+    if (login.user_id) return login.enabled ? T("profile.manager.logsInAs", {name: login.username}) : T("profile.manager.loginDisabled", {name: login.username});
+    return login.wanted ? T("profile.manager.willLogInAs", {name: login.username || "..."}) : T("profile.manager.noLogin");
   }
 
   function stepNote(step) {
     if (!modalProfile()) return step.note;
-    if (step.key === "name") return txt(modalDraft?.label) || "Unnamed";
-    if (step.key === "accounts") return plural(draftAccountCount(), "account");
-    if (step.key === "resources") return `${draftResourceCount()} selected`;
+    if (step.key === "name") return txt(modalDraft?.label) || T("profile.manager.unnamed");
+    if (step.key === "accounts") return T("profile.manager.accountCount", {count: draftAccountCount()});
+    if (step.key === "resources") return T("profile.manager.selectedCount", {count: draftResourceCount()});
     if (step.key === "login") return loginSummary();
     return step.note;
   }
@@ -465,13 +467,13 @@
       <div class="cw-upw-preview">
         ${avatar(name, "lg", draftAvatarUrl())}
         <div class="cw-upw-preview-text">
-          <strong data-upw-name>${esc(name || "New profile")}</strong>
+          <strong data-upw-name>${esc(name || T("profile.manager.newProfile"))}</strong>
           <small>${esc(loginSummary())}</small>
         </div>
         <div class="cw-upw-preview-stats">
-          <span><b>${draftAccountCount()}</b>Accounts</span>
-          <span><b>${draftResourceCount()}</b>Pairs and routes</span>
-          <span class="${login.wanted ? "is-on" : ""}">${icon(login.wanted ? "lock_person" : "lock_open")}${login.wanted ? "Login" : "No login"}</span>
+          <span><b>${draftAccountCount()}</b>${TH("profile.manager.step.accounts")}</span>
+          <span><b>${draftResourceCount()}</b>${TH("profile.manager.step.resources")}</span>
+          <span class="${login.wanted ? "is-on" : ""}">${icon(login.wanted ? "lock_person" : "lock_open")}${login.wanted ? T("profile.manager.loginOn") : T("profile.manager.noLogin")}</span>
         </div>
       </div>`;
   }
@@ -480,7 +482,7 @@
     const editing = !!modalProfile();
     const visited = modalDraft?.visited || 0;
     return `
-      <nav class="cw-upw-steps${editing ? " is-tabs" : ""}" aria-label="${editing ? "Profile sections" : "Steps"}">
+      <nav class="cw-upw-steps${editing ? " is-tabs" : ""}" aria-label="${editing ? T("profile.manager.sections") : T("profile.manager.steps")}">
         ${modalSteps().map((step, index) => {
           const done = !!modalDone || (!editing && index < wizardStep);
           const current = !modalDone && index === wizardStep;
@@ -496,7 +498,7 @@
 
   function paneHead(title, lead) {
     const steps = modalSteps();
-    const eyebrow = modalProfile() ? steps[wizardStep]?.label || "" : `Step ${wizardStep + 1} of ${steps.length}`;
+    const eyebrow = modalProfile() ? steps[wizardStep]?.label || "" : T("profile.manager.stepOf", {n: wizardStep + 1, total: steps.length});
     return `
       <div class="cw-upw-head">
         <span class="cw-upw-eyebrow">${esc(eyebrow)}</span>
@@ -509,26 +511,26 @@
     const name = txt(modalDraft?.label);
     const editing = !!modalProfile();
     return `
-      ${paneHead(editing ? "Profile name" : "Who is this profile for?", "Give it a name you will recognise. You can always view CrossWatch as any profile.")}
+      ${paneHead(editing ? T("profile.manager.profileName") : T("profile.manager.whoFor"), T("profile.manager.nameHint"))}
       <div class="cw-upw-name">
         <div class="cw-upw-photo">
-          <label class="cw-upw-photo-pick" title="${draftAvatarUrl() ? "Change picture" : "Add picture"}">
+          <label class="cw-upw-photo-pick" title="${draftAvatarUrl() ? T("profile.manager.changePicture") : T("profile.manager.addPicture")}">
             ${avatar(name, "xl", draftAvatarUrl())}
             <span class="cw-upw-photo-badge">${icon("photo_camera")}</span>
-            <input type="file" accept="image/png,image/jpeg,image/webp" data-upw-photo hidden aria-label="${draftAvatarUrl() ? "Change picture" : "Add picture"}">
+            <input type="file" accept="image/png,image/jpeg,image/webp" data-upw-photo hidden aria-label="${draftAvatarUrl() ? T("profile.manager.changePicture") : T("profile.manager.addPicture")}">
           </label>
-          ${draftAvatarUrl() ? `<button type="button" class="cw-upw-photo-remove" data-action="remove-photo" title="Remove picture" aria-label="Remove picture">${icon("close")}</button>` : ""}
+          ${draftAvatarUrl() ? `<button type="button" class="cw-upw-photo-remove" data-action="remove-photo" title="${TH("profile.manager.removePicture")}" aria-label="${TH("profile.manager.removePicture")}">${icon("close")}</button>` : ""}
         </div>
         <div class="cw-upw-name-field">
-          <input class="cw-upw-input is-xl" id="cw-upm-modal-label" type="text" maxlength="40" value="${esc(name)}" placeholder="Type a name" autocomplete="off" spellcheck="false" aria-label="Profile name">
-          ${editing ? "" : `<div class="cw-upw-ideas"><span>Ideas</span>${NAME_IDEAS.map((idea) => `<button type="button" class="cw-upw-chip" data-action="name-idea" data-value="${esc(idea)}">${esc(idea)}</button>`).join("")}</div>`}
+          <input class="cw-upw-input is-xl" id="cw-upm-modal-label" type="text" maxlength="40" value="${esc(name)}" placeholder="${TH("profile.manager.typeName")}" autocomplete="off" spellcheck="false" aria-label="${TH("profile.manager.profileName")}">
+          ${editing ? "" : `<div class="cw-upw-ideas"><span>${TH("profile.manager.ideas")}</span>${NAME_IDEAS.map((idea) => `<button type="button" class="cw-upw-chip" data-action="name-idea" data-value="${esc(idea)}">${esc(idea)}</button>`).join("")}</div>`}
         </div>
       </div>
       ${editing ? "" : `
         <div class="cw-upw-explain">
-          <div>${icon("hub")}<strong>Their accounts</strong><span>Pick which provider accounts belong to them.</span></div>
-          <div>${icon("sync_alt")}<strong>Their sync</strong><span>Pairs and routes that use those accounts.</span></div>
-          <div>${icon("key")}<strong>Optional login</strong><span>Let them sign in and see only their own profile.</span></div>
+          <div>${icon("hub")}<strong>${TH("profile.manager.theirAccounts")}</strong><span>${TH("profile.manager.theirAccountsHint")}</span></div>
+          <div>${icon("sync_alt")}<strong>${TH("profile.manager.theirSync")}</strong><span>${TH("profile.manager.theirSyncHint")}</span></div>
+          <div>${icon("key")}<strong>${TH("profile.manager.step.loginNote")}</strong><span>${TH("profile.manager.loginHint")}</span></div>
         </div>`}`;
   }
 
@@ -542,9 +544,9 @@
     const insts = draftInstances();
     const required = resourceRequiredMap();
     const keys = providerKeys();
-    const head = paneHead(`Which accounts belong to ${draftName()}?`, "Select accounts for this profile. Accounts assigned elsewhere are locked. Default instances cannot be assigned.");
+    const head = paneHead(T("profile.manager.whichAccounts", {name: draftName()}), T("profile.manager.accountsHint"));
     if (!keys.length) {
-      return `${head}${emptyState("link_off", "No named accounts yet", "Default connections stay with the admin. Add a named connection such as PLEX-P01 under Connections, then come back.")}`;
+      return `${head}${emptyState("link_off", T("profile.manager.ui.noNamed"), T("profile.manager.ui.noNamedHelp"))}`;
     }
     return `
       ${head}
@@ -566,9 +568,9 @@
                   const isOn = selected.has(row.id) || needed;
                   const state = owner
                     ? `<span class="cw-upw-tag is-lock">${icon("lock")}${esc(owner.label || owner.id)}</span>`
-                    : needed ? `<span class="cw-upw-tag is-good">${icon("link")}Needed</span>` : `<span class="cw-upw-tick">${icon("check")}</span>`;
+                    : needed ? `<span class="cw-upw-tag is-good">${icon("link")}${TH("profile.manager.ui.needed")}</span>` : `<span class="cw-upw-tick">${icon("check")}</span>`;
                   return `
-                    <label class="cw-upw-tile${isOn ? " is-selected" : ""}${owner ? " is-locked" : ""}${needed ? " is-required" : ""}" title="${esc(owner ? `Belongs to ${owner.label || owner.id}` : needed ? `Needed by ${Array.from(new Set(neededBy)).join(", ")}` : "")}">
+                    <label class="cw-upw-tile${isOn ? " is-selected" : ""}${owner ? " is-locked" : ""}${needed ? " is-required" : ""}" title="${owner ? TH("profile.manager.belongsTo", {name: owner.label || owner.id}) : needed ? TH("profile.manager.neededBy", {names: Array.from(new Set(neededBy)).join(", ")}) : ""}">
                       <input class="cw-upw-check" type="checkbox" name="cw-upm-provider-${esc(provider)}" value="${esc(row.id)}" ${isOn ? "checked" : ""} ${needed || owner ? "disabled" : ""}>
                       <span class="cw-upw-tile-text"><strong>${esc(row.label)}</strong><code>${esc(row.id)}</code></span>
                       ${state}
@@ -602,8 +604,8 @@
             const meta = owner
               ? `<span class="cw-upw-tag is-lock">${icon("lock")}${esc(owner)}</span>`
               : missing.length
-                ? `<span class="cw-upw-tag">${icon("add_link")}Adds ${esc(missing.map((ref) => `${providerLabel(ref?.provider)} ${instanceLabel(ref?.provider, ref?.instance)}`).join(", "))}</span>`
-                : `<span class="cw-upw-tag is-good">${icon("auto_awesome")}Matches their accounts</span>`;
+                ? `<span class="cw-upw-tag">${icon("add_link")}${TH("profile.manager.adds")} ${esc(missing.map((ref) => `${providerLabel(ref?.provider)} ${instanceLabel(ref?.provider, ref?.instance)}`).join(", "))}</span>`
+                : `<span class="cw-upw-tag is-good">${icon("auto_awesome")}${TH("profile.manager.ui.matches")}</span>`;
             return `
               <label class="cw-upw-route${isOn ? " is-selected" : ""}${owner ? " is-locked" : ""}" data-resource-option>
                 <input class="cw-upw-check" type="checkbox" data-resource-key="${esc(key)}" value="${esc(row.id)}" ${isOn ? "checked" : ""} ${owner ? "disabled" : ""}>
@@ -619,8 +621,8 @@
   function renderResourcesStep() {
     const keys = manualInstanceKeys();
     const total = RESOURCE_KEYS.reduce((sum, key) => sum + resourceRows(key).length, 0);
-    const head = paneHead(`What runs for ${draftName()}?`, total ? "Everything that only uses this profile's accounts is switched on for you. Switching on another one also adds the accounts it needs." : "");
-    if (!total) return `${head}${emptyState("route", "Nothing to assign yet", "No sync pairs or routes use named accounts. You can create this profile now and assign them later.")}`;
+    const head = paneHead(T("profile.manager.whatRuns", {name: draftName()}), total ? T("profile.manager.autoOn") : "");
+    if (!total) return `${head}${emptyState("route", T("profile.manager.ui.nothingAssign"), T("profile.manager.ui.nothingAssignHelp"))}`;
     return `${head}<div class="cw-upw-groups">${RESOURCE_KEYS.map((key) => renderResourceGroup(key, keys)).join("")}</div>`;
   }
 
@@ -638,26 +640,26 @@
   }
 
   function renderUsernameField(login) {
-    return renderField("Username", `<span class="cw-upw-control">${icon("alternate_email")}<input class="cw-upw-input" id="cw-upm-login-username" type="text" maxlength="64" value="${esc(login.username)}" autocomplete="off" spellcheck="false"></span>`);
+    return renderField(T("profile.manager.claim.username"), `<span class="cw-upw-control">${icon("alternate_email")}<input class="cw-upw-input" id="cw-upm-login-username" type="text" maxlength="64" value="${esc(login.username)}" autocomplete="off" spellcheck="false"></span>`);
   }
 
   function renderPasswordField(login, existing) {
     const control = `
       <span class="cw-upw-control">
         ${icon("key")}
-        <input class="cw-upw-input" id="cw-upm-login-password" type="${showPassword ? "text" : "password"}" value="${esc(login.password)}" placeholder="${existing ? "Leave empty to keep it" : `At least ${MIN_PASSWORD} characters`}" autocomplete="new-password" spellcheck="false">
-        <button type="button" class="cw-upw-icon" data-action="toggle-password" title="${showPassword ? "Hide password" : "Show password"}" aria-label="${showPassword ? "Hide password" : "Show password"}">${icon(showPassword ? "visibility_off" : "visibility")}</button>
-        <button type="button" class="cw-upw-icon" data-action="copy-password" title="Copy password" aria-label="Copy password">${icon("content_copy")}</button>
+        <input class="cw-upw-input" id="cw-upm-login-password" type="${showPassword ? "text" : "password"}" value="${esc(login.password)}" placeholder="${existing ? TH("profile.manager.keepEmpty") : TH("profile.manager.atLeast", {count: MIN_PASSWORD})}" autocomplete="new-password" spellcheck="false">
+        <button type="button" class="cw-upw-icon" data-action="toggle-password" title="${showPassword ? T("profile.manager.hidePassword") : T("profile.manager.showPassword")}" aria-label="${showPassword ? T("profile.manager.hidePassword") : T("profile.manager.showPassword")}">${icon(showPassword ? "visibility_off" : "visibility")}</button>
+        <button type="button" class="cw-upw-icon" data-action="copy-password" title="${TH("profile.manager.copyPassword")}" aria-label="${TH("profile.manager.copyPassword")}">${icon("content_copy")}</button>
       </span>`;
-    const hint = `<span class="cw-upw-field-foot">${renderStrength(login.password)}<button type="button" class="cw-upw-link" data-action="generate-password">${icon("magic_button")}Generate a strong one</button></span>`;
-    return renderField(existing ? "New password" : "Password", control, hint);
+    const hint = `<span class="cw-upw-field-foot">${renderStrength(login.password)}<button type="button" class="cw-upw-link" data-action="generate-password">${icon("magic_button")}${TH("profile.manager.ui.generate")}</button></span>`;
+    return renderField(existing ? T("profile.manager.newPassword") : T("profile.manager.password"), control, hint);
   }
 
   function renderAccessChoice(login) {
     const modes = login.initialAccess === "monitor" ? ["full", "readonly", "monitor"] : ["full", "readonly"];
     return `
       <div class="cw-upw-field">
-        <span class="cw-upw-label">Access</span>
+        <span class="cw-upw-label">${TH("profile.manager.accessLabel")}</span>
         <div class="cw-upw-segment">
           ${modes.map((mode) => `
             <button type="button" class="cw-upw-option${login.access === mode ? " is-selected" : ""}" data-action="access-choice" data-value="${mode}" aria-pressed="${login.access === mode}">
@@ -668,7 +670,7 @@
       </div>
       ${login.access === "full" ? `
         <div class="cw-upw-field">
-          <span class="cw-upw-label">Settings they can manage</span>
+          <span class="cw-upw-label">${TH("profile.manager.settingsManage")}</span>
           <div class="cw-upw-grants">
             ${SETTINGS_GRANTS.map(([key, label, note]) => `
               <label class="cw-upw-grant">
@@ -682,7 +684,7 @@
   }
 
   function oidcClaimLabel(claim) {
-    return (OIDC_CLAIMS.find(([key]) => key === claim) || [, "Username"])[1];
+    return (OIDC_CLAIMS.find(([key]) => key === claim) || [, T("profile.manager.claim.username")])[1];
   }
 
   function renderOidcField(login) {
@@ -692,8 +694,8 @@
         <div class="cw-upw-field">
           <span class="cw-upw-label">OIDC sign-in</span>
           <div class="cw-upw-card-actions is-split">
-            <span class="cw-upw-tag is-good">${icon("verified_user")}Linked${login.oidcLabel ? ` to ${esc(login.oidcLabel)}` : ""}</span>
-            <button type="button" class="cw-upw-btn is-danger-ghost" data-action="oidc-unlink">${icon("link_off")}<span>Unlink</span></button>
+            <span class="cw-upw-tag is-good">${icon("verified_user")}${login.oidcLabel ? TH("profile.manager.ui.linkedTo", {name: login.oidcLabel}) : TH("profile.manager.ui.linked")}</span>
+            <button type="button" class="cw-upw-btn is-danger-ghost" data-action="oidc-unlink">${icon("link_off")}<span>${TH("profile.manager.unlink")}</span></button>
           </div>
         </div>`;
     }
@@ -710,7 +712,7 @@
             </button>`).join("")}
         </div>
         <span class="cw-upw-control">${icon("passkey")}<input class="cw-upw-input" id="cw-upm-login-oidc" type="text" maxlength="256" value="${esc(login.oidcValue)}" placeholder="${esc(`${current[1]} at your identity provider`)}" autocomplete="off" spellcheck="false"></span>
-        <p class="cw-upw-note">${icon(waiting ? "schedule" : "info")}${esc(waiting ? `Waiting for their first OIDC sign-in as ${login.initialOidcValue}.` : current[3])}</p>
+        <p class="cw-upw-note">${icon(waiting ? "schedule" : "info")}${esc(waiting ? T("profile.manager.waitingOidc", {value: login.initialOidcValue}) : current[3])}</p>
       </div>`;
   }
 
@@ -719,13 +721,13 @@
       <div class="cw-upw-card is-warning">
         <div class="cw-upw-callout">
           <span class="cw-upw-callout-icon">${icon("lock_open")}</span>
-          <div><strong>Sign-in is turned off</strong><span>Logins only work once CrossWatch asks for a password. Set the administrator login first; you stay signed in.</span></div>
+          <div><strong>${TH("profile.manager.signInOff")}</strong><span>${TH("profile.manager.signInOffHint")}</span></div>
         </div>
         <div class="cw-upw-grid">
-          ${renderField("Administrator username", `<span class="cw-upw-control">${icon("shield_person")}<input class="cw-upw-input" id="cw-upm-admin-username" type="text" value="${esc(login.adminUsername)}" autocomplete="username"></span>`)}
-          ${renderField("Administrator password", `<span class="cw-upw-control">${icon("key")}<input class="cw-upw-input" id="cw-upm-admin-password" type="password" value="${esc(login.adminPassword)}" placeholder="At least ${MIN_PASSWORD} characters" autocomplete="new-password"></span>`)}
+          ${renderField(T("profile.manager.adminUsername"), `<span class="cw-upw-control">${icon("shield_person")}<input class="cw-upw-input" id="cw-upm-admin-username" type="text" value="${esc(login.adminUsername)}" autocomplete="username"></span>`)}
+          ${renderField(T("profile.manager.adminPassword"), `<span class="cw-upw-control">${icon("key")}<input class="cw-upw-input" id="cw-upm-admin-password" type="password" value="${esc(login.adminPassword)}" placeholder="${TH("profile.manager.atLeast", {count: MIN_PASSWORD})}" autocomplete="new-password"></span>`)}
         </div>
-        <div class="cw-upw-card-actions"><button type="button" class="cw-upw-btn is-primary" data-action="enable-auth">${icon("lock")}<span>Turn on sign-in</span></button></div>
+        <div class="cw-upw-card-actions"><button type="button" class="cw-upw-btn is-primary" data-action="enable-auth">${icon("lock")}<span>${TH("profile.manager.turnOn")}</span></button></div>
       </div>`;
   }
 
@@ -736,15 +738,15 @@
   function renderExistingLogin(login) {
     const others = profileLogins(modalProfileId).filter((user) => txt(user?.id) !== login.user_id);
     if (!authActive) {
-      return `${paneHead(`${draftName()} has a login`, "")}${emptyState("lock_open", "Sign-in is turned off", "This login cannot be used or changed until sign-in is turned on in Security.")}`;
+      return `${paneHead(T("profile.manager.hasLogin", {name: draftName()}), "")}${emptyState("lock_open", T("profile.manager.signInOff"), T("profile.manager.signInOffLogin"))}`;
     }
     return `
-      ${paneHead("Sign-in", `${draftName()} can log in to CrossWatch. Change the username, reset the password or switch access.`)}
+      ${paneHead(T("profile.manager.step.login"), T("profile.manager.canLogInHint", {name: draftName()}))}
       <div class="cw-upw-card">
         <div class="cw-upw-account">
           ${avatar(login.username)}
-          <div><strong>${esc(login.initialUsername)}</strong><small>${login.totp ? "Two-factor sign-in on" : "Password sign-in"}</small></div>
-          <span class="cw-upw-tag${login.initialEnabled ? " is-good" : " is-off"}">${icon(login.initialEnabled ? "check_circle" : "block")}${login.initialEnabled ? "Active" : "Disabled"}</span>
+          <div><strong>${esc(login.initialUsername)}</strong><small>${login.totp ? T("profile.manager.twoFactor") : T("profile.manager.passwordSignIn")}</small></div>
+          <span class="cw-upw-tag${login.initialEnabled ? " is-good" : " is-off"}">${icon(login.initialEnabled ? "check_circle" : "block")}${login.initialEnabled ? T("profile.manager.active") : T("profile.manager.disabled")}</span>
         </div>
         <div class="cw-upw-grid">
           ${renderUsernameField(login)}
@@ -753,8 +755,8 @@
         ${renderAccessChoice(login)}
         ${renderOidcField(login)}
         <div class="cw-upw-card-actions is-split">
-          ${renderToggle("cw-upm-login-enabled", login.enabled, "Login enabled")}
-          <button type="button" class="cw-upw-btn is-danger-ghost" data-action="remove-login">${icon("person_remove")}<span>Remove login</span></button>
+          ${renderToggle("cw-upm-login-enabled", login.enabled, T("profile.manager.loginEnabled"))}
+          <button type="button" class="cw-upw-btn is-danger-ghost" data-action="remove-login">${icon("person_remove")}<span>${TH("profile.manager.removeLogin")}</span></button>
         </div>
         ${others.length ? `<p class="cw-upw-note">${icon("group")}Also linked: ${esc(others.map((user) => txt(user?.username || user?.id)).join(", "))}.</p>` : ""}
       </div>`;
@@ -771,10 +773,10 @@
         <span class="cw-upw-radio" aria-hidden="true"></span>
       </button>`;
     return `
-      ${paneHead(`Can ${draftName()} log in to CrossWatch?`, "Without a login only you can use this profile, by viewing CrossWatch as it.")}
+      ${paneHead(T("profile.manager.canLogInQuestion", {name: draftName()}), T("profile.manager.withoutLogin"))}
       <div class="cw-upw-choices">
-        ${choice(false, "visibility", "No login", "Just a profile you can switch to.")}
-        ${choice(true, "login", "Yes, give them a login", "They sign in with their own username and only see this profile.")}
+        ${choice(false, "visibility", T("profile.manager.noLogin"), T("profile.manager.justProfile"))}
+        ${choice(true, "login", T("profile.manager.giveLogin"), T("profile.manager.giveLoginHint"))}
       </div>
       ${login.wanted ? (authActive ? `
         <div class="cw-upw-card">
@@ -791,7 +793,7 @@
     const index = modalSteps().findIndex((step) => step.key === stepKey);
     return `
       <section class="cw-upw-review-tile">
-        <div class="cw-upw-section-head">${icon(iconName)}<strong>${esc(title)}</strong><button type="button" class="cw-upw-link" data-action="go-step" data-step="${index}">Change</button></div>
+        <div class="cw-upw-section-head">${icon(iconName)}<strong>${esc(title)}</strong><button type="button" class="cw-upw-link" data-action="go-step" data-step="${index}">${TH("profile.manager.change")}</button></div>
         ${body}
       </section>`;
   }
@@ -808,30 +810,30 @@
     const none = (text) => `<p class="cw-upw-none">${esc(text)}</p>`;
     const accountList = accounts.length
       ? `<ul class="cw-upw-list">${accounts.map((item) => `<li>${providerMark(item.provider)}<span><strong>${esc(providerLabel(item.provider))}</strong><small>${esc(item.label)}</small></span></li>`).join("")}</ul>`
-      : none("No accounts picked");
+      : none(T("profile.manager.noAccounts"));
     const routeList = routes.length
       ? `<ul class="cw-upw-list">${routes.map(({ key, row }) => {
           const refs = Array.isArray(row.instances) ? row.instances : [];
           return `<li>${icon(RESOURCE_ICONS[key])}<span><strong>${esc(refs.map((ref) => providerLabel(ref?.provider)).join(" → ") || row.label)}</strong><small>${esc(resourceTitle(key).replace(/s$/, ""))}</small></span></li>`;
         }).join("")}</ul>`
-      : none("Nothing switched on");
+      : none(T("profile.manager.nothingOn"));
     const oidcItem = login.wanted && oidcConfigured && txt(login.oidcValue)
-      ? `<li>${icon("passkey")}<span><strong>${esc(txt(login.oidcValue))}</strong><small>${esc(`OIDC ${oidcClaimLabel(login.oidcClaim).toLowerCase()}`)}</small></span></li>`
+      ? `<li>${icon("passkey")}<span><strong>${esc(txt(login.oidcValue))}</strong><small>${TH("profile.manager.oidcClaim", {claim: oidcClaimLabel(login.oidcClaim).toLowerCase()})}</small></span></li>`
       : "";
     const loginBody = login.wanted
       ? `<ul class="cw-upw-list"><li>${icon("alternate_email")}<span><strong>${esc(login.username)}</strong><small>${esc([ACCESS_LABELS[login.access] || "", grantsSummary(login)].filter(Boolean).join(" · "))}</small></span></li>${oidcItem}</ul>`
-      : none("No login, view only");
+      : none(T("profile.manager.viewOnly"));
     return `
-      ${paneHead("Ready to create", "Have a last look. You can change all of this later.")}
+      ${paneHead(T("profile.manager.ready"), T("profile.manager.readyHint"))}
       <div class="cw-upw-summary">
         <div class="cw-upw-summary-hero">
           ${avatar(modalDraft?.label, "lg", draftAvatarUrl())}
-          <div><strong>${esc(modalDraft?.label || "")}</strong><small>New profile</small></div>
+          <div><strong>${esc(modalDraft?.label || "")}</strong><small>${TH("profile.manager.newProfile")}</small></div>
         </div>
         <div class="cw-upw-review">
-          ${reviewTile("accounts", "hub", "Accounts", accountList)}
-          ${reviewTile("resources", "sync_alt", "Pairs and routes", routeList)}
-          ${reviewTile("login", "key", "Sign-in", loginBody)}
+          ${reviewTile("accounts", "hub", T("profile.manager.step.accounts"), accountList)}
+          ${reviewTile("resources", "sync_alt", T("profile.manager.step.resources"), routeList)}
+          ${reviewTile("login", "key", T("profile.manager.step.login"), loginBody)}
         </div>
       </div>`;
   }
@@ -852,12 +854,12 @@
           <span class="cw-upw-done-check"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span>
         </div>
         <h2>${esc(done.label)} is ready</h2>
-        <p>${done.username ? "Share these sign-in details. The password is not shown again." : "The profile is saved. You can view CrossWatch as it at any time."}</p>
-        ${done.username ? `<div class="cw-upw-creds">${copyRow("Username", done.username, "alternate_email")}${done.password ? copyRow("Password", done.password, "key") : ""}</div>` : ""}
+        <p>${done.username ? T("profile.manager.shareDetails") : T("profile.manager.savedHint")}</p>
+        ${done.username ? `<div class="cw-upw-creds">${copyRow(T("profile.manager.claim.username"), done.username, "alternate_email")}${done.password ? copyRow(T("profile.manager.password"), done.password, "key") : ""}</div>` : ""}
         <div class="cw-upw-done-actions">
-          <button type="button" class="cw-upw-btn" data-action="add-another">${icon("person_add")}<span>Add another</span></button>
-          ${canViewAs ? `<button type="button" class="cw-upw-btn" data-action="view-as">${icon("visibility")}<span>View as ${esc(done.label)}</span></button>` : ""}
-          <button type="button" class="cw-upw-btn is-primary" data-action="close-modal">${icon("check")}<span>Done</span></button>
+          <button type="button" class="cw-upw-btn" data-action="add-another">${icon("person_add")}<span>${TH("profile.manager.addAnother")}</span></button>
+          ${canViewAs ? `<button type="button" class="cw-upw-btn" data-action="view-as">${icon("visibility")}<span>${TH("profile.manager.ui.viewAs", {name: done.label})}</span></button>` : ""}
+          <button type="button" class="cw-upw-btn is-primary" data-action="close-modal">${icon("check")}<span>${TH("profile.manager.done")}</span></button>
         </div>
       </div>`;
   }
@@ -875,16 +877,16 @@
     const steps = modalSteps();
     const last = wizardStep >= steps.length - 1;
     const left = editing
-      ? `<button type="button" class="cw-upw-btn is-danger-ghost" data-action="delete-profile">${icon("delete")}<span>Delete profile</span></button><span class="cw-upw-warn" role="alert" aria-live="polite" hidden></span>`
+      ? `<button type="button" class="cw-upw-btn is-danger-ghost" data-action="delete-profile">${icon("delete")}<span>${TH("profile.manager.deleteProfile")}</span></button><span class="cw-upw-warn" role="alert" aria-live="polite" hidden></span>`
       : wizardStep > 0
-        ? `<button type="button" class="cw-upw-btn is-ghost" data-action="prev-step">${icon("arrow_back")}<span>Back</span></button>`
-        : `<button type="button" class="cw-upw-btn is-ghost" data-action="close-modal"><span>Cancel</span></button>`;
+        ? `<button type="button" class="cw-upw-btn is-ghost" data-action="prev-step">${icon("arrow_back")}<span>${TH("profile.manager.back")}</span></button>`
+        : `<button type="button" class="cw-upw-btn is-ghost" data-action="close-modal"><span>${TH("profile.manager.cancel")}</span></button>`;
     const dots = editing ? "<span></span>" : `<span class="cw-upw-dots" aria-hidden="true">${steps.map((_, index) => `<i class="${index === wizardStep ? "is-current" : index < wizardStep ? "is-done" : ""}"></i>`).join("")}</span>`;
     const primary = editing
-      ? `<button type="button" class="cw-upw-btn is-ghost" data-action="close-modal"><span>Cancel</span></button><button type="button" class="cw-upw-btn is-primary" data-action="save-profile">${icon("save")}<span>Save changes</span></button>`
+      ? `<button type="button" class="cw-upw-btn is-ghost" data-action="close-modal"><span>${TH("profile.manager.cancel")}</span></button><button type="button" class="cw-upw-btn is-primary" data-action="save-profile">${icon("save")}<span>${TH("profile.manager.saveChanges")}</span></button>`
       : last
-        ? `<button type="button" class="cw-upw-btn is-primary" data-action="save-profile">${icon("check")}<span>Create profile</span></button>`
-        : `<button type="button" class="cw-upw-btn is-primary" data-action="next-step"><span>Continue</span>${icon("arrow_forward")}</button>`;
+        ? `<button type="button" class="cw-upw-btn is-primary" data-action="save-profile">${icon("check")}<span>${TH("profile.manager.createProfile")}</span></button>`
+        : `<button type="button" class="cw-upw-btn is-primary" data-action="next-step"><span>${TH("profile.manager.continue")}</span>${icon("arrow_forward")}</button>`;
     return `
       <div class="cw-upw-foot">
         <div class="cw-upw-foot-side">${left}</div>
@@ -908,8 +910,8 @@
         <div class="cw-upw${editing ? " is-editing" : ""}" role="dialog" aria-modal="true" aria-labelledby="cw-upw-title" data-upw-root data-modal-root>
           <aside class="cw-upw-rail">
             <div class="cw-upw-rail-head">
-              <span class="cw-upw-kicker">${icon("group")}Profiles</span>
-              <strong id="cw-upw-title">${editing ? "Edit profile" : "New profile"}</strong>
+              <span class="cw-upw-kicker">${icon("group")}${TH("profile.manager.ui.profiles")}</span>
+              <strong id="cw-upw-title">${editing ? T("profile.manager.editProfile") : T("profile.manager.newProfile")}</strong>
             </div>
             ${renderPreview()}
             ${renderRailSteps()}
@@ -917,7 +919,7 @@
           <section class="cw-upw-main">
             <div class="cw-upw-top">
               <div class="cw-upw-progress" aria-hidden="true"><span style="width:${progress}%"></span></div>
-              <button type="button" class="cw-upw-close" data-action="close-modal" title="Close" aria-label="Close">${icon("close")}</button>
+              <button type="button" class="cw-upw-close" data-action="close-modal" title="${TH("profile.manager.close")}" aria-label="${TH("profile.manager.close")}">${icon("close")}</button>
             </div>
             <div class="cw-upw-body" data-upw-body>${body}</div>
             ${renderFooter(editing)}
@@ -987,7 +989,7 @@
       node.innerHTML = initialsFor(name) ? esc(initialsFor(name)) : icon("person");
     });
     const label = root.querySelector("[data-upw-name]");
-    if (label) label.textContent = name || "New profile";
+    if (label) label.textContent = name || T("profile.manager.newProfile");
     invalidateHostHtml();
   }
 
@@ -1045,10 +1047,10 @@
     } catch (e) {
       const status = $("cw-upm-status");
       if (status) {
-        status.textContent = String(e?.message || e || "Failed to load profiles");
+        status.textContent = String(e?.message || e || T("profile.manager.loadFailed"));
         invalidateHostHtml();
       }
-      toast("Could not load profiles: " + String(e?.message || e), false);
+      toast(T("profile.manager.loadFailedDetail", {error: String(e?.message || e)}), false);
     } finally {
       loading = false;
       render();
@@ -1215,17 +1217,17 @@
 
   function stepProblem(key) {
     const login = modalDraft?.login || {};
-    if (key === "name" && !txt(modalDraft?.label)) return "Enter a profile name";
+    if (key === "name" && !txt(modalDraft?.label)) return T("profile.manager.enterName");
     if (key !== "login" || !login.wanted) return "";
     if (login.user_id) {
       if (!authActive) return "";
-      if (!txt(login.username)) return "Enter a username";
-      if (login.password && login.password.length < MIN_PASSWORD) return `Password must be at least ${MIN_PASSWORD} characters`;
+      if (!txt(login.username)) return T("profile.manager.enterUsername");
+      if (login.password && login.password.length < MIN_PASSWORD) return T("profile.manager.passwordMin", {count: MIN_PASSWORD});
       return "";
     }
-    if (!authActive) return "Turn on sign-in first, or choose No login";
-    if (!txt(login.username)) return "Enter a username";
-    if (login.password.length < MIN_PASSWORD) return `Password must be at least ${MIN_PASSWORD} characters`;
+    if (!authActive) return T("profile.manager.turnOnFirst");
+    if (!txt(login.username)) return T("profile.manager.enterUsername");
+    if (login.password.length < MIN_PASSWORD) return T("profile.manager.passwordMin", {count: MIN_PASSWORD});
     return "";
   }
 
@@ -1307,11 +1309,11 @@
   async function copyText(value, label) {
     const text = String(value || "");
     if (!text) {
-      toast(`Nothing to copy yet`, false);
+      toast(T("profile.manager.nothingToCopy"), false);
       return;
     }
-    if (await w.cwCopyText?.(text)) toast(`${label} copied`, true);
-    else toast("Copy is not available here", false);
+    if (await w.cwCopyText?.(text)) toast(T("profile.manager.copied", {label}), true);
+    else toast(T("profile.manager.copyUnavailable"), false);
   }
 
   function chooseLogin(wanted) {
@@ -1349,7 +1351,7 @@
     const user = appUsers.find((row) => txt(row?.id) === userId);
     Object.assign(modalDraft.login, oidcDraft(user));
     render();
-    toast("OIDC account unlinked", true);
+    toast(T("profile.manager.oidcUnlinked"), true);
   }
 
   function chooseNameIdea(value) {
@@ -1379,11 +1381,11 @@
     const login = modalDraft?.login;
     if (!login) return;
     if (!txt(login.adminUsername)) {
-      toast("Enter an administrator username", false);
+      toast(T("profile.manager.enterAdmin"), false);
       return;
     }
     if (login.adminPassword.length < MIN_PASSWORD) {
-      toast(`Administrator password must be at least ${MIN_PASSWORD} characters`, false);
+      toast(T("profile.manager.adminPasswordMin", {count: MIN_PASSWORD}), false);
       return;
     }
     await json("/api/app-auth/credentials", {
@@ -1396,7 +1398,7 @@
     prefillUsername();
     try { w.dispatchEvent(new CustomEvent("auth-changed")); } catch {}
     render();
-    toast("Sign-in turned on", true);
+    toast(T("profile.manager.signInOn"), true);
   }
 
   function resetRemoveLogin(btn) {
@@ -1406,7 +1408,7 @@
     if (!target) return;
     target.dataset.cwConfirmDelete = "";
     target.classList.remove("is-confirming");
-    target.innerHTML = `${icon("person_remove")}<span>Remove login</span>`;
+    target.innerHTML = `${icon("person_remove")}<span>${TH("profile.manager.removeLogin")}</span>`;
     invalidateHostHtml();
   }
 
@@ -1416,7 +1418,7 @@
     if (btn?.dataset?.cwConfirmDelete !== "1") {
       btn.dataset.cwConfirmDelete = "1";
       btn.classList.add("is-confirming");
-      btn.innerHTML = `${icon("warning")}<span>Confirm remove login</span>`;
+      btn.innerHTML = `${icon("warning")}<span>${TH("profile.manager.confirmRemoveLogin")}</span>`;
       invalidateHostHtml();
       if (removeLoginTimer) clearTimeout(removeLoginTimer);
       removeLoginTimer = setTimeout(() => resetRemoveLogin(btn), 4200);
@@ -1432,7 +1434,7 @@
     try { w.dispatchEvent(new CustomEvent("auth-changed")); } catch {}
     internalRefresh = false;
     render();
-    toast("Login removed", true);
+    toast(T("profile.manager.loginRemoved"), true);
   }
 
   async function saveAvatar(profileId) {
@@ -1448,7 +1450,7 @@
       const saved = await json(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ data: change.data, content_type: change.type }) });
       return txt(saved?.avatar_url);
     } catch (e) {
-      toast(`Picture not saved: ${e?.message || e}`, false);
+      toast(T("profile.manager.pictureFailed", {error: e?.message || e}), false);
       return fallback;
     }
   }
@@ -1458,11 +1460,11 @@
     input.value = "";
     if (!file || !modalDraft) return;
     if (!["image/png", "image/jpeg", "image/webp"].includes(file.type)) {
-      toast("Use a PNG, JPG or WebP image", false);
+      toast(T("profile.manager.imageType"), false);
       return;
     }
     if (file.size > 5 * 1024 * 1024) {
-      toast("The picture must be 5 MB or smaller", false);
+      toast(T("profile.manager.imageSize"), false);
       return;
     }
     const reader = new FileReader();
@@ -1499,7 +1501,7 @@
     if (profile) {
       modalProfileId = null;
       modalDraft = null;
-      await afterSave("Profile saved");
+      await afterSave(T("profile.manager.saved"));
       return;
     }
     modalDone = {
@@ -1509,7 +1511,7 @@
       username: login ? txt(saved?.login?.username || login.username) : "",
       password: login ? login.password : "",
     };
-    await afterSave("Profile created", true);
+    await afterSave(T("profile.manager.created"), true);
   }
 
   function addAnother() {
@@ -1526,7 +1528,7 @@
     closeModal();
     try {
       await w.CW?.OverviewProfile?.refresh?.();
-      if (w.CW?.OverviewProfile?.setActive?.(done.id)) toast(`Viewing CrossWatch as ${done.label}`, true);
+      if (w.CW?.OverviewProfile?.setActive?.(done.id)) toast(T("profile.manager.viewingAs", {name: done.label}), true);
     } catch {}
   }
 
@@ -1537,7 +1539,7 @@
     if (!target) return;
     target.dataset.cwConfirmDelete = "";
     target.classList.remove("is-confirming");
-    target.innerHTML = `${icon("delete")}<span>Delete profile</span>`;
+    target.innerHTML = `${icon("delete")}<span>${TH("profile.manager.deleteProfile")}</span>`;
     invalidateHostHtml();
   }
 
@@ -1546,7 +1548,7 @@
     btn.dataset.cwConfirmDelete = "1";
     btn.classList.add("is-confirming");
     const hasLogin = profileLogins(modalProfile()?.id).length > 0;
-    btn.innerHTML = `${icon("warning")}<span>${hasLogin ? "Delete profile and login" : "Confirm delete"}</span>`;
+    btn.innerHTML = `${icon("warning")}<span>${TH(hasLogin ? "profile.manager.ui.deleteWithLogin" : "profile.manager.ui.confirmDelete")}</span>`;
     invalidateHostHtml();
     if (deleteConfirmTimer) clearTimeout(deleteConfirmTimer);
     deleteConfirmTimer = setTimeout(() => resetDeleteConfirm(btn), 4200);
@@ -1561,7 +1563,7 @@
   }
 
   function showDeleteWarning(message) {
-    const text = txt(message) || "Could not delete profile";
+    const text = txt(message) || T("profile.manager.deleteFailed");
     const node = d.querySelector("[data-upw-root] .cw-upw-warn");
     if (!node) {
       toast(text, false);
@@ -1587,9 +1589,9 @@
       modalProfileId = null;
       modalDraft = null;
       const removed = Array.isArray(result?.removed_logins) ? result.removed_logins : [];
-      await afterSave(removed.length ? `Profile and login ${removed.join(", ")} deleted` : "Profile deleted");
+      await afterSave(removed.length ? T("profile.manager.deletedWithLogin", {names: removed.join(", ")}) : T("profile.manager.deleted"));
     } catch (e) {
-      showDeleteWarning(String(e?.message || e || "Could not delete profile"));
+      showDeleteWarning(String(e?.message || e || T("profile.manager.deleteFailed")));
     }
   }
 
@@ -1633,21 +1635,21 @@
           if (action === "oidc-unlink") return unlinkOidc();
           if (action === "toggle-password") return togglePassword(false);
           if (action === "generate-password") return togglePassword(true);
-          if (action === "copy-password") return copyText($("cw-upm-login-password")?.value, "Password");
-          if (action === "copy") return copyText(actionNode.dataset.value, actionNode.dataset.label || "Text");
+          if (action === "copy-password") return copyText($("cw-upm-login-password")?.value, T("profile.manager.password"));
+          if (action === "copy") return copyText(actionNode.dataset.value, actionNode.dataset.label || T("profile.manager.text"));
           if (action === "enable-auth") return enableAuth();
           if (action === "remove-login") return removeLogin(actionNode);
           if (action === "add-another") return addAnother();
           if (action === "view-as") return viewAs();
           return null;
         })
-        .catch((e) => toast(String(e?.message || e || "Save failed"), false));
+        .catch((e) => toast(String(e?.message || e || T("profile.manager.saveFailed")), false));
     });
     host.addEventListener("keydown", (event) => {
       if (event.key !== "Enter" || !event.target?.matches?.("[data-upw-root] input.cw-upw-input")) return;
       event.preventDefault();
       const run = String(event.target.id || "").startsWith("cw-upm-admin-") ? enableAuth() : Promise.resolve(primaryAction());
-      run.catch((e) => toast(String(e?.message || e || "Save failed"), false));
+      run.catch((e) => toast(String(e?.message || e || T("profile.manager.saveFailed")), false));
     });
     host.addEventListener("input", (event) => {
       if (!modalDraft || !event.target?.closest?.("[data-upw-root]")) return;

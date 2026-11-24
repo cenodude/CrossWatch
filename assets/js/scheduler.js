@@ -4,6 +4,10 @@
 (() => {
   "use strict";
   if (window.__SCHED_UI_INIT__) return; window.__SCHED_UI_INIT__ = true;
+  const T = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.t?.(key, vars) ?? key;
+  const TH = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.html?.(key, vars) ?? key;
+  const COL_KEYS = { Actions: "actions", Active: "active", After: "after", Days: "days", Feature: "feature", Provider: "provider", Remove: "remove", "Sync pair": "syncPair", Time: "time", Source: "source", Event: "event", Filters: "filters", Action: "action", Guardrails: "guardrails" };
+  const colCaption = (label) => COL_KEYS[label] ? T(`scheduler.col.${COL_KEYS[label]}`) : label;
   const authSetupPending = () => window.cwIsAuthSetupPending?.() === true;
 
   // tiny helpers
@@ -195,7 +199,7 @@ html[data-cw-theme="flat-light"] .sch-adv .chipdays label:has(input:checked){
   background:#e9ecf7;
 }
 @media (max-width:980px){#sec-scheduling .cw-subpanel[data-sub="basic"] .auth-card-fields{grid-template-columns:1fr}.sch-adv .chipdays{grid-template-columns:repeat(3,minmax(0,1fr))}}
-@media (max-width:760px){.sch-adv{padding:14px}.sch-adv .cw-panel-head{min-height:0;padding:14px}.sch-adv .cw-panel-head .cx-toggle{margin-top:18px}.sch-adv table,.sch-adv thead,.sch-adv tbody,.sch-adv tr,.sch-adv td,.sch-adv th{display:block}.sch-adv thead{display:none}.sch-adv tbody{display:grid;gap:10px}.sch-adv tbody tr{border:1px solid var(--sch-border-soft);border-radius:18px;overflow:hidden}.sch-adv tbody tr.capture-detail-row{border:none;border-radius:0;overflow:visible}.sch-adv tbody td{display:grid;gap:6px;border:none!important;border-radius:0!important;padding:10px 12px}.sch-adv tbody td[data-label]::before{content:attr(data-label);font-size:10px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:var(--sch-fg-soft)}.sch-adv .capture-detail-row td[data-label]::before{content:none}.sch-adv .capture-detail-card{margin-top:-10px;border-top:1px solid var(--sch-border-soft);border-radius:0 0 18px 18px}.sch-adv .capture-detail-grid{grid-template-columns:1fr}.sch-adv .chipdays{grid-template-columns:repeat(2,minmax(0,1fr))}.sch-adv .stack.two,.sch-adv .stack.three,.sch-adv .event-filter-grid{grid-template-columns:1fr}}
+@media (max-width:760px){.sch-adv{padding:14px}.sch-adv .cw-panel-head{min-height:0;padding:14px}.sch-adv .cw-panel-head .cx-toggle{margin-top:18px}.sch-adv table,.sch-adv thead,.sch-adv tbody,.sch-adv tr,.sch-adv td,.sch-adv th{display:block}.sch-adv thead{display:none}.sch-adv tbody{display:grid;gap:10px}.sch-adv tbody tr{border:1px solid var(--sch-border-soft);border-radius:18px;overflow:hidden}.sch-adv tbody tr.capture-detail-row{border:none;border-radius:0;overflow:visible}.sch-adv tbody td{display:grid;gap:6px;border:none!important;border-radius:0!important;padding:10px 12px}.sch-adv tbody td[data-label]::before{content:attr(data-caption);font-size:10px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:var(--sch-fg-soft)}.sch-adv .capture-detail-row td[data-label]::before{content:none}.sch-adv .capture-detail-card{margin-top:-10px;border-top:1px solid var(--sch-border-soft);border-radius:0 0 18px 18px}.sch-adv .capture-detail-grid{grid-template-columns:1fr}.sch-adv .chipdays{grid-template-columns:repeat(2,minmax(0,1fr))}.sch-adv .stack.two,.sch-adv .stack.three,.sch-adv .event-filter-grid{grid-template-columns:1fr}}
 ` }));
   document.head.appendChild(Object.assign(el("style"), { id: "sch-css-refine", textContent: `
 #sec-scheduling .cw-subpanel[data-sub="basic"] .auth-card{display:grid;gap:10px;padding:0!important}
@@ -367,49 +371,49 @@ html[data-cw-theme="flat-light"] #sec-scheduling .sch-card-icon{background:#eef2
   let _webhooksSaved = null;
   let _captureProviders = [];
   let _eventRoutes = { watcher: [], webhook: [] }, _eventRouteError = "";
-  const DAY = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
-  const EVENT_SOURCE_OPTIONS = [["watcher", "Watcher"], ["webhook", "Webhook"]];
-  const EVENT_NAME_OPTIONS = [["start", "Start"], ["pause", "Pause"], ["stop", "Stop"]];
-  const EVENT_MEDIA_OPTIONS = [["", "Any"], ["movie", "Movie"], ["episode", "Episode"]];
+  const DAY = Array.from({ length: 7 }, (_, d) => new Date(2024, 0, 1 + d).toLocaleDateString((window.CW?.I18n || window.__cwI18n)?.locale || "en", { weekday: "short" }));
+  const EVENT_SOURCE_OPTIONS = [["watcher", T("scheduler.trigger.watcher")], ["webhook", T("scheduler.trigger.webhook")]];
+  const EVENT_NAME_OPTIONS = [["start", T("scheduler.trigger.start")], ["pause", T("scheduler.trigger.pause")], ["stop", T("scheduler.trigger.stop")]];
+  const EVENT_MEDIA_OPTIONS = [["", T("scheduler.trigger.any")], ["movie", T("scheduler.trigger.movie")], ["episode", T("scheduler.trigger.episode")]];
   const HELP_TIPS = {
-    std_enabled: "Use standard plan:\nTurn on the standard timer-based scheduler.\nStandard and advanced plans can run together. Runs execute one at a time. When both are due, standard skips pairs already started by advanced for that run.",
-    std_frequency: "Frequency:\nChoose how often the standard plan runs.\nUse Every hour, Every N hours, Daily at a fixed time, or a Custom interval.",
-    std_every_n_hours: "Every N hours:\nSet how many hours to wait between runs when Frequency is set to Every N hours.",
-    std_time: "Time:\nChoose the local time to run each day when Frequency is set to Daily at a fixed time.",
-    std_custom_interval: "Custom interval:\nSet a custom repeat interval in minutes or hours.\nCustom schedules are clamped to a minimum of 15 minutes.",
-    time_pair: "Sync pair:\nChoose which enabled source-to-target sync pair this step should run.",
-    time_time: "Time:\nChoose the local time when this step becomes due.",
-    time_days: "Days:\nSelect which weekdays this step may run on.\nLeave all days unchecked to allow every day.",
-    time_after: "After:\nOptional dependency.\nUse this to run the step only after another earlier step has completed.",
-    workflow_recurrence: "Recurrence:\nChoose how often the full ordered workflow runs.",
-    workflow_steps: "Sync steps:\nEach step runs one configured source-to-target sync pair.",
-    capture_target: "Provider:\nChoose the provider instance to capture from.\nOnly configured snapshot-capable instances are listed.",
-    capture_feature: "Feature:\nPick one feature or All to store a full provider capture bundle.",
-    capture_label: "Label template:\nOptional template for automated capture labels.\nUse placeholders like {provider}, {instance}, {feature}, {date}, {time}, {datetime}, or {stamp}.",
-    capture_retention_days: "Keep captures for days:\nDelete scheduled captures older than this many days.\nLeave empty or 0 to keep by age forever.",
-    capture_max_captures: "Max captures to keep:\nKeep only the newest scheduled captures up to this count.\nLeave empty or 0 for no count limit.",
-    capture_cleanup: "Cleanup:\nWhen enabled, older scheduled captures are pruned after each successful scheduled capture using the limits above.",
-    source: "Source:\nChoose where the trigger comes from.\nThen choose the exact watcher or webhook route under it.",
-    event: "Event:\nChoose which playback activity should trigger the rule.\nStart: playback begins or resumes.\nPause: playback is paused.\nStop: playback ends or stops.",
-    filters: "Filters:\nMedia: only movies or episodes.\nMin %: require minimum playback progress.",
-    action: "Action:\nChoose what happens when the rule matches.\nSync pair:\nRun one specific enabled sync pair immediately.",
-    guardrails: "Mute (min):\nIgnore new triggers for this rule after it runs.\nDedupe (sec):\nSuppress identical repeated events for a short window.\nMax / hour:\nHard safety cap for this rule in one hour.",
-    webhook_url: "All events URL:\nUse this when one endpoint receives every scheduler event.\nCrossWatch sends start, success, and failure to this same http:// or https:// URL with the event in the JSON payload.",
-    webhook_notifiarr_url: "Notifiarr passthrough URL:\nPaste the Notifiarr Passthrough endpoint.\nCrossWatch sends start, success, and failure notifications to this same URL.",
-    webhook_ntfy_url: "ntfy topic URL:\nPaste the full topic URL, for example https://ntfy.sh/your-topic.\nCrossWatch posts start, success, and failure as plain text with Title and Priority headers.\nStart is sent with low priority, success with default priority, and failure with high priority.",
-    webhook_format: "Payload format:\nCrossWatch JSON sends the raw scheduler payload.\nNotifiarr Passthrough sends the notification/discord JSON shape expected by Notifiarr.\nPushover sends a push notification through the Pushover message API.\nntfy publishes a plain-text notification to an ntfy topic.",
-    webhook_pushover_token: "Pushover application token:\nThe 30 character API token of the application you created in Pushover.\nStart is sent with low priority, success with normal priority, and failure with high priority.",
-    webhook_pushover_user: "Pushover user key:\nThe 30 character user key or group key that should receive the notifications.",
-    webhook_base: "Compatible base URL:\nUse this for Healthchecks.io-style ping.\nPaste the base ping URL. CrossWatch sends start to /start, success to the base URL, and failure to /fail.",
-    webhook_notifiarr_channel: "Notifiarr channel ID:\nOptional Discord channel id for Notifiarr Passthrough payloads.\nIf your Notifiarr setup requires a channel, enter the numeric Discord channel id here.",
-    webhook_timeout: "Timeout seconds:\nHow long CrossWatch waits for a callback request before logging it as failed.\nCallback failures do not fail the sync.",
-    webhook_start: "Start callback URL:\nOptional explicit http:// or https:// POST destination when a scheduled sync starts.\nThis overrides the compatible base URL for start events.",
-    webhook_success: "Success callback URL:\nOptional explicit http:// or https:// POST destination when a scheduled sync finishes successfully.\nThis overrides the compatible base URL for success events.",
-    webhook_failure: "Failure callback URL:\nOptional explicit http:// or https:// POST destination when a scheduled sync fails.\nThis overrides the compatible base URL for failure events.",
-    webhook_alert_watcher: "Alert when the watcher stops:\nSends watcher_stopped when an enabled watcher route is not running, and watcher_recovered when it runs again.\nEach change is sent once. This includes a watcher that was stopped by hand or never started. Turning the watcher source or the route off does not send an alert.\nCrossWatch JSON sends these to the All events URL.",
-    webhook_alert_provider_auth: "Alert when a provider sign-in is lost:\nSends provider_auth_lost when a provider instance used by an enabled sync pair, watcher route or scrobble webhook needs a new sign-in, and provider_auth_recovered when it works again.\nEach change is sent once. A provider that is only unreachable does not send an alert.\nCrossWatch JSON sends these to the All events URL.",
-    webhook_test: "Send test notification:\nSends one test message with the saved webhook settings.\nSave your changes first.",
-    webhook_alert_unresolved: "Alert on unresolved items:\nOff means only a crashed or aborted run sends the failure callback.\nOn also sends failure when a run finishes with unresolved items or provider errors, such as a destination rejecting a write. The run itself still counts as successful in CrossWatch."
+    std_enabled: T("scheduler.help.stdEnabled"),
+    std_frequency: T("scheduler.help.stdFrequency"),
+    std_every_n_hours: T("scheduler.help.stdEveryNHours"),
+    std_time: T("scheduler.help.stdTime"),
+    std_custom_interval: T("scheduler.help.stdCustomInterval"),
+    time_pair: T("scheduler.help.timePair"),
+    time_time: T("scheduler.help.timeTime"),
+    time_days: T("scheduler.help.timeDays"),
+    time_after: T("scheduler.help.timeAfter"),
+    workflow_recurrence: T("scheduler.help.workflowRecurrence"),
+    workflow_steps: T("scheduler.help.workflowSteps"),
+    capture_target: T("scheduler.help.captureTarget"),
+    capture_feature: T("scheduler.help.captureFeature"),
+    capture_label: T("scheduler.help.captureLabel"),
+    capture_retention_days: T("scheduler.help.captureRetentionDays"),
+    capture_max_captures: T("scheduler.help.captureMaxCaptures"),
+    capture_cleanup: T("scheduler.help.captureCleanup"),
+    source: T("scheduler.help.source"),
+    event: T("scheduler.help.event"),
+    filters: T("scheduler.help.filters"),
+    action: T("scheduler.help.action"),
+    guardrails: T("scheduler.help.guardrails"),
+    webhook_url: T("scheduler.help.webhookUrl"),
+    webhook_notifiarr_url: T("scheduler.help.webhookNotifiarrUrl"),
+    webhook_ntfy_url: T("scheduler.help.webhookNtfyUrl"),
+    webhook_format: T("scheduler.help.webhookFormat"),
+    webhook_pushover_token: T("scheduler.help.webhookPushoverToken"),
+    webhook_pushover_user: T("scheduler.help.webhookPushoverUser"),
+    webhook_base: T("scheduler.help.webhookBase"),
+    webhook_notifiarr_channel: T("scheduler.help.webhookNotifiarrChannel"),
+    webhook_timeout: T("scheduler.help.webhookTimeout"),
+    webhook_start: T("scheduler.help.webhookStart"),
+    webhook_success: T("scheduler.help.webhookSuccess"),
+    webhook_failure: T("scheduler.help.webhookFailure"),
+    webhook_alert_watcher: T("scheduler.help.webhookAlertWatcher"),
+    webhook_alert_provider_auth: T("scheduler.help.webhookAlertProviderAuth"),
+    webhook_test: T("scheduler.help.webhookTest"),
+    webhook_alert_unresolved: T("scheduler.help.webhookAlertUnresolved")
   };
   const defaultJob = () => ({ id: genId(), pair_id: null, at: null, days: [], after: null, active: true });
   const defaultWorkflowStep = () => ({ id: genId(), pair_id: null, active: true });
@@ -528,12 +532,12 @@ html[data-cw-theme="flat-light"] #sec-scheduling .sch-card-icon{background:#eef2
   const getStandardField = (id) => $("#" + id)?.closest(".field") || null;
   const describeMinutes = (minutes) => {
     const safe = Math.max(15, asInt(minutes, 60, 15));
-    if (safe % 60 === 0) return `${safe / 60} hour${safe === 60 ? "" : "s"}`;
-    return `${safe} minutes`;
+    if (safe % 60 === 0) return T("scheduler.count.hours", {count: safe / 60});
+    return T("scheduler.count.minutes", {count: safe});
   };
   const describeHours = (hours) => {
     const safe = Math.max(2, asInt(hours, 12, 1));
-    return `${safe} hour${safe === 1 ? "" : "s"}`;
+    return T("scheduler.count.hours", {count: safe});
   };
   const getCustomIntervalMinutes = () => {
     const value = asInt($("#schCustomValue")?.value || "60", 60, 1);
@@ -560,24 +564,24 @@ html[data-cw-theme="flat-light"] #sec-scheduling .sch-card-icon{background:#eef2
       wizard.innerHTML = `
         <section class="sch-std-summary" id="schStdSummary">
           <div class="sch-std-summary-copy">
-            <div class="sch-std-summary-kicker">Current plan</div>
+            <div class="sch-std-summary-kicker">${TH("scheduler.std.currentPlan")}</div>
             <div class="sch-std-summary-text" id="schStdSummaryText"></div>
             <div class="sch-std-summary-note" id="schStdSummaryNote"></div>
           </div>
-          <div class="sch-std-summary-state" id="schStdSummaryState">Idle</div>
+          <div class="sch-std-summary-state" id="schStdSummaryState">${TH("scheduler.std.idle")}</div>
         </section>
         <section class="sch-std-step" id="schStdStep1">
           <div class="sch-std-step-head">
-            <div class="sch-std-step-kicker">Step 1</div>
-            <div class="sch-std-step-title">Choose a frequency</div>
-            <div class="sch-std-step-copy">Start with the type of cadence you want. We only show the next input that matters for that choice.</div>
+            <div class="sch-std-step-kicker">${TH("scheduler.std.step1")}</div>
+            <div class="sch-std-step-title">${TH("scheduler.std.chooseFrequency")}</div>
+            <div class="sch-std-step-copy">${TH("scheduler.std.chooseFrequencyHint")}</div>
           </div>
         </section>
         <section class="sch-std-step" id="schStdStep2">
           <div class="sch-std-step-head">
-            <div class="sch-std-step-kicker">Step 2</div>
-            <div class="sch-std-step-title" id="schStdDetailTitle">Review the schedule</div>
-            <div class="sch-std-step-copy" id="schStdDetailCopy">Choose the additional timing details for the selected frequency.</div>
+            <div class="sch-std-step-kicker">${TH("scheduler.std.step2")}</div>
+            <div class="sch-std-step-title" id="schStdDetailTitle">${TH("scheduler.std.review")}</div>
+            <div class="sch-std-step-copy" id="schStdDetailCopy">${TH("scheduler.std.reviewHint")}</div>
           </div>
         </section>
         <section class="sch-std-warning" id="schStdWarning" aria-live="polite">
@@ -648,48 +652,48 @@ html[data-cw-theme="flat-light"] #sec-scheduling .sch-card-icon{background:#eef2
     getStandardField("schMode")?.classList.add("sch-std-primary");
     [getStandardField("schMode"), everyField, timeField, customField].forEach((field) => field?.classList.remove("sch-std-active"));
 
-    let summary = "Runs at the top of every hour";
-    let note = "Good for frequent syncs without extra setup.";
-    let detailHeading = "Hourly schedule";
-    let detailBody = "No extra timing fields are needed. CrossWatch will queue the sync at the start of each hour.";
+    let summary = T("scheduler.std.hourly");
+    let note = T("scheduler.std.hourlyNote");
+    let detailHeading = T("scheduler.std.hourlyHeading");
+    let detailBody = T("scheduler.std.hourlyBody");
 
     if (mode === "every_n_hours") {
       const hours = Math.max(2, asInt($("#schN")?.value || "12", 12, 1));
       if ($("#schN")) $("#schN").value = String(hours);
       everyField?.classList.remove("sch-std-field-hidden");
       everyField?.classList.add("sch-std-active");
-      summary = `Runs every ${describeHours(hours)}`;
-      note = "Use this when hourly is too aggressive but you still want a repeating interval.";
-      detailHeading = "Set the hour gap";
-      detailBody = "Choose how many hours to wait between syncs. Use Every hour instead when you want a 60 minute cadence.";
+      summary = T("scheduler.std.runsEvery", {interval: describeHours(hours)});
+      note = T("scheduler.std.everyNote");
+      detailHeading = T("scheduler.std.everyHeading");
+      detailBody = T("scheduler.std.everyBody");
     } else if (mode === "daily_time") {
       const time = $("#schTime")?.value || "03:30";
       timeField?.classList.remove("sch-std-field-hidden");
       timeField?.classList.add("sch-std-active");
-      summary = `Runs daily at ${time}`;
-      note = "Best when you want one predictable sync window each day.";
-      detailHeading = "Pick the daily run time";
-      detailBody = "Choose the local time when the daily sync should become due.";
+      summary = T("scheduler.std.runsDaily", {time});
+      note = T("scheduler.std.dailyNote");
+      detailHeading = T("scheduler.std.dailyHeading");
+      detailBody = T("scheduler.std.dailyBody");
     } else if (mode === "custom_interval") {
       const minutes = getCustomIntervalMinutes();
       customField?.classList.remove("sch-std-field-hidden");
       customField?.classList.add("sch-std-active");
-      summary = `Runs every ${describeMinutes(minutes)}`;
+      summary = T("scheduler.std.runsEvery", {interval: describeMinutes(minutes)});
       note = minutes < 60
-        ? "Short custom intervals can look like aggressive polling to provider APIs."
-        : "Use custom timing when you need something between the built-in hourly and daily options.";
-      detailHeading = "Define the custom interval";
-      detailBody = "Pick minutes or hours. CrossWatch enforces a 15 minute minimum for custom schedules.";
+        ? T("scheduler.std.customShortNote")
+        : T("scheduler.std.customNote");
+      detailHeading = T("scheduler.std.customHeading");
+      detailBody = T("scheduler.std.customBody");
       if (warning && warningCopy) {
         warning.classList.toggle("is-visible", minutes < 60);
-        warningCopy.textContent = "Custom schedules shorter than 1 hour can be seen as abusing trackers API's and may result in a ban. Use them carefully.";
+        warningCopy.textContent = T("scheduler.std.customWarning");
       }
     }
 
     if (mode !== "custom_interval" && warning) warning.classList.remove("is-visible");
     if (summaryText) summaryText.textContent = summary;
     if (summaryNote) summaryNote.textContent = note;
-    if (summaryState) summaryState.textContent = stdOn ? (advOn ? "Standard and advanced plans active" : "Standard plan active") : "Saved but off";
+    if (summaryState) summaryState.textContent = stdOn ? (advOn ? T("scheduler.std.bothActive") : T("scheduler.std.active")) : T("scheduler.std.savedOff");
     if (detailTitle) detailTitle.textContent = detailHeading;
     if (detailCopy) detailCopy.textContent = detailBody;
   };
@@ -730,7 +734,7 @@ const ensureStdEnabledToggle = () => {
   let t = $("#schEnabledToggle")?.closest(".sch-std-toggle") || null;
   if (!t) {
     t = el("label", "cx-toggle sch-std-toggle");
-    t.innerHTML = `<input type="checkbox" id="schEnabledToggle"><span class="cx-toggle-ui" aria-hidden="true"></span><span class="cx-toggle-text">Use standard plan</span><span class="cx-toggle-state" aria-hidden="true"></span>`;
+    t.innerHTML = `<input type="checkbox" id="schEnabledToggle"><span class="cx-toggle-ui" aria-hidden="true"></span><span class="cx-toggle-text">${TH("scheduler.std.use")}</span><span class="cx-toggle-state" aria-hidden="true"></span>`;
   }
   if (t.parentElement !== host) host.appendChild(t);
 
@@ -765,8 +769,8 @@ const ensureStdEnabledToggle = () => {
       <div class="sch-std-head-copy sch-card-head">
         <span class="material-symbols-rounded sch-card-icon" aria-hidden="true">edit_calendar</span>
         <div class="sch-card-head-copy">
-          <div class="sch-std-title">Standard Scheduler</div>
-          <div class="sch-std-copy">Set up a frequency. Add an advanced plan for chained steps.</div>
+          <div class="sch-std-title">${TH("scheduler.std.title")}</div>
+          <div class="sch-std-copy">${TH("scheduler.std.intro")}</div>
         </div>
       </div>
     `;
@@ -779,11 +783,11 @@ const ensureStdEnabledToggle = () => {
     const basic = $("#sec-scheduling .cw-subpanel[data-sub='basic'] .auth-card");
     if (!basic) return;
     const tipsByLabel = {
-      Enable: "std_enabled",
-      Frequency: "std_frequency",
-      "Every N hours": "std_every_n_hours",
-      Time: "std_time",
-      "Custom interval": "std_custom_interval"
+      [T("common.actions.enable")]: "std_enabled",
+      [T("sync.schedule.frequency")]: "std_frequency",
+      [T("sync.schedule.mode.everyN")]: "std_every_n_hours",
+      [T("sync.schedule.time")]: "std_time",
+      [T("sync.schedule.customInterval")]: "std_custom_interval"
     };
     basic.querySelectorAll(".field > .muted").forEach((label) => {
       if (!label || label.dataset.helpDecorated === "1") return;
@@ -797,7 +801,7 @@ const ensureStdEnabledToggle = () => {
       wrap.appendChild(textNode);
       const btn = el("button", "sch-help");
       btn.type = "button";
-      btn.setAttribute("aria-label", `${text} help`);
+      btn.setAttribute("aria-label", T("scheduler.helpFor", {label: text}));
       if (tip) btn.title = tip;
       btn.onclick = (e) => {
         e.preventDefault();
@@ -857,7 +861,7 @@ const ensureStdEnabledToggle = () => {
           features: supported,
           instances: Array.isArray(row?.instances) ? row.instances.map((inst) => ({
             id: String(inst?.id || "default").trim() || "default",
-            label: String(inst?.label || inst?.id || "Default").trim() || "Default",
+            label: String(inst?.label || inst?.id || T("scheduler.default")).trim() || T("scheduler.default"),
             configured: inst?.configured !== false
           })) : []
         };
@@ -869,7 +873,7 @@ const ensureStdEnabledToggle = () => {
   };
   const eventRoutesFor = source => Array.isArray(_eventRoutes?.[source]) ? _eventRoutes[source] : [];
   const eventSourceReady = source => eventRoutesFor(source).length > 0;
-  const eventSourceLabel = source => String(source || "").trim().toLowerCase() === "webhook" ? "Webhook" : "Watcher";
+  const eventSourceLabel = source => String(source || "").trim().toLowerCase() === "webhook" ? T("scheduler.trigger.webhook") : T("scheduler.trigger.watcher");
   const findEventRoute = (source, routeId) => eventRoutesFor(source).find(r => String(r?.id || "") === String(routeId || ""));
   const fetchEventRoutes = async () => {
     _eventRoutes = { watcher: [], webhook: [] };
@@ -882,23 +886,23 @@ const ensureStdEnabledToggle = () => {
         watcher: Array.isArray(data?.watcher_routes) ? data.watcher_routes.filter(r => r && typeof r === "object" && String(r.id || "").trim()) : [],
         webhook: Array.isArray(data?.webhook_routes) ? data.webhook_routes.filter(r => r && typeof r === "object" && String(r.id || "").trim()) : []
       };
-      if (!eventSourceReady("watcher") && !eventSourceReady("webhook")) _eventRouteError = "No enabled watcher or webhook routes configured for event triggers.";
+      if (!eventSourceReady("watcher") && !eventSourceReady("webhook")) _eventRouteError = T("scheduler.v.noRoutes");
     } catch (e) {
       console.warn("[scheduler] /api/scrobble/event_routes failed", e);
-      _eventRouteError = "Unable to load watcher or webhook routes for event triggers.";
+      _eventRouteError = T("scheduler.v.routesFailed");
     }
   };
   const sourceOptions = current => EVENT_SOURCE_OPTIONS.map(([value, label]) => [
     value,
-    eventSourceReady(value) ? label : `${label} (unavailable)`,
+    eventSourceReady(value) ? label : T("scheduler.unavailable", {label}),
     eventSourceReady(value) ? null : { disabled: true, selected: String(current || "") === value }
   ]);
   const routeOptions = (source, current) => {
     const routes = eventRoutesFor(source);
-    const emptyLabel = source === "webhook" ? "Select webhook" : "Select route";
-    const missingLabel = source === "webhook" ? "No webhooks configured" : "No routes configured";
+    const emptyLabel = source === "webhook" ? T("scheduler.selectWebhook") : T("scheduler.selectRoute");
+    const missingLabel = source === "webhook" ? T("scheduler.noWebhooks") : T("scheduler.noRoutesShort");
     const options = [["", routes.length ? emptyLabel : missingLabel]];
-    if (current && !routes.some(r => String(r?.id || "") === String(current))) options.push([current, `Missing route (${current})`, { disabled: true, selected: true }]);
+    if (current && !routes.some(r => String(r?.id || "") === String(current))) options.push([current, T("scheduler.missingRoute", {id: current}), { disabled: true, selected: true }]);
     [...routes].sort((a, b) => String(a.label || a.id).localeCompare(String(b.label || b.id), undefined, { sensitivity: "base", numeric: true })).forEach(route => options.push([route.id, route.label || route.id]));
     return options;
   };
@@ -907,9 +911,9 @@ const ensureStdEnabledToggle = () => {
     const routeId = String(rule?.filters?.route_id || "").trim();
     const hasContent = !!pairId || !!routeId;
     if (!hasContent) return "";
-    if (!eventSourceReady(rule?.source || "")) return `Select an enabled source for event trigger ${rule?.id || ""}.`.trim();
-    if (!routeId) return `Select a ${eventSourceLabel(rule?.source).toLowerCase()} route for each event trigger.`;
-    if (!pairId) return "Select a sync pair for each event trigger.";
+    if (!eventSourceReady(rule?.source || "")) return T("scheduler.v.eventSource", {id: rule?.id || ""}).trim();
+    if (!routeId) return T("scheduler.v.eventRoute", {source: eventSourceLabel(rule?.source).toLowerCase()});
+    if (!pairId) return T("scheduler.v.eventPair");
     return "";
   };
   const serializableEventRules = () => {
@@ -965,6 +969,7 @@ const ensureStdEnabledToggle = () => {
   const tdCell = (label, ...children) => {
     const td = el("td");
     td.dataset.label = label;
+    td.dataset.caption = colCaption(label);
     td.append(...children);
     return td;
   };
@@ -1027,7 +1032,7 @@ const ensureStdEnabledToggle = () => {
     const btn = Object.assign(el("button"), {
       className: "sch-help",
       type: "button",
-      ariaLabel: `${label} help`,
+      ariaLabel: T("scheduler.helpFor", {label}),
       title: HELP_TIPS[helpKey] || ""
     });
     btn.dataset.helpKey = helpKey;
@@ -1041,7 +1046,7 @@ const ensureStdEnabledToggle = () => {
   };
   const fieldMiniHelp = (label, control, helpKey) => stackWrap("field-mini", helpHead(label, helpKey), control);
   const eventCell = (label, helpKey, ...children) => {
-    const head = helpHead(label, helpKey);
+    const head = helpHead(colCaption(label), helpKey);
     head.classList.add("sch-event-cell-head");
     return tdCell(label, head, ...children);
   };
@@ -1081,15 +1086,15 @@ const ensureStdEnabledToggle = () => {
   };
   const webhookFormat = () => normalizeWebhookFormat(_webhooks.payload_format);
   const WEBHOOK_URL_FIELD = {
-    crosswatch: { label: "All events URL", help: "webhook_url", placeholder: "https://hooks.example.com/crosswatch", hint: "CrossWatch posts every event as JSON to this URL." },
-    notifiarr: { label: "Notifiarr passthrough URL", help: "webhook_notifiarr_url", placeholder: "https://notifiarr.com/api/v1/notification/passthrough/YOUR_API_KEY", hint: "Paste the Passthrough URL from Notifiarr, including your API key." },
-    ntfy: { label: "ntfy topic URL", help: "webhook_ntfy_url", placeholder: "https://ntfy.sh/your-topic", hint: "The full topic URL, for example https://ntfy.sh/your-topic." }
+    crosswatch: { label: T("scheduler.hooks.allUrl"), help: "webhook_url", placeholder: "https://hooks.example.com/crosswatch", hint: T("scheduler.hooks.allUrlHint") },
+    notifiarr: { label: T("scheduler.hooks.notifiarrUrl"), help: "webhook_notifiarr_url", placeholder: "https://notifiarr.com/api/v1/notification/passthrough/YOUR_API_KEY", hint: T("scheduler.hooks.notifiarrHint") },
+    ntfy: { label: T("scheduler.hooks.ntfyUrl"), help: "webhook_ntfy_url", placeholder: "https://ntfy.sh/your-topic", hint: T("scheduler.hooks.ntfyHint") }
   };
   const WEBHOOK_CONNECT_COPY = {
-    crosswatch: "Send JSON to your own endpoint, or ping a Healthchecks style monitor.",
-    notifiarr: "Messages go to Discord through your Notifiarr Passthrough integration.",
-    pushover: "Messages go to the Pushover app on your phone. You need both keys below.",
-    ntfy: "Messages are published to your ntfy topic as plain text."
+    crosswatch: T("scheduler.hooks.cwCopy"),
+    notifiarr: T("scheduler.hooks.notifiarrCopy"),
+    pushover: T("scheduler.hooks.pushoverCopy"),
+    ntfy: T("scheduler.hooks.ntfyCopy")
   };
   const isPushoverKey = (value) => /^[A-Za-z0-9]{30}$/.test(String(value || "").trim());
   const WEBHOOK_FORMAT_LABEL = { crosswatch: "CrossWatch JSON", notifiarr: "Notifiarr Passthrough", pushover: "Pushover", ntfy: "ntfy" };
@@ -1108,17 +1113,17 @@ const ensureStdEnabledToggle = () => {
     const label = WEBHOOK_FORMAT_LABEL[normalizeWebhookFormat(_webhooksSaved.payload_format)];
     const ready = webhookDestinationSet(_webhooksSaved);
     const dirty = webhooksDirty();
-    text.textContent = ready ? `${label} is set up` : "Nothing is set up yet";
+    text.textContent = ready ? T("scheduler.hooks.isSetUp", {label}) : T("scheduler.hooks.nothingSetUp");
     if (dirty) {
-      note.textContent = "You have unsaved changes. Save to apply and test them.";
+      note.textContent = T("scheduler.hooks.unsavedNote");
     } else if (!ready) {
-      note.textContent = "Pick a service, fill in step 2 and save.";
+      note.textContent = T("scheduler.hooks.pickService");
     } else if (_webhooksSaved.enabled) {
-      note.textContent = "Notifications are being sent.";
+      note.textContent = T("scheduler.hooks.sending");
     } else {
-      note.textContent = "Webhooks are switched off, so nothing is sent. Turn on Enable webhooks and save.";
+      note.textContent = T("scheduler.hooks.offNote");
     }
-    state.textContent = dirty ? "Unsaved" : !ready ? "Needs setup" : _webhooksSaved.enabled ? "Active" : "Off";
+    state.textContent = dirty ? T("scheduler.hooks.unsaved") : !ready ? T("scheduler.hooks.needsSetup") : _webhooksSaved.enabled ? T("scheduler.active") : T("scheduler.off");
     state.dataset.state = dirty || !ready ? "attention" : _webhooksSaved.enabled ? "active" : "off";
   };
   const applyWebhookVisibility = () => {
@@ -1135,7 +1140,7 @@ const ensureStdEnabledToggle = () => {
     const connectTitle = $("#schWebhookConnectTitle", root);
     const connectCopy = $("#schWebhookConnectCopy", root);
     const urlHint = $("#schWebhookUrlHint", root);
-    if (connectTitle) connectTitle.textContent = `Connect ${WEBHOOK_FORMAT_LABEL[format]}`;
+    if (connectTitle) connectTitle.textContent = T("scheduler.hooks.connect", {label: WEBHOOK_FORMAT_LABEL[format]});
     if (connectCopy) connectCopy.textContent = WEBHOOK_CONNECT_COPY[format];
     if (urlHint) urlHint.textContent = (WEBHOOK_URL_FIELD[format] || WEBHOOK_URL_FIELD.crosswatch).hint;
     const urlLabel = $("#schWebhookUrlLabel", root);
@@ -1144,7 +1149,7 @@ const ensureStdEnabledToggle = () => {
     const urlField = WEBHOOK_URL_FIELD[format] || WEBHOOK_URL_FIELD.crosswatch;
     if (urlLabel) urlLabel.textContent = urlField.label;
     if (urlHelp) {
-      urlHelp.setAttribute("aria-label", `${urlField.label} help`);
+      urlHelp.setAttribute("aria-label", T("scheduler.helpFor", {label: urlField.label}));
       urlHelp.dataset.helpKey = urlField.help;
       urlHelp.title = HELP_TIPS[urlHelp.dataset.helpKey] || "";
     }
@@ -1199,14 +1204,14 @@ const ensureStdEnabledToggle = () => {
     const format = webhookFormat();
     if (format === "pushover") {
       const keys = [
-        ["Pushover application token", _webhooks.pushover_token],
-        ["Pushover user key", _webhooks.pushover_user]
+        [T("scheduler.hooks.pushoverToken"), _webhooks.pushover_token],
+        [T("scheduler.hooks.pushoverUser"), _webhooks.pushover_user]
       ];
       const keyIssues = keys
         .filter(([, value]) => value && !isPushoverKey(value))
-        .map(([label]) => `${label}: use the 30 character key from Pushover.`);
+        .map(([label]) => T("scheduler.hooks.pushoverKey", {label}));
       if (_webhooks.enabled && keys.some(([, value]) => !value)) {
-        keyIssues.push("Scheduler Webhooks: add the Pushover application token and user key or turn webhooks off.");
+        keyIssues.push(T("scheduler.hooks.pushoverMissing"));
       }
       return keyIssues;
     }
@@ -1214,26 +1219,26 @@ const ensureStdEnabledToggle = () => {
     const entries = format === "notifiarr" || format === "ntfy" ? [
       [WEBHOOK_URL_FIELD[format].label, _webhooks.url]
     ] : [
-      ["All events URL", _webhooks.url],
-      ["Compatible base URL", _webhooks.base_url],
-      ["Start callback URL", _webhooks.start_url],
-      ["Success callback URL", _webhooks.success_url],
-      ["Failure callback URL", _webhooks.failure_url]
+      [T("scheduler.hooks.allUrl"), _webhooks.url],
+      [T("scheduler.hooks.baseUrl"), _webhooks.base_url],
+      [T("scheduler.hooks.startUrl"), _webhooks.start_url],
+      [T("scheduler.hooks.successUrl"), _webhooks.success_url],
+      [T("scheduler.hooks.failureUrl"), _webhooks.failure_url]
     ];
     const issues = [];
     entries.forEach(([label, value]) => {
-      if (value && !isHttpUrl(value)) issues.push(`${label}: use an http:// or https:// URL.`);
+      if (value && !isHttpUrl(value)) issues.push(T("scheduler.hooks.httpUrl", {label}));
     });
     if (format === "notifiarr" && _webhooks.notifiarr_channel_id && !/^\d+$/.test(_webhooks.notifiarr_channel_id)) {
-      issues.push("Notifiarr channel ID: use the numeric Discord channel id.");
+      issues.push(T("scheduler.hooks.channelNumeric"));
     }
     if (_webhooks.enabled && !entries.some(([, value]) => String(value || "").trim())) {
       issues.push(format === "crosswatch"
-        ? "Scheduler Webhooks: add at least one callback URL or turn webhooks off."
-        : `Scheduler Webhooks: add the ${WEBHOOK_URL_FIELD[format].label} or turn webhooks off.`);
+        ? T("scheduler.hooks.addCallback")
+        : T("scheduler.hooks.addUrl", {label: WEBHOOK_URL_FIELD[format].label}));
     }
     if (_webhooks.enabled && healthAlerts && format === "crosswatch" && !_webhooks.url) {
-      issues.push("Scheduler Webhooks: watcher and provider sign-in alerts need the All events URL.");
+      issues.push(T("scheduler.hooks.alertsNeedUrl"));
     }
     return issues;
   };
@@ -1242,23 +1247,23 @@ const ensureStdEnabledToggle = () => {
     const status = $("#schWebhookTestStatus");
     syncWebhooksFromFields();
     if (webhooksDirty()) {
-      statusText(status, "Save your changes first. The test uses the saved settings.");
+      statusText(status, T("scheduler.hooks.saveFirst"));
       return;
     }
     const label = WEBHOOK_FORMAT_LABEL[normalizeWebhookFormat(_webhooksSaved?.payload_format)];
     if (button) button.disabled = true;
-    statusText(status, "Sending test notification...");
+    statusText(status, T("scheduler.hooks.sendingTest"));
     try {
       const res = await fetch("/api/scheduling/webhooks/test", { method: "POST" });
       const data = await res.json().catch(() => ({}));
-      statusText(status, res.ok && data.ok ? `Test notification delivered to ${label}.` : `Test failed: ${data.error || `HTTP ${res.status}`}`);
+      statusText(status, res.ok && data.ok ? T("scheduler.hooks.testDelivered", {label}) : T("scheduler.hooks.testFailedDetail", {error: data.error || `HTTP ${res.status}`}));
     } catch {
-      statusText(status, "Test failed: could not reach CrossWatch.");
+      statusText(status, T("scheduler.hooks.unreachable"));
     } finally {
       if (button) button.disabled = false;
     }
   };
-  const alignedField = (control) => stackWrap("field-mini control-align", Object.assign(el("div", "subnote"), { textContent: "Label" }), control);
+  const alignedField = (control) => stackWrap("field-mini control-align", Object.assign(el("div", "subnote"), { textContent: T("scheduler.label") }), control);
   const guardInput = ({ id, value, placeholder, title, onChange }) => {
     const input = buildInput({ id, type: "number", min: 0, value, placeholder, onChange });
     if (title) input.title = title;
@@ -1272,7 +1277,7 @@ const ensureStdEnabledToggle = () => {
   const providerLabel = (value) => providerMeta().label?.(value) || String(value || "");
   const instanceLabel = (value) => {
     const raw = String(value || "").trim();
-    return !raw || raw.toLowerCase() === "default" ? "Default" : raw;
+    return !raw || raw.toLowerCase() === "default" ? T("scheduler.default") : raw;
   };
   const iconMeta = (value) => {
     const key = String(value || "").trim();
@@ -1295,8 +1300,8 @@ const ensureStdEnabledToggle = () => {
   const pairOptionData = (value, usedInSteps = []) => {
     const pair = _pairs.find((item) => String(item?.id || "") === String(value || ""));
     if (!pair) return null;
-    const tags = [pair.enabled ? "" : "Disabled", window.CW?.syncFeatureDotsHTML?.(pair) ? "" : "No features"].filter(Boolean);
-    const menuTags = usedInSteps.length ? [`Step ${usedInSteps.join(", ")}`] : [];
+    const tags = [pair.enabled ? "" : T("scheduler.disabled"), window.CW?.syncFeatureDotsHTML?.(pair) ? "" : T("scheduler.noFeatures")].filter(Boolean);
+    const menuTags = usedInSteps.length ? [T("scheduler.stepN", {n: usedInSteps.join(", ")})] : [];
     return window.CW?.syncPairOptionData?.(pair, { tags, menuTags }) || null;
   };
   const stepsUsingPair = (workflow, step, value) => workflow.steps.flatMap((item, index) => (
@@ -1313,30 +1318,30 @@ const ensureStdEnabledToggle = () => {
         },
     });
   };
-  const pairOptions = (selected, includeNoneText = "Select sync pair") => [
+  const pairOptions = (selected, includeNoneText = T("scheduler.selectPair")) => [
     ["", includeNoneText],
-    ..._pairs.map(p => [p.id, p.label + (p.enabled ? "" : " (disabled)"), { disabled: !p.enabled }])
+    ..._pairs.map(p => [p.id, p.label + (p.enabled ? "" : ` ${T("scheduler.disabledParen")}`), { disabled: !p.enabled }])
   ];
   const softenStatus = (value = "") => {
     const text = String(value || "").trim();
     if (!text) return "";
     return text
-      .replace(/^Step (\d+): select a pair\.$/i, "Next: choose a sync pair for Step $1")
-      .replace(/^Step (\d+): select a time\.$/i, "Next: set a time for Step $1")
-      .replace(/^Capture schedule (\d+): select a provider\.$/i, "Next: choose a provider for Capture schedule $1")
-      .replace(/^Capture schedule (\d+): choose a configured provider\.$/i, "Pick a configured provider for Capture schedule $1")
-      .replace(/^Capture schedule (\d+): choose a configured provider profile\.$/i, "Pick a configured instance for Capture schedule $1")
-      .replace(/^Capture schedule (\d+): select a feature\.$/i, "Next: choose a feature for Capture schedule $1")
-      .replace(/^Capture schedule (\d+): feature (.+) is not supported for (.+)\.$/i, "Capture schedule $1: $2 is not available for $3")
-      .replace(/^Capture schedule (\d+): select a time\.$/i, "Next: set a time for Capture schedule $1")
-      .replace(/^Select a sync pair for each event trigger\.$/i, "Next: choose a sync pair for each event trigger")
-      .replace(/^Select a (.+) route for each event trigger\.$/i, "Next: choose a $1 route for each event trigger")
-      .replace(/^Select an enabled source for event trigger (.+)\.$/i, "Pick an enabled source for event trigger $1")
-      .replace(/^Some timed steps reference disabled pairs\.$/i, "Update the disabled pair used in one of the timed steps")
-      .replace(/^Some event triggers reference disabled pairs\.$/i, "Update the disabled pair used in one of the event triggers")
-      .replace(/^Some event triggers need a valid configured watcher or webhook route\.$/i, "Choose a valid watcher or webhook route for the event trigger")
-      .replace(/^No enabled watcher or webhook routes configured for event triggers\.$/i, "Add or enable a watcher/webhook route to use event triggers")
-      .replace(/^Unable to load watcher or webhook routes for event triggers\.$/i, "Routes could not be loaded for event triggers");
+      .replace(/^Step (\d+): select a pair\.$/i, (_, g1) => T("scheduler.soften.m1", {a: g1}))
+      .replace(/^Step (\d+): select a time\.$/i, (_, g1) => T("scheduler.soften.m2", {a: g1}))
+      .replace(/^Capture schedule (\d+): select a provider\.$/i, (_, g1) => T("scheduler.soften.m3", {a: g1}))
+      .replace(/^Capture schedule (\d+): choose a configured provider\.$/i, (_, g1) => T("scheduler.soften.m4", {a: g1}))
+      .replace(/^Capture schedule (\d+): choose a configured provider profile\.$/i, (_, g1) => T("scheduler.soften.m5", {a: g1}))
+      .replace(/^Capture schedule (\d+): select a feature\.$/i, (_, g1) => T("scheduler.soften.m6", {a: g1}))
+      .replace(/^Capture schedule (\d+): feature (.+) is not supported for (.+)\.$/i, (_, g1, g2, g3) => T("scheduler.soften.m7", {a: g1, b: g2, c: g3}))
+      .replace(/^Capture schedule (\d+): select a time\.$/i, (_, g1) => T("scheduler.soften.m8", {a: g1}))
+      .replace(/^Select a sync pair for each event trigger\.$/i, () => T("scheduler.soften.m9"))
+      .replace(/^Select a (.+) route for each event trigger\.$/i, (_, g1) => T("scheduler.soften.m10", {a: g1}))
+      .replace(/^Select an enabled source for event trigger (.+)\.$/i, (_, g1) => T("scheduler.soften.m11", {a: g1}))
+      .replace(/^Some timed steps reference disabled pairs\.$/i, () => T("scheduler.soften.m12"))
+      .replace(/^Some event triggers reference disabled pairs\.$/i, () => T("scheduler.soften.m13"))
+      .replace(/^Some event triggers need a valid configured watcher or webhook route\.$/i, () => T("scheduler.soften.m14"))
+      .replace(/^No enabled watcher or webhook routes configured for event triggers\.$/i, () => T("scheduler.soften.m15"))
+      .replace(/^Unable to load watcher or webhook routes for event triggers\.$/i, () => T("scheduler.soften.m16"));
   };
   const statusText = (node, value = "") => {
     if (!node) return;
@@ -1355,7 +1360,7 @@ const ensureStdEnabledToggle = () => {
   };
   const jobLabel = (job) => {
     const index = Math.max(0, _jobs.indexOf(job)) + 1;
-    return `Step ${index}`;
+    return T("scheduler.stepN", {n: String(index)});
   };
   const isBlankJob = (job) => {
     const pairId = String(job?.pair_id || "").trim();
@@ -1369,8 +1374,8 @@ const ensureStdEnabledToggle = () => {
     const pairId = String(job?.pair_id || "").trim();
     const time = String(job?.at || "").trim();
     const rowName = jobLabel(job);
-    if (!pairId) return `${rowName}: select a pair.`;
-    if (!time) return `${rowName}: select a time.`;
+    if (!pairId) return T("scheduler.v.choosePair", {name: rowName});
+    if (!time) return T("scheduler.v.setTime", {name: rowName});
     return "";
   };
   const serializableJobs = () => {
@@ -1388,10 +1393,10 @@ const ensureStdEnabledToggle = () => {
     return { jobs, issues };
   };
   const workflowModeOptions = () => [
-    ["hourly", "Every hour"],
-    ["every_n_hours", "Every N hours"],
-    ["daily_time", "Daily at"],
-    ["custom_interval", "Custom interval"]
+    ["hourly", T("scheduler.mode.hourly")],
+    ["every_n_hours", T("scheduler.mode.everyN")],
+    ["daily_time", T("scheduler.mode.daily")],
+    ["custom_interval", T("scheduler.mode.custom")]
   ];
   const normalizeWorkflow = (workflow = {}) => ({
     id: workflow.id || genId(),
@@ -1411,14 +1416,14 @@ const ensureStdEnabledToggle = () => {
     const hasPair = steps.some((step) => String(step?.pair_id || "").trim());
     return !hasPair;
   };
-  const workflowLabel = (workflow) => `Workflow ${Math.max(0, _workflows.indexOf(workflow)) + 1}`;
+  const workflowLabel = (workflow) => T("scheduler.workflowN", {n: String(Math.max(0, _workflows.indexOf(workflow)) + 1)});
   const workflowIssue = (workflow) => {
     if (isBlankWorkflow(workflow)) return "";
     const steps = (Array.isArray(workflow?.steps) ? workflow.steps : []).filter((step) => step.active !== false && String(step?.pair_id || "").trim());
     const rowName = workflowLabel(workflow);
-    if (!steps.length) return `${rowName}: add at least one active step.`;
-    if (steps.some((step) => step.pair_id && !isEnabled(step.pair_id))) return `${rowName}: update a disabled pair.`;
-    if (workflow.mode === "daily_time" && !String(workflow.daily_time || "").trim()) return `${rowName}: choose a time.`;
+    if (!steps.length) return T("scheduler.v.addStep", {name: rowName});
+    if (steps.some((step) => step.pair_id && !isEnabled(step.pair_id))) return T("scheduler.v.disabledPair", {name: rowName});
+    if (workflow.mode === "daily_time" && !String(workflow.daily_time || "").trim()) return T("scheduler.v.chooseTime", {name: rowName});
     return "";
   };
   const serializableWorkflows = () => {
@@ -1451,21 +1456,21 @@ const ensureStdEnabledToggle = () => {
     });
     const want = String(current || "").trim() || "default";
     if (want && !seen.has(want)) out.unshift([want, instanceLabel(want), { selected: true }]);
-    if (!out.length) out.push(["default", "Default"]);
+    if (!out.length) out.push(["default", T("scheduler.default")]);
     return out.sort((a, b) => String(a[1]).localeCompare(String(b[1]), undefined, { sensitivity: "base", numeric: true }));
   };
   const captureFeatureOptions = (provider, current = "") => {
     const meta = captureProviderById(provider);
     const feats = Array.isArray(meta?.features) ? meta.features : [];
-    const out = [["", "Feature"]];
-    if (feats.length) out.push(["all", "All features"]);
-    feats.forEach((feature) => out.push([feature, feature === "all" ? "All features" : feature.charAt(0).toUpperCase() + feature.slice(1)]));
+    const out = [["", T("scheduler.feature")]];
+    if (feats.length) out.push(["all", T("scheduler.allFeatures")]);
+    feats.forEach((feature) => out.push([feature, feature === "all" ? T("scheduler.allFeatures") : feature.charAt(0).toUpperCase() + feature.slice(1)]));
     const want = String(current || "").trim().toLowerCase();
-    if (want && !out.some(([value]) => String(value) === want)) out.push([want, want === "all" ? "All features" : want]);
+    if (want && !out.some(([value]) => String(value) === want)) out.push([want, want === "all" ? T("scheduler.allFeatures") : want]);
     return out;
   };
   const captureProviderOptions = (current = "") => {
-    const rows = [["", "Select provider"]];
+    const rows = [["", T("scheduler.selectProvider")]];
     [..._captureProviders].sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: "base", numeric: true })).forEach((provider) => {
       rows.push([
         provider.id,
@@ -1512,7 +1517,7 @@ const ensureStdEnabledToggle = () => {
   };
   const captureJobLabel = (job) => {
     const index = Math.max(0, _captureJobs.indexOf(job)) + 1;
-    return `Capture schedule ${index}`;
+    return T("scheduler.captureN", {n: String(index)});
   };
   const captureLabelValue = (job) => {
     const label = String(job?.label_template || "").trim();
@@ -1532,13 +1537,13 @@ const ensureStdEnabledToggle = () => {
     const rowName = captureJobLabel(job);
     if (!hasContent) return "";
     const meta = captureProviderById(provider);
-    if (!provider) return `${rowName}: select a provider.`;
-    if (!meta || !meta.configured) return `${rowName}: choose a configured provider.`;
+    if (!provider) return T("scheduler.v.chooseProvider", {name: rowName});
+    if (!meta || !meta.configured) return T("scheduler.v.configuredProvider", {name: rowName});
     const instMeta = Array.isArray(meta.instances) ? meta.instances.find((row) => String(row?.id || "") === instance) : null;
-    if (instMeta && instMeta.configured === false) return `${rowName}: choose a configured provider instance.`;
-    if (!feature) return `${rowName}: select a feature.`;
-    if (feature !== "all" && !(meta.features || []).includes(feature)) return `${rowName}: feature ${feature} is not supported for ${provider}.`;
-    if (!time) return `${rowName}: select a time.`;
+    if (instMeta && instMeta.configured === false) return T("scheduler.v.configuredInstance", {name: rowName});
+    if (!feature) return T("scheduler.v.chooseFeature", {name: rowName});
+    if (feature !== "all" && !(meta.features || []).includes(feature)) return T("scheduler.v.featureUnsupported", {name: rowName, feature, provider});
+    if (!time) return T("scheduler.v.setTime", {name: rowName});
     return "";
   };
   const serializableCaptureJobs = () => {
@@ -1602,7 +1607,7 @@ const ensureStdEnabledToggle = () => {
       workflow.steps.splice(to, 0, moved);
       renderWorkflows();
     };
-    const grip = Object.assign(el("button", "sch-workflow-grip"), { type: "button", ariaLabel: "Drag to reorder sync step", title: "Drag to reorder" });
+    const grip = Object.assign(el("button", "sch-workflow-grip"), { type: "button", ariaLabel: T("scheduler.dragStep"), title: T("scheduler.drag") });
     grip.innerHTML = `<span class="material-symbols-rounded" aria-hidden="true">drag_indicator</span>`;
     const index = Object.assign(el("span", "sch-workflow-step-index"), { textContent: String(workflow.steps.indexOf(step) + 1) });
     const sel = buildSelect({
@@ -1615,7 +1620,7 @@ const ensureStdEnabledToggle = () => {
     active.id = `sched_workflow_active_${rowKey}`;
     active.name = active.id;
     active.onchange = () => { step.active = !!active.checked; renderWorkflows(); };
-    const del = Object.assign(el("button"), { className: "btn ghost sch-remove-btn", type: "button", ariaLabel: "Remove workflow step" });
+    const del = Object.assign(el("button"), { className: "btn ghost sch-remove-btn", type: "button", ariaLabel: T("scheduler.removeWorkflowStep") });
     del.innerHTML = `<span class="material-symbols-rounded" aria-hidden="true">close</span>`;
     del.onclick = () => { workflow.steps = workflow.steps.filter((item) => item !== step); renderWorkflows(); };
     row.append(
@@ -1665,13 +1670,13 @@ const ensureStdEnabledToggle = () => {
     const active = Object.assign(el("input"), { type: "checkbox", checked: workflow.active !== false });
     active.id = `sched_workflow_active_${rowKey}`;
     active.name = active.id;
-    active.setAttribute("aria-label", workflow.active === false ? "Enable workflow" : "Disable workflow");
+    active.setAttribute("aria-label", workflow.active === false ? T("scheduler.enableWorkflow") : T("scheduler.disableWorkflow"));
     active.onchange = () => { workflow.active = !!active.checked; renderWorkflows(); updateAdvancedStatus(); };
-    const activeWrap = Object.assign(el("label", "cx-toggle sch-workflow-toggle"), { title: workflow.active === false ? "Enable workflow" : "Disable workflow" });
+    const activeWrap = Object.assign(el("label", "cx-toggle sch-workflow-toggle"), { title: workflow.active === false ? T("scheduler.enableWorkflow") : T("scheduler.disableWorkflow") });
     const activeUi = el("span", "cx-toggle-ui");
     activeUi.setAttribute("aria-hidden", "true");
     activeWrap.append(active, activeUi);
-    const del = Object.assign(el("button"), { className: "btn ghost sch-remove-btn", type: "button", ariaLabel: "Remove workflow" });
+    const del = Object.assign(el("button"), { className: "btn ghost sch-remove-btn", type: "button", ariaLabel: T("scheduler.removeWorkflow") });
     del.innerHTML = `<span class="material-symbols-rounded" aria-hidden="true">close</span>`;
     del.onclick = () => { _workflows = _workflows.filter((item) => item !== workflow); renderWorkflows(); };
     const controls = stackWrap("sch-workflow-controls", mode);
@@ -1684,9 +1689,9 @@ const ensureStdEnabledToggle = () => {
       stackWrap(
         "sch-workflow-titleline",
         Object.assign(el("div", "sch-adv-section-title"), { textContent: workflowLabel(workflow) }),
-        Object.assign(el("span", workflow.active === false ? "sch-workflow-state-pill is-paused" : "sch-workflow-state-pill"), { textContent: workflow.active === false ? "Paused" : "Active" })
+        Object.assign(el("span", workflow.active === false ? "sch-workflow-state-pill is-paused" : "sch-workflow-state-pill"), { textContent: workflow.active === false ? T("scheduler.paused") : T("scheduler.active") })
       ),
-      Object.assign(el("div", "sch-adv-section-copy"), { textContent: "Run these sync steps in order on the selected recurrence." })
+      Object.assign(el("div", "sch-adv-section-copy"), { textContent: T("scheduler.workflowHint") })
     );
     head.append(title, stackWrap("sch-workflow-actions", controls, activeWrap, del));
     const body = el("div", "sch-workflow-steps");
@@ -1694,7 +1699,7 @@ const ensureStdEnabledToggle = () => {
     if (!workflow.steps.length) workflow.steps.push(defaultWorkflowStep());
     workflow.steps.forEach((step) => body.appendChild(workflowStepRow(workflow, step)));
     const actions = el("div", "sch-adv-actions");
-    const add = Object.assign(el("button"), { className: "btn", type: "button", textContent: "Add sync step" });
+    const add = Object.assign(el("button"), { className: "btn", type: "button", textContent: T("scheduler.addSyncStep") });
     add.onclick = () => { workflow.steps.push(defaultWorkflowStep()); renderWorkflows(); };
     actions.append(add);
     block.append(head, body, actions);
@@ -1743,7 +1748,7 @@ const ensureStdEnabledToggle = () => {
     const sa = buildSelect({
       id: `sched_after_${rowKey}`,
       value: j.after || "",
-      options: [["", "None"], ..._jobs.filter(x => x !== j).map((x, i) => [String(x.id), `Step ${i + 1}`])],
+      options: [["", T("scheduler.none")], ..._jobs.filter(x => x !== j).map((x, i) => [String(x.id), T("scheduler.stepN", {n: String(i + 1)})])],
       onChange: value => { j.after = value || null; renderJobs(); }
     });
 
@@ -1752,7 +1757,7 @@ const ensureStdEnabledToggle = () => {
     c.name = c.id;
     c.onchange = () => { j.active = !!c.checked; renderJobs(); };
 
-    const del = Object.assign(el("button"), { className: "btn ghost sch-remove-btn", type: "button", ariaLabel: "Remove step" });
+    const del = Object.assign(el("button"), { className: "btn ghost sch-remove-btn", type: "button", ariaLabel: T("scheduler.removeStep") });
     del.innerHTML = `<span class="material-symbols-rounded" aria-hidden="true">close</span>`;
     del.onclick = () => { _jobs = _jobs.filter(x => x !== j); renderJobs(); };
 
@@ -1848,7 +1853,7 @@ const ensureStdEnabledToggle = () => {
       type: "number",
       min: 0,
       value: job.retention_days || "",
-      placeholder: "Forever",
+      placeholder: T("scheduler.forever"),
       onChange: (value, input) => {
         job.retention_days = Math.max(0, parseInt(value || "0", 10) || 0);
         input.value = job.retention_days ? String(job.retention_days) : "";
@@ -1860,7 +1865,7 @@ const ensureStdEnabledToggle = () => {
       type: "number",
       min: 0,
       value: job.max_captures || "",
-      placeholder: "Unlimited",
+      placeholder: T("scheduler.unlimited"),
       onChange: (value, input) => {
         job.max_captures = Math.max(0, parseInt(value || "0", 10) || 0);
         input.value = job.max_captures ? String(job.max_captures) : "";
@@ -1870,7 +1875,7 @@ const ensureStdEnabledToggle = () => {
     const autoDeleteCheck = buildCheck({
       id: `sched_cap_auto_delete_${rowKey}`,
       checked: job.auto_delete_old === true,
-      label: "Auto-delete older captures after each scheduled run",
+      label: T("scheduler.autoDelete"),
       onChange: (checked) => {
         job.auto_delete_old = !!checked;
         syncCaptureDraftJobs();
@@ -1882,9 +1887,9 @@ const ensureStdEnabledToggle = () => {
       syncCaptureDraftJobs();
       try { updateAdvancedStatus(); } catch {}
     };
-    const toggleAdv = Object.assign(el("button"), { className: "btn ghost capture-adv-toggle", type: "button", ariaLabel: "Toggle advanced capture schedule options", title: "Show advanced options" });
+    const toggleAdv = Object.assign(el("button"), { className: "btn ghost capture-adv-toggle", type: "button", ariaLabel: T("scheduler.toggleAdvanced"), title: T("scheduler.showAdvanced") });
     toggleAdv.innerHTML = `<span class="material-symbols-rounded" aria-hidden="true">keyboard_arrow_down</span>`;
-    const del = Object.assign(el("button"), { className: "btn ghost sch-remove-btn", type: "button", ariaLabel: "Remove capture schedule" });
+    const del = Object.assign(el("button"), { className: "btn ghost sch-remove-btn", type: "button", ariaLabel: T("scheduler.removeCapture") });
     del.innerHTML = `<span class="material-symbols-rounded" aria-hidden="true">close</span>`;
     del.onclick = () => { _captureJobs = _captureJobs.filter((row) => row !== job); syncCaptureDraftJobs(); renderCaptureJobs(); };
     const detailRow = el("tr");
@@ -1893,10 +1898,10 @@ const ensureStdEnabledToggle = () => {
     const detailCard = el("div", "capture-detail-card");
     const detailGrid = el("div", "capture-detail-grid");
     detailGrid.append(
-      fieldMiniHelp("Label template", labelInput, "capture_label"),
-      fieldMiniHelp("Keep captures for days", retentionDaysInput, "capture_retention_days"),
-      fieldMiniHelp("Max captures to keep", maxCapturesInput, "capture_max_captures"),
-      fieldMiniHelp("Cleanup", autoDeleteCheck, "capture_cleanup")
+      fieldMiniHelp(T("scheduler.labelTemplate"), labelInput, "capture_label"),
+      fieldMiniHelp(T("scheduler.keepDays"), retentionDaysInput, "capture_retention_days"),
+      fieldMiniHelp(T("scheduler.maxCaptures"), maxCapturesInput, "capture_max_captures"),
+      fieldMiniHelp(T("scheduler.cleanup"), autoDeleteCheck, "capture_cleanup")
     );
     detailCard.appendChild(detailGrid);
     detailCell.appendChild(detailCard);
@@ -1904,7 +1909,7 @@ const ensureStdEnabledToggle = () => {
     const syncAdvancedState = () => {
       const open = job._advanced_open === true;
       detailRow.style.display = open ? "" : "none";
-      toggleAdv.title = open ? "Hide advanced options" : "Show advanced options";
+      toggleAdv.title = open ? T("scheduler.hideAdvanced") : T("scheduler.showAdvanced");
       toggleAdv.setAttribute("aria-expanded", open ? "true" : "false");
       const icon = toggleAdv.querySelector(".material-symbols-rounded");
       if (icon) icon.textContent = open ? "keyboard_arrow_up" : "keyboard_arrow_down";
@@ -1916,11 +1921,11 @@ const ensureStdEnabledToggle = () => {
 
     tr.append(
       tdCell("Provider", stackWrap("stack two capture-provider-stack",
-        fieldMini("Provider", enhanceIconSelect(providerSel, (value) => {
+        fieldMini(T("scheduler.provider"), enhanceIconSelect(providerSel, (value) => {
           const meta = captureProviderById(value);
           return meta ? { label: meta.label || meta.id, icons: [iconMeta(String(meta.id || "").toLowerCase())].filter(Boolean) } : null;
         })),
-        fieldMini("Profile", instanceSel)
+        fieldMini(T("scheduler.profile"), instanceSel)
       )),
       tdCell("Feature", alignedField(featureSel)),
       tdCell("Time", alignedField(timeInput)),
@@ -1974,7 +1979,7 @@ const ensureStdEnabledToggle = () => {
       min: 0,
       max: 100,
       value: r.filters?.min_progress ?? "",
-      placeholder: "Min %",
+      placeholder: T("scheduler.minPercent"),
       onChange: (value, input) => {
         const next = (value || "").trim();
         r.filters.min_progress = next === "" ? null : Math.max(0, Math.min(100, parseInt(next, 10) || 0));
@@ -2005,18 +2010,18 @@ const ensureStdEnabledToggle = () => {
         input.value = String(r.guardrails[key]);
       }
     });
-    const cooldownInput = numGuard("cooldown", "cooldown_minutes", "15", "Ignore repeat triggers for this many minutes after a rule runs.");
+    const cooldownInput = numGuard("cooldown", "cooldown_minutes", "15", T("scheduler.muteHint"));
     cooldownInput.style.width = "8ch";
     cooldownInput.style.minWidth = "8ch";
-    const dedupeInput = numGuard("dedupe", "dedupe_window_seconds", "30", "Suppress identical events that arrive again within this many seconds.");
+    const dedupeInput = numGuard("dedupe", "dedupe_window_seconds", "30", T("scheduler.dedupeHint"));
     dedupeInput.style.width = "8ch";
     dedupeInput.style.minWidth = "8ch";
-    const rateInput = numGuard("rate", "max_runs_per_hour", "4", "Hard cap for how many times this rule can run in one hour.");
+    const rateInput = numGuard("rate", "max_runs_per_hour", "4", T("scheduler.maxHint"));
     rateInput.style.width = "8ch";
     rateInput.style.minWidth = "8ch";
     const activeChk = Object.assign(el("input"), { id: `sched_evt_active_${rowKey}`, name: `sched_evt_active_${rowKey}`, type: "checkbox", checked: r.active !== false });
     activeChk.onchange = () => { r.active = !!activeChk.checked; renderEventRules(); };
-    const del = Object.assign(el("button"), { className: "btn ghost sch-remove-btn", type: "button", ariaLabel: "Remove event trigger" });
+    const del = Object.assign(el("button"), { className: "btn ghost sch-remove-btn", type: "button", ariaLabel: T("scheduler.removeTrigger") });
     del.innerHTML = `<span class="material-symbols-rounded" aria-hidden="true">close</span>`;
     del.onclick = () => { _eventRules = _eventRules.filter(x => x !== r); renderEventRules(); };
 
@@ -2029,7 +2034,7 @@ const ensureStdEnabledToggle = () => {
       eventCell("Filters", "filters", stackWrap("stack event-filter-stack", mediaSel, minProgressInput)),
       eventCell("Action", "action", stackWrap(
         "stack",
-        Object.assign(el("div", "subnote"), { textContent: "Sync pair" }),
+        Object.assign(el("div", "subnote"), { textContent: T("scheduler.syncPair") }),
         enhanceIconSelect(pairSel, (value, option) => {
           const data = pairOptionData(value);
           return data ? { ...data, disabled: !!option?.disabled } : null;
@@ -2039,9 +2044,9 @@ const ensureStdEnabledToggle = () => {
         "stack",
         stackWrap(
           "stack three",
-          fieldMini("Mute (min)", cooldownInput),
-          fieldMini("Dedupe (sec)", dedupeInput),
-          fieldMini("Max / hour", rateInput)
+          fieldMini(T("scheduler.mute"), cooldownInput),
+          fieldMini(T("scheduler.dedupe"), dedupeInput),
+          fieldMini(T("scheduler.maxHour"), rateInput)
         )
       )),
       eventCell("Active", "", activeChk),
@@ -2068,48 +2073,48 @@ const ensureStdEnabledToggle = () => {
   <div class="sch-adv-head-copy sch-card-head">
     <span class="material-symbols-rounded sch-card-icon" aria-hidden="true">account_tree</span>
     <div class="sch-card-head-copy">
-      <div class="sch-adv-head-title">Advanced Scheduler</div>
-      <p>Set up timed steps, captures and event triggers. This plan can run alongside the standard schedule.</p>
+      <div class="sch-adv-head-title">${TH("scheduler.adv.title")}</div>
+      <p>${TH("scheduler.adv.intro")}</p>
     </div>
   </div>
   <label class="cx-toggle">
     <input type="checkbox" id="schAdvEnabled">
     <span class="cx-toggle-ui" aria-hidden="true"></span>
-    <span class="cx-toggle-text">Use advanced plan</span>
+    <span class="cx-toggle-text">${TH("scheduler.adv.use")}</span>
     <span class="cx-toggle-state" aria-hidden="true"></span>
   </label>
 </div>
 
 <section class="sch-plan-summary sch-adv-summary" id="schAdvSummary">
   <div class="sch-plan-summary-copy">
-    <div class="sch-plan-summary-kicker">Current plan</div>
+    <div class="sch-plan-summary-kicker">${TH("scheduler.std.currentPlan")}</div>
     <div class="sch-plan-summary-text" id="schAdvSummaryText"></div>
     <div class="sch-plan-summary-note" id="schAdvSummaryNote"></div>
   </div>
-  <div class="sch-plan-summary-state" id="schAdvSummaryState">Advanced plan ready</div>
+  <div class="sch-plan-summary-state" id="schAdvSummaryState">${TH("scheduler.adv.ready")}</div>
 </section>
 
 <section class="sch-adv-section">
   <div class="sch-adv-section-head">
     <div>
-      <div class="sch-adv-section-title">Time Plan</div>
-      <div class="sch-adv-section-copy">Use timed steps for the current advanced schedule. Only enabled sync pairs are selectable.</div>
+      <div class="sch-adv-section-title">${TH("scheduler.adv.timePlan")}</div>
+      <div class="sch-adv-section-copy">${TH("scheduler.adv.timePlanHint")}</div>
     </div>
   </div>
   <table>
     <thead><tr>
-      <th style="width:32%"><span class="th-help">Sync pair<button type="button" class="sch-help" aria-label="Sync pair help" title="Sync pair help" data-help-key="time_pair"></button></span></th>
-      <th style="width:14%"><span class="th-help">Time<button type="button" class="sch-help" aria-label="Time help" title="Time help" data-help-key="time_time"></button></span></th>
-      <th style="width:30%"><span class="th-help">Days<button type="button" class="sch-help" aria-label="Days help" title="Days help" data-help-key="time_days"></button></span></th>
-      <th style="width:14%"><span class="th-help">After<button type="button" class="sch-help" aria-label="After help" title="After help" data-help-key="time_after"></button></span></th>
-      <th style="width:6%">Active</th>
+      <th style="width:32%"><span class="th-help">${TH("scheduler.syncPair")}<button type="button" class="sch-help" aria-label="${TH("scheduler.helpLabel.syncPair")}" title="${TH("scheduler.helpLabel.syncPair")}" data-help-key="time_pair"></button></span></th>
+      <th style="width:14%"><span class="th-help">${TH("scheduler.time")}<button type="button" class="sch-help" aria-label="${TH("scheduler.helpLabel.time")}" title="${TH("scheduler.helpLabel.time")}" data-help-key="time_time"></button></span></th>
+      <th style="width:30%"><span class="th-help">${TH("scheduler.days")}<button type="button" class="sch-help" aria-label="${TH("scheduler.helpLabel.days")}" title="${TH("scheduler.helpLabel.days")}" data-help-key="time_days"></button></span></th>
+      <th style="width:14%"><span class="th-help">${TH("scheduler.after")}<button type="button" class="sch-help" aria-label="${TH("scheduler.helpLabel.after")}" title="${TH("scheduler.helpLabel.after")}" data-help-key="time_after"></button></span></th>
+      <th style="width:6%">${TH("scheduler.active")}</th>
       <th style="width:6%"></th>
     </tr></thead>
     <tbody id="schJobsBody"></tbody>
   </table>
   <div class="sch-adv-actions">
-    <button class="btn" id="btnAddStep">Add step</button>
-    <button class="btn" id="btnAutoFromPairs">Auto-create from enabled sync pairs</button>
+    <button class="btn" id="btnAddStep">${TH("scheduler.adv.addStep")}</button>
+    <button class="btn" id="btnAutoFromPairs">${TH("scheduler.adv.autoCreate")}</button>
     <div class="status inline" id="schJobsStatus"></div>
   </div>
 </section>
@@ -2117,14 +2122,14 @@ const ensureStdEnabledToggle = () => {
 <section class="sch-adv-section">
   <div class="sch-adv-section-head">
     <div>
-      <div class="sch-adv-section-title">Recurring workflows</div>
-      <div class="sch-adv-section-copy sch-workflow-intro">Define an ordered chain of existing sync pairs, then repeat it hourly, daily, or on a custom interval.</div>
+      <div class="sch-adv-section-title">${TH("scheduler.adv.workflows")}</div>
+      <div class="sch-adv-section-copy sch-workflow-intro">${TH("scheduler.adv.workflowsHint")}</div>
     </div>
   </div>
   <div id="schWorkflowsBody"></div>
   <div class="sch-adv-actions">
-    <button class="btn" id="btnAddWorkflow">Add workflow</button>
-    <button class="btn" id="btnWorkflowFromPairs">Build from sync pair order</button>
+    <button class="btn" id="btnAddWorkflow">${TH("scheduler.adv.addWorkflow")}</button>
+    <button class="btn" id="btnWorkflowFromPairs">${TH("scheduler.adv.buildFromOrder")}</button>
     <div class="status inline" id="schWorkflowStatus"></div>
   </div>
 </section>
@@ -2132,23 +2137,23 @@ const ensureStdEnabledToggle = () => {
 <section class="sch-adv-section">
   <div class="sch-adv-section-head">
     <div>
-      <div class="sch-adv-section-title">Capture schedules</div>
-      <div class="sch-adv-section-copy">Run automated provider captures on a schedule.</div>
+      <div class="sch-adv-section-title">${TH("scheduler.adv.captures")}</div>
+      <div class="sch-adv-section-copy">${TH("scheduler.adv.capturesHint")}</div>
     </div>
   </div>
   <table>
     <thead><tr>
-      <th style="width:37%"><span class="th-help">Provider<button type="button" class="sch-help" aria-label="Provider help" title="Provider help" data-help-key="capture_target"></button></span></th>
-      <th style="width:14%"><span class="th-help">Feature<button type="button" class="sch-help" aria-label="Feature help" title="Feature help" data-help-key="capture_feature"></button></span></th>
-      <th style="width:11%"><span class="th-help">Time<button type="button" class="sch-help" aria-label="Time help" title="Time help" data-help-key="time_time"></button></span></th>
-      <th style="width:26%"><span class="th-help">Days<button type="button" class="sch-help" aria-label="Days help" title="Days help" data-help-key="time_days"></button></span></th>
-      <th style="width:4%">Active</th>
+      <th style="width:37%"><span class="th-help">${TH("scheduler.provider")}<button type="button" class="sch-help" aria-label="${TH("scheduler.helpLabel.provider")}" title="${TH("scheduler.helpLabel.provider")}" data-help-key="capture_target"></button></span></th>
+      <th style="width:14%"><span class="th-help">${TH("scheduler.feature")}<button type="button" class="sch-help" aria-label="${TH("scheduler.helpLabel.feature")}" title="${TH("scheduler.helpLabel.feature")}" data-help-key="capture_feature"></button></span></th>
+      <th style="width:11%"><span class="th-help">${TH("scheduler.time")}<button type="button" class="sch-help" aria-label="${TH("scheduler.helpLabel.time")}" title="${TH("scheduler.helpLabel.time")}" data-help-key="time_time"></button></span></th>
+      <th style="width:26%"><span class="th-help">${TH("scheduler.days")}<button type="button" class="sch-help" aria-label="${TH("scheduler.helpLabel.days")}" title="${TH("scheduler.helpLabel.days")}" data-help-key="time_days"></button></span></th>
+      <th style="width:4%">${TH("scheduler.active")}</th>
       <th style="width:8%"></th>
     </tr></thead>
     <tbody id="schCaptureJobsBody"></tbody>
   </table>
   <div class="sch-adv-actions">
-    <button class="btn" id="btnAddCaptureJob">Add capture schedule</button>
+    <button class="btn" id="btnAddCaptureJob">${TH("scheduler.adv.addCapture")}</button>
     <div class="status inline" id="schCaptureStatus"></div>
   </div>
 </section>
@@ -2156,24 +2161,24 @@ const ensureStdEnabledToggle = () => {
 <section class="sch-adv-section">
   <div class="sch-adv-section-head">
     <div>
-      <div class="sch-adv-section-title">Event Triggers</div>
-      <div class="sch-adv-section-copy">Trigger a sync pair from watcher or webhook activity with filters and guardrails.</div>
+      <div class="sch-adv-section-title">${TH("scheduler.adv.events")}</div>
+      <div class="sch-adv-section-copy">${TH("scheduler.adv.eventsHint")}</div>
     </div>
   </div>
   <table class="sch-event-table">
     <thead><tr>
-      <th style="width:25%"><span class="th-help">Source<button type="button" class="sch-help" aria-label="Source help" title="Source help" data-help-key="source"></button></span></th>
-      <th style="width:9%"><span class="th-help">Event<button type="button" class="sch-help" aria-label="Event help" title="Event help" data-help-key="event"></button></span></th>
-      <th style="width:12%"><span class="th-help">Filters<button type="button" class="sch-help" aria-label="Filters help" title="Filters help" data-help-key="filters"></button></span></th>
-      <th style="width:26%"><span class="th-help">Action<button type="button" class="sch-help" aria-label="Action help" title="Action help" data-help-key="action"></button></span></th>
-      <th style="width:18%"><span class="th-help">Guardrails<button type="button" class="sch-help" aria-label="Guardrails help" title="Guardrails help" data-help-key="guardrails"></button></span></th>
-      <th style="width:5%">Active</th>
+      <th style="width:25%"><span class="th-help">${TH("scheduler.source")}<button type="button" class="sch-help" aria-label="${TH("scheduler.helpLabel.source")}" title="${TH("scheduler.helpLabel.source")}" data-help-key="source"></button></span></th>
+      <th style="width:9%"><span class="th-help">${TH("scheduler.eventLabel")}<button type="button" class="sch-help" aria-label="${TH("scheduler.helpLabel.event")}" title="${TH("scheduler.helpLabel.event")}" data-help-key="event"></button></span></th>
+      <th style="width:12%"><span class="th-help">${TH("scheduler.filters")}<button type="button" class="sch-help" aria-label="${TH("scheduler.helpLabel.filters")}" title="${TH("scheduler.helpLabel.filters")}" data-help-key="filters"></button></span></th>
+      <th style="width:26%"><span class="th-help">${TH("scheduler.action")}<button type="button" class="sch-help" aria-label="${TH("scheduler.helpLabel.action")}" title="${TH("scheduler.helpLabel.action")}" data-help-key="action"></button></span></th>
+      <th style="width:18%"><span class="th-help">${TH("scheduler.guardrails")}<button type="button" class="sch-help" aria-label="${TH("scheduler.helpLabel.guardrails")}" title="${TH("scheduler.helpLabel.guardrails")}" data-help-key="guardrails"></button></span></th>
+      <th style="width:5%">${TH("scheduler.active")}</th>
       <th style="width:5%"></th>
     </tr></thead>
     <tbody id="schEventRulesBody"></tbody>
   </table>
   <div class="sch-adv-actions">
-    <button class="btn" id="btnAddEventRule">Add event trigger</button>
+    <button class="btn" id="btnAddEventRule">${TH("scheduler.adv.addTrigger")}</button>
     <div class="status inline" id="schEventStatus"></div>
   </div>
 </section>
@@ -2187,50 +2192,50 @@ const ensureStdEnabledToggle = () => {
   <div class="sch-adv-head-copy sch-card-head">
     <span class="material-symbols-rounded sch-card-icon" aria-hidden="true">notifications_active</span>
     <div class="sch-card-head-copy">
-      <div class="sch-adv-head-title">Scheduler Webhooks</div>
-      <p>Get a message when a scheduled sync runs, the watcher stops or a provider sign-in is lost.</p>
+      <div class="sch-adv-head-title">${TH("scheduler.hooks.title")}</div>
+      <p>${TH("scheduler.hooks.intro")}</p>
     </div>
   </div>
   <label class="cx-toggle">
     <input type="checkbox" id="schWebhookEnabled">
     <span class="cx-toggle-ui" aria-hidden="true"></span>
-    <span class="cx-toggle-text">Enable webhooks</span>
+    <span class="cx-toggle-text">${TH("scheduler.hooks.enable")}</span>
     <span class="cx-toggle-state" aria-hidden="true"></span>
   </label>
 </div>
 <div class="sch-plan-summary sch-adv-summary">
   <div class="sch-plan-summary-copy">
-    <div class="sch-plan-summary-kicker">Saved setup</div>
-    <div class="sch-plan-summary-text" id="schWebhookSummaryText">Loading</div>
+    <div class="sch-plan-summary-kicker">${TH("scheduler.hooks.savedSetup")}</div>
+    <div class="sch-plan-summary-text" id="schWebhookSummaryText">${TH("scheduler.loading")}</div>
     <div class="sch-plan-summary-note" id="schWebhookSummaryNote"></div>
   </div>
-  <div class="sch-hook-state" id="schWebhookSummaryState" data-state="off">Off</div>
+  <div class="sch-hook-state" id="schWebhookSummaryState" data-state="off">${TH("scheduler.off")}</div>
 </div>
 <section class="sch-adv-section">
   <div class="sch-std-step-head">
-    <div class="sch-std-step-kicker">Step 1</div>
-    <div class="sch-std-step-title">Choose where to send</div>
-    <div class="sch-std-step-copy">Pick one service. Only that service is used, and only its settings are shown below.</div>
+    <div class="sch-std-step-kicker">${TH("scheduler.std.step1")}</div>
+    <div class="sch-std-step-title">${TH("scheduler.hooks.chooseWhere")}</div>
+    <div class="sch-std-step-copy">${TH("scheduler.hooks.chooseWhereHint")}</div>
   </div>
-  <div class="sch-hook-services" role="group" aria-label="Notification service">
+  <div class="sch-hook-services" role="group" aria-label="${TH("scheduler.hooks.service")}">
     <button type="button" class="sch-hook-service" data-webhook-service="pushover" aria-pressed="false">
       <span class="material-symbols-rounded sch-card-icon" aria-hidden="true">smartphone</span>
-      <span class="sch-hook-service-copy"><span class="sch-hook-service-name">Pushover<span class="sch-hook-saved">Saved</span></span><span class="sch-hook-service-note">Push notifications on your phone.</span></span>
+      <span class="sch-hook-service-copy"><span class="sch-hook-service-name">Pushover<span class="sch-hook-saved">${TH("scheduler.saved")}</span></span><span class="sch-hook-service-note">${TH("scheduler.hooks.pushoverDesc")}</span></span>
       <span class="material-symbols-rounded sch-hook-service-check" aria-hidden="true">check_circle</span>
     </button>
     <button type="button" class="sch-hook-service" data-webhook-service="ntfy" aria-pressed="false">
       <span class="material-symbols-rounded sch-card-icon" aria-hidden="true">campaign</span>
-      <span class="sch-hook-service-copy"><span class="sch-hook-service-name">ntfy<span class="sch-hook-saved">Saved</span></span><span class="sch-hook-service-note">Push notifications through an ntfy topic.</span></span>
+      <span class="sch-hook-service-copy"><span class="sch-hook-service-name">ntfy<span class="sch-hook-saved">${TH("scheduler.saved")}</span></span><span class="sch-hook-service-note">${TH("scheduler.hooks.ntfyDesc")}</span></span>
       <span class="material-symbols-rounded sch-hook-service-check" aria-hidden="true">check_circle</span>
     </button>
     <button type="button" class="sch-hook-service" data-webhook-service="notifiarr" aria-pressed="false">
       <span class="material-symbols-rounded sch-card-icon" aria-hidden="true">forum</span>
-      <span class="sch-hook-service-copy"><span class="sch-hook-service-name">Notifiarr<span class="sch-hook-saved">Saved</span></span><span class="sch-hook-service-note">Discord messages through Notifiarr Passthrough.</span></span>
+      <span class="sch-hook-service-copy"><span class="sch-hook-service-name">Notifiarr<span class="sch-hook-saved">${TH("scheduler.saved")}</span></span><span class="sch-hook-service-note">${TH("scheduler.hooks.notifiarrDesc")}</span></span>
       <span class="material-symbols-rounded sch-hook-service-check" aria-hidden="true">check_circle</span>
     </button>
     <button type="button" class="sch-hook-service" data-webhook-service="crosswatch" aria-pressed="false">
       <span class="material-symbols-rounded sch-card-icon" aria-hidden="true">webhook</span>
-      <span class="sch-hook-service-copy"><span class="sch-hook-service-name">CrossWatch JSON<span class="sch-hook-saved">Saved</span></span><span class="sch-hook-service-note">Your own endpoint or a Healthchecks ping URL.</span></span>
+      <span class="sch-hook-service-copy"><span class="sch-hook-service-name">CrossWatch JSON<span class="sch-hook-saved">${TH("scheduler.saved")}</span></span><span class="sch-hook-service-note">${TH("scheduler.hooks.cwDesc")}</span></span>
       <span class="material-symbols-rounded sch-hook-service-check" aria-hidden="true">check_circle</span>
     </button>
   </div>
@@ -2238,72 +2243,72 @@ const ensureStdEnabledToggle = () => {
 </section>
 <section class="sch-adv-section">
   <div class="sch-std-step-head">
-    <div class="sch-std-step-kicker">Step 2</div>
-    <div class="sch-std-step-title" id="schWebhookConnectTitle">Connect the service</div>
+    <div class="sch-std-step-kicker">${TH("scheduler.std.step2")}</div>
+    <div class="sch-std-step-title" id="schWebhookConnectTitle">${TH("scheduler.hooks.connectService")}</div>
     <div class="sch-std-step-copy" id="schWebhookConnectCopy"></div>
   </div>
   <div class="stack two" data-webhook-format-for="pushover">
-    <label class="field-mini"><div class="subnote"><span class="th-help">Application token<button type="button" class="sch-help" aria-label="Application token help" data-help-key="webhook_pushover_token"></button></span></div><input id="schWebhookPushoverToken" name="schWebhookPushoverToken" type="text" maxlength="30" pattern="[A-Za-z0-9]{30}" autocomplete="off" spellcheck="false" placeholder="30 character application token"><span class="sch-hook-hint">Create an application at pushover.net/apps/build and paste its API token.</span></label>
-    <label class="field-mini"><div class="subnote"><span class="th-help">User key<button type="button" class="sch-help" aria-label="User key help" data-help-key="webhook_pushover_user"></button></span></div><input id="schWebhookPushoverUser" name="schWebhookPushoverUser" type="text" maxlength="30" pattern="[A-Za-z0-9]{30}" autocomplete="off" spellcheck="false" placeholder="30 character user or group key"><span class="sch-hook-hint">Shown at the top of your Pushover dashboard. A group key works too.</span></label>
+    <label class="field-mini"><div class="subnote"><span class="th-help">${TH("scheduler.hooks.appToken")}<button type="button" class="sch-help" aria-label="${TH("scheduler.hooks.appTokenHelp")}" data-help-key="webhook_pushover_token"></button></span></div><input id="schWebhookPushoverToken" name="schWebhookPushoverToken" type="text" maxlength="30" pattern="[A-Za-z0-9]{30}" autocomplete="off" spellcheck="false" placeholder="30 character application token"><span class="sch-hook-hint">${TH("scheduler.hooks.appTokenHint")}</span></label>
+    <label class="field-mini"><div class="subnote"><span class="th-help">${TH("scheduler.hooks.userKey")}<button type="button" class="sch-help" aria-label="${TH("scheduler.hooks.userKeyHelp")}" data-help-key="webhook_pushover_user"></button></span></div><input id="schWebhookPushoverUser" name="schWebhookPushoverUser" type="text" maxlength="30" pattern="[A-Za-z0-9]{30}" autocomplete="off" spellcheck="false" placeholder="30 character user or group key"><span class="sch-hook-hint">${TH("scheduler.hooks.userKeyHint")}</span></label>
   </div>
   <div class="stack" data-webhook-format-for="crosswatch notifiarr ntfy">
-    <label class="field-mini"><div class="subnote"><span class="th-help"><span id="schWebhookUrlLabel">All events URL</span><button id="schWebhookUrlHelp" type="button" class="sch-help" aria-label="All events URL help" data-help-key="webhook_url"></button></span></div><input id="schWebhookUrl" name="schWebhookUrl" type="url" inputmode="url" pattern="https?://.+" autocomplete="off" placeholder="https://hooks.example.com/crosswatch"><span class="sch-hook-hint" id="schWebhookUrlHint"></span></label>
+    <label class="field-mini"><div class="subnote"><span class="th-help"><span id="schWebhookUrlLabel">${TH("scheduler.hooks.allUrl")}</span><button id="schWebhookUrlHelp" type="button" class="sch-help" aria-label="${TH("scheduler.hooks.allUrlHelp")}" data-help-key="webhook_url"></button></span></div><input id="schWebhookUrl" name="schWebhookUrl" type="url" inputmode="url" pattern="https?://.+" autocomplete="off" placeholder="https://hooks.example.com/crosswatch"><span class="sch-hook-hint" id="schWebhookUrlHint"></span></label>
   </div>
   <div class="stack" data-webhook-format-for="notifiarr">
-    <label class="field-mini"><div class="subnote"><span class="th-help">Notifiarr channel ID<button type="button" class="sch-help" aria-label="Notifiarr channel ID help" data-help-key="webhook_notifiarr_channel"></button></span></div><input id="schWebhookNotifiarrChannel" name="schWebhookNotifiarrChannel" type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off" placeholder="123456789012345678"><span class="sch-hook-hint">Optional. Only needed when your Notifiarr setup asks for a Discord channel.</span></label>
+    <label class="field-mini"><div class="subnote"><span class="th-help">${TH("scheduler.hooks.channelId")}<button type="button" class="sch-help" aria-label="${TH("scheduler.hooks.channelHelp")}" data-help-key="webhook_notifiarr_channel"></button></span></div><input id="schWebhookNotifiarrChannel" name="schWebhookNotifiarrChannel" type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off" placeholder="123456789012345678"><span class="sch-hook-hint">${TH("scheduler.hooks.channelHint")}</span></label>
   </div>
   <div data-webhook-format-for="crosswatch">
     <details class="sch-hook-more" id="schWebhookMore">
-      <summary>Use a Healthchecks ping URL or a separate URL per event</summary>
+      <summary>${TH("scheduler.hooks.perEvent")}</summary>
       <div class="sch-hook-more-body">
-        <div class="stack"><label class="field-mini"><div class="subnote"><span class="th-help">Compatible base URL<button type="button" class="sch-help" aria-label="Compatible base URL help" data-help-key="webhook_base"></button></span></div><input id="schWebhookBase" name="schWebhookBase" type="url" inputmode="url" pattern="https?://.+" autocomplete="off" placeholder="https://hc-ping.com/your-check-id"><span class="sch-hook-hint">For Healthchecks style monitors. CrossWatch adds /start and /fail to this URL.</span></label></div>
+        <div class="stack"><label class="field-mini"><div class="subnote"><span class="th-help">${TH("scheduler.hooks.baseUrl")}<button type="button" class="sch-help" aria-label="${TH("scheduler.hooks.baseHelp")}" data-help-key="webhook_base"></button></span></div><input id="schWebhookBase" name="schWebhookBase" type="url" inputmode="url" pattern="https?://.+" autocomplete="off" placeholder="https://hc-ping.com/your-check-id"><span class="sch-hook-hint">${TH("scheduler.hooks.baseHint")}</span></label></div>
         <div class="stack three">
-          <label class="field-mini"><div class="subnote"><span class="th-help">Start callback URL<button type="button" class="sch-help" aria-label="Start callback URL help" data-help-key="webhook_start"></button></span></div><input id="schWebhookStart" name="schWebhookStart" type="url" inputmode="url" pattern="https?://.+" autocomplete="off" placeholder="https://hooks.example.com/crosswatch/start"></label>
-          <label class="field-mini"><div class="subnote"><span class="th-help">Success callback URL<button type="button" class="sch-help" aria-label="Success callback URL help" data-help-key="webhook_success"></button></span></div><input id="schWebhookSuccess" name="schWebhookSuccess" type="url" inputmode="url" pattern="https?://.+" autocomplete="off" placeholder="https://hooks.example.com/crosswatch/success"></label>
-          <label class="field-mini"><div class="subnote"><span class="th-help">Failure callback URL<button type="button" class="sch-help" aria-label="Failure callback URL help" data-help-key="webhook_failure"></button></span></div><input id="schWebhookFailure" name="schWebhookFailure" type="url" inputmode="url" pattern="https?://.+" autocomplete="off" placeholder="https://hooks.example.com/crosswatch/failure"></label>
+          <label class="field-mini"><div class="subnote"><span class="th-help">${TH("scheduler.hooks.startUrl")}<button type="button" class="sch-help" aria-label="${TH("scheduler.hooks.startHelp")}" data-help-key="webhook_start"></button></span></div><input id="schWebhookStart" name="schWebhookStart" type="url" inputmode="url" pattern="https?://.+" autocomplete="off" placeholder="https://hooks.example.com/crosswatch/start"></label>
+          <label class="field-mini"><div class="subnote"><span class="th-help">${TH("scheduler.hooks.successUrl")}<button type="button" class="sch-help" aria-label="${TH("scheduler.hooks.successHelp")}" data-help-key="webhook_success"></button></span></div><input id="schWebhookSuccess" name="schWebhookSuccess" type="url" inputmode="url" pattern="https?://.+" autocomplete="off" placeholder="https://hooks.example.com/crosswatch/success"></label>
+          <label class="field-mini"><div class="subnote"><span class="th-help">${TH("scheduler.hooks.failureUrl")}<button type="button" class="sch-help" aria-label="${TH("scheduler.hooks.failureHelp")}" data-help-key="webhook_failure"></button></span></div><input id="schWebhookFailure" name="schWebhookFailure" type="url" inputmode="url" pattern="https?://.+" autocomplete="off" placeholder="https://hooks.example.com/crosswatch/failure"></label>
         </div>
       </div>
     </details>
   </div>
   <div class="stack two">
-    <label class="field-mini"><div class="subnote"><span class="th-help">Timeout seconds<button type="button" class="sch-help" aria-label="Timeout seconds help" data-help-key="webhook_timeout"></button></span></div><input id="schWebhookTimeout" name="schWebhookTimeout" type="number" min="1" max="60"><span class="sch-hook-hint">How long CrossWatch waits for the service to answer.</span></label>
+    <label class="field-mini"><div class="subnote"><span class="th-help">${TH("scheduler.hooks.timeout")}<button type="button" class="sch-help" aria-label="${TH("scheduler.hooks.timeoutHelp")}" data-help-key="webhook_timeout"></button></span></div><input id="schWebhookTimeout" name="schWebhookTimeout" type="number" min="1" max="60"><span class="sch-hook-hint">${TH("scheduler.hooks.timeoutHint")}</span></label>
   </div>
 </section>
 <section class="sch-adv-section">
   <div class="sch-std-step-head">
-    <div class="sch-std-step-kicker">Step 3</div>
-    <div class="sch-std-step-title">Choose what to send</div>
-    <div class="sch-std-step-copy">Scheduled sync results are always sent. The alerts below are optional and are sent once per change.</div>
+    <div class="sch-std-step-kicker">${TH("scheduler.hooks.step3")}</div>
+    <div class="sch-std-step-title">${TH("scheduler.hooks.chooseWhat")}</div>
+    <div class="sch-std-step-copy">${TH("scheduler.hooks.chooseWhatHint")}</div>
   </div>
   <div class="sch-hook-events">
   <div class="sch-hook-event">
     <span class="material-symbols-rounded sch-card-icon" aria-hidden="true">sync</span>
-    <div class="sch-hook-event-copy"><div class="sch-hook-event-title">Scheduled sync runs</div><div class="sch-hook-event-note">A message when a scheduled sync starts, succeeds or fails.</div></div>
-    <span class="sch-hook-always">Always</span>
+    <div class="sch-hook-event-copy"><div class="sch-hook-event-title">${TH("scheduler.hooks.scheduledRuns")}</div><div class="sch-hook-event-note">${TH("scheduler.hooks.scheduledRunsHint")}</div></div>
+    <span class="sch-hook-always">${TH("scheduler.hooks.always")}</span>
   </div>
   <div class="sch-hook-event">
     <span class="material-symbols-rounded sch-card-icon" aria-hidden="true">rule</span>
-    <div class="sch-hook-event-copy"><div class="sch-hook-event-title"><span class="th-help">Unresolved items<button type="button" class="sch-help" aria-label="Unresolved items help" data-help-key="webhook_alert_unresolved"></button></span></div><div class="sch-hook-event-note">Also report a run as failed when it ends with unresolved items or provider errors.</div></div>
+    <div class="sch-hook-event-copy"><div class="sch-hook-event-title"><span class="th-help">${TH("scheduler.hooks.unresolved")}<button type="button" class="sch-help" aria-label="${TH("scheduler.hooks.unresolvedHelp")}" data-help-key="webhook_alert_unresolved"></button></span></div><div class="sch-hook-event-note">${TH("scheduler.hooks.unresolvedHint")}</div></div>
     <label class="cx-toggle">
-      <input type="checkbox" id="schWebhookAlertUnresolved" aria-label="Unresolved items">
+      <input type="checkbox" id="schWebhookAlertUnresolved" aria-label="${TH("scheduler.hooks.unresolved")}">
       <span class="cx-toggle-ui" aria-hidden="true"></span>
       <span class="cx-toggle-state" aria-hidden="true"></span>
     </label>
   </div>
   <div class="sch-hook-event">
     <span class="material-symbols-rounded sch-card-icon" aria-hidden="true">visibility_off</span>
-    <div class="sch-hook-event-copy"><div class="sch-hook-event-title"><span class="th-help">Watcher stops<button type="button" class="sch-help" aria-label="Watcher stops help" data-help-key="webhook_alert_watcher"></button></span></div><div class="sch-hook-event-note">When an enabled watcher route is not running, and again when it is back.</div></div>
+    <div class="sch-hook-event-copy"><div class="sch-hook-event-title"><span class="th-help">${TH("scheduler.hooks.watcherStops")}<button type="button" class="sch-help" aria-label="${TH("scheduler.hooks.watcherStopsHelp")}" data-help-key="webhook_alert_watcher"></button></span></div><div class="sch-hook-event-note">${TH("scheduler.hooks.watcherStopsHint")}</div></div>
     <label class="cx-toggle">
-      <input type="checkbox" id="schWebhookAlertWatcher" aria-label="Watcher stops">
+      <input type="checkbox" id="schWebhookAlertWatcher" aria-label="${TH("scheduler.hooks.watcherStops")}">
       <span class="cx-toggle-ui" aria-hidden="true"></span>
       <span class="cx-toggle-state" aria-hidden="true"></span>
     </label>
   </div>
   <div class="sch-hook-event">
     <span class="material-symbols-rounded sch-card-icon" aria-hidden="true">key_off</span>
-    <div class="sch-hook-event-copy"><div class="sch-hook-event-title"><span class="th-help">Provider sign-in lost<button type="button" class="sch-help" aria-label="Provider sign-in lost help" data-help-key="webhook_alert_provider_auth"></button></span></div><div class="sch-hook-event-note">When a provider you use needs a new sign-in, and again when it works.</div></div>
+    <div class="sch-hook-event-copy"><div class="sch-hook-event-title"><span class="th-help">${TH("scheduler.hooks.signInLost")}<button type="button" class="sch-help" aria-label="${TH("scheduler.hooks.signInLostHelp")}" data-help-key="webhook_alert_provider_auth"></button></span></div><div class="sch-hook-event-note">${TH("scheduler.hooks.signInLostHint")}</div></div>
     <label class="cx-toggle">
-      <input type="checkbox" id="schWebhookAlertProviderAuth" aria-label="Provider sign-in lost">
+      <input type="checkbox" id="schWebhookAlertProviderAuth" aria-label="${TH("scheduler.hooks.signInLost")}">
       <span class="cx-toggle-ui" aria-hidden="true"></span>
       <span class="cx-toggle-state" aria-hidden="true"></span>
     </label>
@@ -2312,12 +2317,12 @@ const ensureStdEnabledToggle = () => {
 </section>
 <section class="sch-adv-section">
   <div class="sch-std-step-head">
-    <div class="sch-std-step-kicker">Step 4</div>
-    <div class="sch-std-step-title">Test it</div>
-    <div class="sch-std-step-copy">Sends one message with the saved setup. Save your changes first.</div>
+    <div class="sch-std-step-kicker">${TH("scheduler.hooks.step4")}</div>
+    <div class="sch-std-step-title">${TH("scheduler.hooks.testIt")}</div>
+    <div class="sch-std-step-copy">${TH("scheduler.hooks.testHint")}</div>
   </div>
   <div class="sch-adv-actions sch-hook-test">
-    <button type="button" class="btn" id="btnWebhookTest">Send test notification</button>
+    <button type="button" class="btn" id="btnWebhookTest">${TH("scheduler.hooks.sendTest")}</button>
     <div class="status inline" id="schWebhookTestStatus"></div>
   </div>
 </section>
@@ -2409,20 +2414,20 @@ const ensureStdEnabledToggle = () => {
     const eventRules = _eventRules.filter(eventRuleHasContent);
     const activeEventRules = eventRules.filter(r => r.active !== false);
     const totalConfigured = timedJobs.length + workflows.length + captureJobs.length + eventRules.length;
-    const timedIssue = invalidJobs[0] || (blockedJobs ? "Some timed steps reference disabled pairs." : "");
+    const timedIssue = invalidJobs[0] || (blockedJobs ? T("scheduler.v.timedDisabled") : "");
     const workflowIssueText = invalidWorkflows[0] || "";
     const captureIssue = invalidCaptureJobs[0] || "";
     const eventIssue = (
       (eventRules.length ? _eventRouteError : "")
       || invalidRules[0]
-      || (blockedRuleRoutes ? "Some event triggers need a valid configured watcher or webhook route." : "")
-      || (blockedRules ? "Some event triggers reference disabled pairs." : "")
+      || (blockedRuleRoutes ? T("scheduler.v.eventsInvalid") : "")
+      || (blockedRules ? T("scheduler.v.eventsDisabled") : "")
       || ""
     );
-    const summaryIssue = issueLabel("Timed steps", timedIssue)
-      || issueLabel("Recurring workflows", workflowIssueText)
-      || issueLabel("Capture schedules", captureIssue)
-      || issueLabel("Event triggers", eventIssue);
+    const summaryIssue = issueLabel(T("scheduler.adv.timedSteps"), timedIssue)
+      || issueLabel(T("scheduler.adv.workflows"), workflowIssueText)
+      || issueLabel(T("scheduler.adv.captures"), captureIssue)
+      || issueLabel(T("scheduler.adv.eventTriggers"), eventIssue);
 
     statusText(
       jobsSt,
@@ -2436,37 +2441,37 @@ const ensureStdEnabledToggle = () => {
     );
 
     if (summaryText) {
-      if (!totalConfigured) summaryText.textContent = "No advanced rules configured yet";
+      if (!totalConfigured) summaryText.textContent = T("scheduler.adv.none");
       else {
         const parts = [];
-        if (timedJobs.length) parts.push(`${activeTimedJobs.length}/${timedJobs.length} timed step${timedJobs.length === 1 ? "" : "s"}`);
-        if (workflows.length) parts.push(`${activeWorkflows.length}/${workflows.length} recurring workflow${workflows.length === 1 ? "" : "s"}`);
-        if (captureJobs.length) parts.push(`${activeCaptureJobs.length}/${captureJobs.length} capture schedule${captureJobs.length === 1 ? "" : "s"}`);
-        if (eventRules.length) parts.push(`${activeEventRules.length}/${eventRules.length} event trigger${eventRules.length === 1 ? "" : "s"}`);
+        if (timedJobs.length) parts.push(T("scheduler.adv.countTimed", {active: String(activeTimedJobs.length), count: timedJobs.length}));
+        if (workflows.length) parts.push(T("scheduler.adv.countWorkflows", {active: String(activeWorkflows.length), count: workflows.length}));
+        if (captureJobs.length) parts.push(T("scheduler.adv.countCaptures", {active: String(activeCaptureJobs.length), count: captureJobs.length}));
+        if (eventRules.length) parts.push(T("scheduler.adv.countEvents", {active: String(activeEventRules.length), count: eventRules.length}));
         summaryText.textContent = parts.join(" • ");
       }
     }
     const planOff = !_advEnabled && totalConfigured > 0;
     $("#schAdv")?.classList.toggle("is-plan-off", !_advEnabled);
     if (summaryNote) {
-      summaryNote.textContent = summaryIssue || (planOff ? "Nothing here runs until Use advanced plan is turned on." : null) || (
+      summaryNote.textContent = summaryIssue || (planOff ? T("scheduler.adv.planOff") : null) || (
         totalConfigured
-          ? "Combine timed steps, recurring workflows, automated captures, and event triggers in one advanced plan."
-          : "Add timed steps, capture schedules, or event triggers to build an advanced automation flow."
+          ? T("scheduler.adv.combine")
+          : T("scheduler.adv.addHint")
       );
     }
     if (summaryState) {
       summaryState.textContent = summaryIssue
         ? (
-          summaryIssue.startsWith("Timed steps:")
-            ? "Timed steps need attention"
-            : summaryIssue.startsWith("Recurring workflows:")
-              ? "Recurring workflows need attention"
-              : summaryIssue.startsWith("Capture schedules:")
-                ? "Capture schedules need attention"
-                : "Event triggers need attention"
+          summaryIssue.startsWith(`${T("scheduler.adv.timedSteps")}:`)
+            ? T("scheduler.adv.timedAttention")
+            : summaryIssue.startsWith(`${T("scheduler.adv.workflows")}:`)
+              ? T("scheduler.adv.workflowsAttention")
+              : summaryIssue.startsWith(`${T("scheduler.adv.captures")}:`)
+                ? T("scheduler.adv.capturesAttention")
+                : T("scheduler.adv.eventsAttention")
         )
-        : (_advEnabled ? "Advanced plan active" : planOff ? "Not running, advanced plan is off" : "Advanced plan ready");
+        : (_advEnabled ? T("scheduler.adv.active") : planOff ? T("scheduler.adv.notRunning") : T("scheduler.adv.ready"));
       summaryState.classList.toggle("attention", !!summaryIssue || planOff);
     }
   };
@@ -2513,7 +2518,7 @@ const ensureStdEnabledToggle = () => {
     const addBtn = $("#btnAddEventRule");
     if (addBtn) {
       addBtn.disabled = !eventSourceReady("watcher") && !eventSourceReady("webhook");
-      addBtn.title = addBtn.disabled ? (_eventRouteError || "No enabled watcher or webhook routes configured.") : "";
+      addBtn.title = addBtn.disabled ? (_eventRouteError || T("scheduler.v.noRoutesShort")) : "";
     }
     updateAdvancedStatus();
     try { window.cwSchedSettingsHubUpdate?.(); } catch {}

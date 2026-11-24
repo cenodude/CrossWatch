@@ -1,0 +1,7 @@
+{
+  "default": "en",
+  "languages": [
+    { "code": "en", "name": "English", "plural": "one_other" },
+    { "code": "nl", "name": "Nederlands", "plural": "one_other" }
+  ]
+}

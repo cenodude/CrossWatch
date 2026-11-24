@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 
 from api import trackerAPI
 from cw_platform.tracker_store import TrackerStore
+from tests.i18n_source import english_source
 
 REPO = Path(__file__).resolve().parents[1]
 
@@ -190,7 +191,7 @@ def test_tracker_tab_sits_between_main_and_hub():
     html = get_index_html()
     assert html.index('id="tab-main"') < html.index('id="tab-tracker"') < html.index('id="tab-profile"')
     assert 'id="page-tracker"' in html
-    core = (REPO / "assets" / "helpers" / "core.js").read_text("utf-8")
+    core = english_source((REPO / "assets" / "helpers" / "core.js").read_text("utf-8"))
     assert '"/assets/js/tracker.js"' in core
     assert 'byId("page-tracker")' in core
 
@@ -215,7 +216,7 @@ def test_tracker_api_is_open_to_managed_users_with_write_access():
 
 
 def test_tracker_page_uses_the_editor_layout():
-    js = (REPO / "assets" / "js" / "tracker.js").read_text("utf-8")
+    js = english_source((REPO / "assets" / "js" / "tracker.js").read_text("utf-8"))
     for markup in ('class="cw-topline cw-page-hero', 'class="cw-controls cw-page-toolbar"', 'class="cw-table-wrap cw-page-table"',
                    '<aside class="cw-side">', 'class="cw-merged-title"', 'class="cw-editor-filters"'):
         assert markup in js
@@ -237,28 +238,28 @@ def test_profile_and_tracker_share_the_month_timeline():
     import ui_frontend
 
     root = Path(__file__).resolve().parents[1]
-    profile = (root / "assets/js/profile-page.js").read_text(encoding="utf-8")
-    tracker = (root / "assets/js/tracker.js").read_text(encoding="utf-8")
+    profile = english_source((root / "assets/js/profile-page.js").read_text(encoding="utf-8"))
+    tracker = english_source((root / "assets/js/tracker.js").read_text(encoding="utf-8"))
     components = (root / "assets/css/components.css").read_text(encoding="utf-8")
     assert "window.CW.MonthBar.create(" in profile and "function syncZoomUi" not in profile
     assert "window.CW.MonthBar.create(" in tracker
     assert ".cw-hist-bars{" in components and ".cw-hist-tip{" in components
     assert ".cw-hist-bars{" not in (root / "assets/css/profile-page.css").read_text(encoding="utf-8")
     assert "month-bar.js" in ui_frontend.get_index_html()
-    page = (root / "ui_frontend.py").read_text(encoding="utf-8")
+    page = english_source((root / "ui_frontend.py").read_text(encoding="utf-8"))
     assert page.index("/assets/helpers/month-bar.js") < page.index("/assets/js/profile-page.js")
 
 
 def test_tracker_views_are_tabs_and_paging_sits_under_the_table():
     root = Path(__file__).resolve().parents[1]
-    tracker = (root / "assets/js/tracker.js").read_text(encoding="utf-8")
+    tracker = english_source((root / "assets/js/tracker.js").read_text(encoding="utf-8"))
     pages = (root / "assets/css/pages.css").read_text(encoding="utf-8")
     controls = tracker[tracker.index("  function renderControls()"):tracker.index("  function pager()")]
     navigation = tracker[tracker.index("  function renderNavigation()"):tracker.index("  function overviewRows(")]
     pager = tracker[tracker.index("  function pager()"):tracker.index("  function emptyState(")]
     assert 'renderNavigation()' in controls and '<nav class="trk-tabs" role="tablist"' in navigation and 'role="tab" class="trk-tab' in tracker
     assert 'data-trk-input="size"' not in controls and 'data-trk-input="size"' in pager
-    assert "['changes','manage_history','Changes']" in controls
+    assert "['changes','manage_history',\"Changes\"]" in controls
     assert 'class="cw-btn trk-icon-btn" data-trk-action="${action}"' in controls
     assert '{ id: "show", label: "TV", icon: "tv" }' in tracker
     assert "#page-tracker .trk-toolbar{display:grid;" in pages
@@ -266,8 +267,8 @@ def test_tracker_views_are_tabs_and_paging_sits_under_the_table():
 
 def test_every_record_and_whole_titles_can_be_edited():
     root = Path(__file__).resolve().parents[1]
-    tracker = (root / "assets/js/tracker.js").read_text(encoding="utf-8")
-    mapping = (root / "assets/js/interactive-sync-mapping.js").read_text(encoding="utf-8")
+    tracker = english_source((root / "assets/js/tracker.js").read_text(encoding="utf-8"))
+    mapping = english_source((root / "assets/js/interactive-sync-mapping.js").read_text(encoding="utf-8"))
     assert 'data-trk-row-edit="${index}"' in tracker and 'openSheet("edit", { item, feature: listFeature() })' in tracker
     assert "data-trk-rec-edit" in tracker and "function findRecord(key, feature = \"history\")" in tracker
     assert '"/api/tracker/edit-title"' in tracker and '"title-edit": renderTitleEdit' in tracker
@@ -276,7 +277,7 @@ def test_every_record_and_whole_titles_can_be_edited():
 
 def test_title_panel_sets_a_status_in_one_click():
     root = Path(__file__).resolve().parents[1]
-    tracker = (root / "assets/js/tracker.js").read_text(encoding="utf-8")
+    tracker = english_source((root / "assets/js/tracker.js").read_text(encoding="utf-8"))
     theme = (root / "assets/css/page-theme.css").read_text(encoding="utf-8")
     assert 'data-trk-detail="status-menu" aria-haspopup="menu"' in tracker and 'role="menuitemradio"' in tracker
     assert "data-trk-set-status" in tracker and "async function quickStatus(status)" in tracker
@@ -286,8 +287,8 @@ def test_title_panel_sets_a_status_in_one_click():
 
 def test_tracker_has_my_titles_and_personal_notes():
     root = Path(__file__).resolve().parents[1]
-    tracker = (root / "assets/js/tracker.js").read_text(encoding="utf-8")
-    modal = (root / "assets/js/profile-media-modal.js").read_text(encoding="utf-8")
+    tracker = english_source((root / "assets/js/tracker.js").read_text(encoding="utf-8"))
+    modal = english_source((root / "assets/js/profile-media-modal.js").read_text(encoding="utf-8"))
     pages = (root / "assets/css/pages.css").read_text(encoding="utf-8")
     theme = (root / "assets/css/page-theme.css").read_text(encoding="utf-8")
     assert '{ id: "titles", label: "My titles", icon: "bookmarks" }' in tracker
@@ -301,9 +302,9 @@ def test_tracker_has_my_titles_and_personal_notes():
 
 def test_tracker_opens_the_shared_media_card():
     root = Path(__file__).resolve().parents[1]
-    tracker = (root / "assets/js/tracker.js").read_text(encoding="utf-8")
-    modal = (root / "assets/js/profile-media-modal.js").read_text(encoding="utf-8")
-    mapping = (root / "assets/js/interactive-sync-mapping.js").read_text(encoding="utf-8")
+    tracker = english_source((root / "assets/js/tracker.js").read_text(encoding="utf-8"))
+    modal = english_source((root / "assets/js/profile-media-modal.js").read_text(encoding="utf-8"))
+    mapping = english_source((root / "assets/js/interactive-sync-mapping.js").read_text(encoding="utf-8"))
     mapping_css = (root / "assets/css/interactive-sync.css").read_text(encoding="utf-8")
     assert "cardModal().open(item, { tracker: { label: instanceLabel(), data, onAction: cardAction } })" in tracker
     assert "cardModal()?.updateTracker?.(data)" in tracker

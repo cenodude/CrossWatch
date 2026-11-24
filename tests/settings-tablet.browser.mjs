@@ -2,16 +2,18 @@
 /* CrossWatch - Settings card layouts on tablets and narrow screens */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 
+import './i18n-browser-setup.mjs';
 import test from "node:test";
 import assert from "node:assert/strict";
 import {readFile, mkdir} from "node:fs/promises";
 import {chromium, webkit} from "playwright";
+import {englishFrontendSource} from './i18n-test-helper.mjs';
 
 async function open(t, theme) {
   const browser = await (process.env.CW_SETTINGS_BROWSER === "webkit" ? webkit : chromium).launch({headless: true});
   t.after(() => browser.close());
   const page = await browser.newPage({viewport: {width: 1194, height: 834}, hasTouch: true});
-  const source = await readFile(new URL("../ui_frontend.py", import.meta.url), "utf8");
+  const source = englishFrontendSource();
   const markup = await page.evaluate(source => {
     const doc = new DOMParser().parseFromString(source.slice(source.indexOf('<!doctype html>')), "text/html");
     const settings = doc.querySelector("#page-settings");

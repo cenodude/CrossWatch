@@ -3,6 +3,10 @@
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 
 
+const I18N = () => globalThis.window?.CW?.I18n || globalThis.window?.__cwI18n;
+const T = (key, vars) => I18N()?.t?.(key, vars) ?? key;
+const TH = (key, vars) => I18N()?.html?.(key, vars) ?? key;
+const TR = (key, vars) => I18N()?.rich?.(key, vars) ?? key;
 const _cwV = (() => {
   try { return new URL(import.meta.url).searchParams.get("v") || window.__CW_VERSION__ || Date.now(); }
   catch { return window.__CW_VERSION__ || Date.now(); }
@@ -54,16 +58,16 @@ function _art(credentials) {
       ${credentials ? '<circle cx="216" cy="129" r="15" fill="url(#sw-symbol)" stroke="#9383fb" stroke-opacity=".6"/><path d="M189 176C189 144 243 141 243 174C243 182 189 185 189 176Z" fill="url(#sw-symbol)" stroke="#9383fb" stroke-opacity=".5"/>' : '<path d="M182 145L204 167L246 120" stroke="url(#sw-symbol)" stroke-width="12" stroke-linecap="round" stroke-linejoin="round"/>'}
       <path d="M120 257H326" stroke="#5b5293" stroke-opacity=".25"/>
     </svg>
-    <p class="sw-motto">${credentials ? 'Secure<br>your access.<br>Keep your data<br>in your control.' : 'Your media.<br>Your data.<br>On your terms.'}<svg viewBox="0 0 120 20" focusable="false"><path d="M5 16Q58 0 114 5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></p>
+    <p class="sw-motto">${TR(credentials ? "modals.setup.mottoSecure" : "modals.setup.mottoMedia")}<svg viewBox="0 0 120 20" focusable="false"><path d="M5 16Q58 0 114 5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></p>
   </div>`;
 }
 
 function _hero(credentials, resetRequired = false) {
-  const heading = resetRequired ? "Set up your sign-in again" : credentials ? "Create your sign-in credentials" : "Get CrossWatch ready";
-  const copy = resetRequired ? "Authentication was reset at startup. Set a new username and password to continue." : credentials ? "You need a username and password before CrossWatch opens the rest of Settings." : "Create your sign-in first, then finish the rest in Settings.";
+  const heading = resetRequired ? T("modals.setup.headingReset") : credentials ? T("modals.setup.headingCreds") : T("modals.setup.headingReady");
+  const copy = resetRequired ? T("modals.setup.copyReset") : credentials ? T("modals.setup.copyCreds") : T("modals.setup.copyReady");
   return `<section class="sw-hero">
     ${_art(credentials)}
-    ${resetRequired ? '<div class="sw-required">Recovery required</div>' : `<ol class="sw-steps" aria-label="Setup progress"><li aria-current="step"><span class="sw-step-number">1</span><div><span>Step 1 of 2</span><strong>Create sign-in</strong></div></li><li><span class="sw-step-number">2</span><div><strong>Finish setup</strong><span>In Settings</span></div></li></ol>`}
+    ${resetRequired ? '<div class="sw-required">' + TH("modals.setup.recovery") + '</div>' : `<ol class="sw-steps" aria-label="${TH("modals.setup.progress")}"><li aria-current="step"><span class="sw-step-number">1</span><div><span>${TH("modals.setup.step", {n: 1, total: 2})}</span><strong>${TH("modals.setup.createSignIn")}</strong></div></li><li><span class="sw-step-number">2</span><div><strong>${TH("modals.setup.finish")}</strong><span>${TH("modals.setup.inSettings")}</span></div></li></ol>`}
     <div class="sw-hero-copy"><h1 id="sw-heading" tabindex="-1">${heading}</h1><p>${copy}</p></div>
   </section>`;
 }
@@ -72,7 +76,8 @@ function _chrome(ver, logo, body, foot, chrome = {}) {
   return `<div id="setup-host" class="sw-welcome" role="dialog" aria-modal="true" aria-labelledby="sw-heading">
     <div class="sw-header">
       <div class="sw-brand-icon" aria-hidden="true"><img src="${escapeHtml(logo)}" alt="" /></div>
-      <div><div class="sw-brand-title">${escapeHtml(chrome.title || "Welcome to CrossWatch")}</div><div class="sw-subtitle">${escapeHtml(chrome.subtitle || "First run setup")}</div></div>
+      <div><div class="sw-brand-title">${escapeHtml(chrome.title || T("modals.setup.welcome"))}</div><div class="sw-subtitle">${escapeHtml(chrome.subtitle || T("modals.setup.firstRun"))}</div></div>
+      <div class="sw-language"><select data-cw-language-select aria-label="${TH("common.language.label")}"></select></div>
       <div class="sw-version">v${escapeHtml(ver)}</div>
     </div>
     <div class="sw-body">${body}</div>
@@ -120,7 +125,7 @@ export default {
         state.error = "";
         state.password = "";
         state.password2 = "";
-        try { window.notify?.("Sign-in enabled."); } catch {}
+        try { window.notify?.(T("modals.setup.signInEnabled")); } catch {}
         try {
           const boot = window.__cwAuthBootstrapState || {};
           window.__cwAuthBootstrapState = { ...boot, blocked: false };
@@ -132,7 +137,7 @@ export default {
         }, 0);
         return;
       } catch (err) {
-        state.error = String(err?.message || "Failed to save sign-in settings.");
+        state.error = String(err?.message || T("modals.setup.saveFailed"));
         state.saving = false;
         render();
       }
@@ -143,31 +148,32 @@ export default {
         ${_hero(false)}
         <section class="sw-signin-callout" aria-labelledby="sw-signin-title">
           <div class="sw-lock" aria-hidden="true"><span class="material-symbols-rounded">lock</span></div>
-          <div class="sw-callout-copy"><span class="sw-required">Required</span><h2 id="sw-signin-title">Create sign-in credentials</h2><p>Protect access to CrossWatch before continuing.</p></div>
-          <button class="sw-action" type="button" data-x="next">Set up sign-in <span class="material-symbols-rounded" aria-hidden="true">arrow_forward</span></button>
+          <div class="sw-callout-copy"><span class="sw-required">${TH("modals.setup.required")}</span><h2 id="sw-signin-title">${TH("modals.setup.createCreds")}</h2><p>${TH("modals.setup.protect")}</p></div>
+          <button class="sw-action" type="button" data-x="next">${TH("modals.setup.setUp")} <span class="material-symbols-rounded" aria-hidden="true">arrow_forward</span></button>
         </section>
-        <section class="sw-after" aria-labelledby="sw-after-title"><h2 id="sw-after-title">After sign-in, you can configure</h2><p>These settings can be changed anytime in Settings.</p>
+        <section class="sw-after" aria-labelledby="sw-after-title"><h2 id="sw-after-title">${TH("modals.setup.after")}</h2><p>${TH("modals.setup.afterSub")}</p>
           <ul class="sw-features">
-            <li><span class="sw-feature-icon material-symbols-rounded" aria-hidden="true">database</span><div><h3>Metadata provider</h3><p>Configure TMDb.</p></div></li>
-            <li><span class="sw-feature-icon material-symbols-rounded" aria-hidden="true">key</span><div><h3>Connections</h3><p>Link one or more providers in Settings.</p></div></li>
-            <li><span class="sw-feature-icon material-symbols-rounded" aria-hidden="true">sync_alt</span><div><h3>Synchronization and scrobbler</h3><p>Optionally configure sync pairs and/or Scrobbler.</p></div></li>
+            <li><span class="sw-feature-icon material-symbols-rounded" aria-hidden="true">database</span><div><h3>${TH("modals.setup.metadata")}</h3><p>${TH("modals.setup.metadataSub")}</p></div></li>
+            <li><span class="sw-feature-icon material-symbols-rounded" aria-hidden="true">key</span><div><h3>${TH("modals.setup.connections")}</h3><p>${TH("modals.setup.connectionsSub")}</p></div></li>
+            <li><span class="sw-feature-icon material-symbols-rounded" aria-hidden="true">sync_alt</span><div><h3>${TH("modals.setup.sync")}</h3><p>${TH("modals.setup.syncSub")}</p></div></li>
           </ul>
         </section>
         <a class="sw-docs" href="https://wiki.crosswatch.app/" target="_blank" rel="noopener noreferrer">
-          <span class="sw-feature-icon material-symbols-rounded" aria-hidden="true">menu_book</span><div><span class="sw-eyebrow">Documentation</span><h2>Open the CrossWatch Wiki</h2><p>Setup guides, first-run help, and troubleshooting in one place.</p></div><span class="material-symbols-rounded sw-external" aria-hidden="true">open_in_new</span>
+          <span class="sw-feature-icon material-symbols-rounded" aria-hidden="true">menu_book</span><div><span class="sw-eyebrow">${TH("modals.setup.docs")}</span><h2>${TH("modals.setup.wiki")}</h2><p>${TH("modals.setup.wikiSub")}</p></div><span class="material-symbols-rounded sw-external" aria-hidden="true">open_in_new</span>
         </a>
         <details class="sw-disclaimer">
-          <summary><span class="material-symbols-rounded" aria-hidden="true">gavel</span>Disclaimer</summary>
+          <summary><span class="material-symbols-rounded" aria-hidden="true">gavel</span>${TH("modals.setup.disclaimer")}</summary>
           <div class="sw-disclaimer-body">
-            <p>This is an independent, community-maintained project and is not affiliated with, endorsed by, or sponsored by Plex, Emby, Jellyfin, Silo, Tofa, Kodi, Nuvio, Stremio, Trakt, TMDb, SIMKL, Tautulli, Tracearr, AniList, MDBList, Movie Paradise, PublicMetaDB, Floppy, PunchPlay, BingeBase, FlickList, Scrob, or their owners. Use at your own risk.</p>
-            <p>All product names, logos, and brands are property of their respective owners and used for identification only.</p>
-            <p>Interacts with third-party services; you are responsible for complying with their Terms of Use and API rules.</p>
-            <p>Provided "as is," without warranties or guarantees.</p>
+            <p>${TH("modals.setup.disclaimer1")}</p>
+            <p>${TH("modals.setup.disclaimer2")}</p>
+            <p>${TH("modals.setup.disclaimer3")}</p>
+            <p>${TH("modals.setup.asIs")}</p>
           </div>
         </details>
       `;
-      const foot = `<p class="sw-footer-note"><span class="material-symbols-rounded" aria-hidden="true">info</span>Sign-in is required before setup continues.</p>`;
+      const foot = `<p class="sw-footer-note"><span class="material-symbols-rounded" aria-hidden="true">info</span>${TH("modals.setup.requiredBefore")}</p>`;
       hostEl.innerHTML = _chrome(ver, crossWatchLogo, body, foot);
+      I18N()?.wireSelectors?.(hostEl);
       hostEl.querySelector('[data-x="next"]')?.addEventListener("click", () => {
         state.step = "credentials";
         render();
@@ -176,20 +182,20 @@ export default {
     }
 
     function renderCredentials() {
-      const helper = resetRequired ? "Sign-in was reset and must be configured again before continuing." : "Sign-in is required before first use.";
+      const helper = resetRequired ? T("modals.setup.helperReset") : T("modals.setup.helperFirst");
       const body = `
         ${_hero(true, resetRequired)}
         <section class="sw-credentials" aria-labelledby="sw-credentials-title">
-          <div class="sw-credentials-heading"><span class="sw-lock" aria-hidden="true"><span class="material-symbols-rounded">lock</span></span><div><h2 id="sw-credentials-title">Sign-in credentials</h2><p>${resetRequired ? "Restore access to your local CrossWatch account." : "This creates your local CrossWatch account."}</p></div></div>
+          <div class="sw-credentials-heading"><span class="sw-lock" aria-hidden="true"><span class="material-symbols-rounded">lock</span></span><div><h2 id="sw-credentials-title">${TH("modals.setup.signInCreds")}</h2><p>${resetRequired ? T("modals.setup.restore") : T("modals.setup.creates")}</p></div></div>
           ${renderAppAuthFields({idPrefix: "sw-auth", state, errorId: "sw-auth-error", wrap: false})}
-          ${resetRequired ? '<p class="sw-recovery-note">Background activity is paused until you finish setting the new sign-in credentials.</p>' : ""}
+          ${resetRequired ? '<p class="sw-recovery-note">' + TH("modals.setup.paused") + '</p>' : ""}
         </section>
       `;
       const foot = `
         <p class="sw-footer-note"><span class="material-symbols-rounded" aria-hidden="true">info</span>${escapeHtml(helper)}</p>
         <div class="sw-footer-actions">
-          ${resetRequired ? "" : `<button class="sw-back" type="button" data-x="back"${state.saving ? " disabled" : ""}>Back</button>`}
-          <button class="sw-action" type="button" data-x="save"${state.saving ? " disabled" : ""}>${state.saving ? "Saving..." : (resetRequired ? "Save new sign-in" : "Enable sign-in")}<span class="material-symbols-rounded" aria-hidden="true">arrow_forward</span></button>
+          ${resetRequired ? "" : `<button class="sw-back" type="button" data-x="back"${state.saving ? " disabled" : ""}>${TH("modals.setup.back")}</button>`}
+          <button class="sw-action" type="button" data-x="save"${state.saving ? " disabled" : ""}>${state.saving ? T("modals.setup.saving") : (resetRequired ? T("modals.setup.saveNew") : T("modals.setup.enable"))}<span class="material-symbols-rounded" aria-hidden="true">arrow_forward</span></button>
         </div>
       `;
       hostEl.innerHTML = _chrome(
@@ -198,9 +204,10 @@ export default {
         body,
         foot,
         resetRequired
-          ? { title: "CrossWatch authentication reset", subtitle: "Recovery setup" }
+          ? { title: T("modals.setup.authReset"), subtitle: T("modals.setup.recoverySetup") }
           : undefined,
       );
+      I18N()?.wireSelectors?.(hostEl);
       if (!resetRequired) {
         hostEl.querySelector('[data-x="back"]')?.addEventListener("click", () => {
           if (state.saving) return;
@@ -210,7 +217,7 @@ export default {
           hostEl.querySelector('[data-x="next"]')?.focus({preventScroll: true});
         });
       }
-      for (const [id, label] of [["sw-auth-pass", "password"], ["sw-auth-pass2", "confirm password"]]) {
+      for (const [id, label] of [["sw-auth-pass", "password"], ["sw-auth-pass2", "confirm"]]) {
         const input = hostEl.querySelector(`#${id}`);
         if (!input) continue;
         input.disabled = state.saving;
@@ -221,14 +228,14 @@ export default {
         const toggle = document.createElement("button");
         toggle.type = "button";
         toggle.className = "sw-password-toggle";
-        toggle.setAttribute("aria-label", `Show ${label}`);
+        toggle.setAttribute("aria-label", T(`modals.setup.show.${label}`));
         toggle.setAttribute("aria-controls", id);
         toggle.setAttribute("aria-pressed", "false");
         toggle.innerHTML = '<span class="material-symbols-rounded" aria-hidden="true">visibility</span>';
         toggle.addEventListener("click", () => {
           const visible = input.type === "password";
           input.type = visible ? "text" : "password";
-          toggle.setAttribute("aria-label", `${visible ? "Hide" : "Show"} ${label}`);
+          toggle.setAttribute("aria-label", T(`modals.setup.${visible ? "hide" : "show"}.${label}`));
           toggle.setAttribute("aria-pressed", String(visible));
           toggle.firstElementChild.textContent = visible ? "visibility_off" : "visibility";
         });

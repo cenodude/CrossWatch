@@ -4,21 +4,26 @@
 
 import {renderItemOrigin} from '../editor/origin.js';
 
+const I18N = () => globalThis.window?.CW?.I18n || globalThis.window?.__cwI18n;
+const T = (key, vars) => I18N()?.t?.(key, vars) ?? key;
+const TH = (key, vars) => I18N()?.html?.(key, vars) ?? key;
+const LOC = () => I18N()?.locale || [];
+
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => (
   { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]
 ));
-const nf = new Intl.NumberFormat();
+const nf = new Intl.NumberFormat(I18N()?.locale);
 const fmt = (n) => nf.format(Math.round(Number(n || 0)));
 const DAY = 86400;
 const TZ = -new Date().getTimezoneOffset() * 60;
 const dayIndexOf = (sec) => Math.floor((Number(sec || 0) + TZ) / DAY);
 const dateOfIndex = (d) => new Date((d * DAY - TZ) * 1000);
-const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+const MONTHS = Array.from({ length: 12 }, (_, m) => new Date(2024, m, 15).toLocaleDateString(I18N()?.locale || "en", { month: "short" }));
+const WEEKDAYS = Array.from({ length: 7 }, (_, d) => new Date(2024, 0, 1 + d).toLocaleDateString(I18N()?.locale || "en", { weekday: "short" }));
 
-export const STATE_LABEL = { ok: "Done", fail: "Failed", skip: "Skipped", same: "Already there", pending: "In progress" };
+export const STATE_LABEL = { ok: T("events.outcome.done"), fail: T("events.outcome.failed"), skip: T("events.outcome.skipped"), same: T("events.outcome.already"), pending: T("events.outcome.inProgress") };
 const STATE_ICON = { ok: "check", fail: "close", skip: "remove", same: "radio_button_unchecked", pending: "schedule" };
-const FEATURE_LABEL = { history: "History", ratings: "Ratings", watchlist: "Watchlist", progress: "Progress", collection: "Collections", scrobble: "Scrobble" };
+const FEATURE_LABEL = { history: T("events.feature.history"), ratings: T("events.feature.ratings"), watchlist: T("events.feature.watchlist"), progress: T("events.feature.progress"), collection: T("events.feature.collections"), scrobble: T("events.titles.scrobble") };
 const ORIGIN_FEATURES = ["history", "watchlist", "ratings", "progress", "collection"];
 
 const meta = () => window.CW?.ProviderMeta || {};
@@ -41,12 +46,12 @@ const coordOf = (item) => item.season != null && item.episode != null ? `S${pad2
 const isEpisode = (item) => item.media_type === "episode" || (item.season != null && item.episode != null);
 
 const KIND_LABEL = {
-  "history:add": "Watched", "history:remove": "Unwatched", "history:rewatch_reset": "Marked unwatched",
-  "history:tag_dropped": "Marked dropped", "watchlist:add": "Watchlist add", "watchlist:remove": "Watchlist removal",
-  "progress:add": "Progress", "progress:update": "Progress", "progress:remove": "Progress removed",
-  "progress:hide_continue_watching": "Hidden from Continue Watching",
-  "collection:add": "Collection add", "collection:remove": "Collection removal",
-  "ratings:remove": "Rating removed", "scrobble:watch": "Watched",
+  "history:add": T("events.badge.watched"), "history:remove": T("events.kind.unwatched"), "history:rewatch_reset": T("events.kind.markedUnwatched"),
+  "history:tag_dropped": T("events.title.markDroppedPast"), "watchlist:add": T("events.kind.watchlistAdd"), "watchlist:remove": T("events.kind.watchlistRemoval"),
+  "progress:add": T("events.feature.progress"), "progress:update": T("events.feature.progress"), "progress:remove": T("events.kind.progressRemoved"),
+  "progress:hide_continue_watching": T("events.kind.hiddenContinue"),
+  "collection:add": T("events.kind.collectionAdd"), "collection:remove": T("events.kind.collectionRemoval"),
+  "ratings:remove": T("events.kind.ratingRemoved"), "scrobble:watch": T("events.badge.watched"),
 };
 
 export function whatOf(item) {
@@ -54,18 +59,18 @@ export function whatOf(item) {
   const first = kinds.find((k) => k.startsWith("scrobble:")) || kinds[0] || "";
   let label = KIND_LABEL[first];
   if (first === "scrobble:watch") {
-    if (["running", "paused"].includes(item.status)) label = "Watching";
-    else if (item.status === "stopped") label = "Stopped watching";
+    if (["running", "paused"].includes(item.status)) label = T("events.kind.watching");
+    else if (item.status === "stopped") label = T("events.outcome.stoppedWatching");
   }
-  if (first.startsWith("ratings:") && first !== "ratings:remove" || first === "scrobble:rating") label = item.rating != null && item.rating !== "" ? `Rated ${item.rating}` : "Rating";
-  if (!label) label = first ? first.split(":").map((p) => p.charAt(0).toUpperCase() + p.slice(1)).join(" ") : "Activity";
+  if (first.startsWith("ratings:") && first !== "ratings:remove" || first === "scrobble:rating") label = item.rating != null && item.rating !== "" ? T("events.titles.ratedValue", {rating: String(item.rating)}) : T("events.k.rating");
+  if (!label) label = first ? first.split(":").map((p) => p.charAt(0).toUpperCase() + p.slice(1)).join(" ") : T("events.pageTitle");
   const more = kinds.length > 1 ? ` +${kinds.length - 1}` : "";
   return `${label}${more}`;
 }
 
 export function viaOf(item) {
-  if (item.domain === "scrobble") return item.progress != null && item.progress !== "" ? `Scrobble · ${item.progress}%` : "Scrobble";
-  return "Sync";
+  if (item.domain === "scrobble") return item.progress != null && item.progress !== "" ? `${T("events.titles.scrobble")} · ${item.progress}%` : T("events.titles.scrobble");
+  return T("events.tabs.sync");
 }
 
 export function coverURL(item, size = "w185") {
@@ -136,24 +141,24 @@ const rowVia = (item) => {
   return [item.progress != null && item.progress !== "" ? `${item.progress}%` : "", n > 1 ? `${fmt(n)} sessions` : ""].filter(Boolean).join(" · ");
 };
 
-const sessionTime = (sec) => Number(sec || 0) ? new Date(Number(sec) * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "";
+const sessionTime = (sec) => Number(sec || 0) ? new Date(Number(sec) * 1000).toLocaleTimeString(LOC(), { hour: "2-digit", minute: "2-digit" }) : "";
 
 const sessionRowHTML = (s) => {
-  const what = s.finished ? "Finished" : s.progress != null && s.progress !== "" ? `Stopped at ${s.progress}%` : "Started";
+  const what = s.finished ? T("events.k.finished") : s.progress != null && s.progress !== "" ? T("events.titles.stoppedAt", {progress: `${s.progress}%`}) : T("events.badge.started");
   const start = sessionTime(s.started_at);
   const end = sessionTime(s.last_at);
   return `<div class="ev-erow ev-srow"><span class="ev-erow-main"><span>${esc(what)}</span><span class="ev-erow-sub">${esc(start === end ? start : `${start} – ${end}`)}</span></span></div>`;
 };
 
 export function titleText(item) {
-  return item.title || item.item_key || "Unknown title";
+  return item.title || item.item_key || T("events.unknownTitle");
 }
 
 export function subText(item) {
   const bits = [];
   const coord = coordOf(item);
   if (coord) bits.push(coord);
-  else if (item.media_type) bits.push(item.media_type === "movie" ? "Movie" : item.media_type.charAt(0).toUpperCase() + item.media_type.slice(1));
+  else if (item.media_type) bits.push(item.media_type === "movie" ? T("events.movie") : item.media_type.charAt(0).toUpperCase() + item.media_type.slice(1));
   if (item.year && !coord) bits.push(String(item.year));
   return bits.join(" · ");
 }
@@ -161,10 +166,10 @@ export function subText(item) {
 export function sectionLabel(sec) {
   const d = dayIndexOf(sec);
   const today = dayIndexOf(Date.now() / 1000);
-  if (d === today) return "Today";
-  if (d === today - 1) return "Yesterday";
-  if (today - d < 7) return dateOfIndex(d).toLocaleDateString([], { weekday: "long" });
-  return dateOfIndex(d).toLocaleDateString([], { day: "numeric", month: "long", year: "numeric" });
+  if (d === today) return T("events.today");
+  if (d === today - 1) return T("events.yesterday");
+  if (today - d < 7) return dateOfIndex(d).toLocaleDateString(LOC(), { weekday: "long" });
+  return dateOfIndex(d).toLocaleDateString(LOC(), { day: "numeric", month: "long", year: "numeric" });
 }
 
 const rowTime = (sec) => {
@@ -172,8 +177,8 @@ const rowTime = (sec) => {
   if (!n) return "";
   const today = dayIndexOf(Date.now() / 1000);
   const d = new Date(n * 1000);
-  const time = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-  return today - dayIndexOf(n) < 7 ? time : `${d.toLocaleDateString([], { day: "numeric", month: "short" })} ${time}`;
+  const time = d.toLocaleTimeString(LOC(), { hour: "2-digit", minute: "2-digit" });
+  return today - dayIndexOf(n) < 7 ? time : `${d.toLocaleDateString(LOC(), { day: "numeric", month: "short" })} ${time}`;
 };
 
 export function titleRowHTML(item, { tmdbOn = false, selected = false } = {}) {
@@ -185,12 +190,12 @@ export function titleRowHTML(item, { tmdbOn = false, selected = false } = {}) {
       ${coverHTML(item, tmdbOn)}
       <span class="ev-tmain">
         <span class="ev-ttop">
-          ${attention ? `<span class="ev-tattn" title="Needs attention"></span>` : ""}
+          ${attention ? `<span class="ev-tattn" title="${TH("events.quick.attention")}"></span>` : ""}
           <span class="ev-ttitle">${esc(name)}</span>
           <time class="ev-ttime">${esc(rowTime(item.last_event_at))}</time>
         </span>
         <span class="ev-tsub">${esc([subText(item), whatOf(item), rowVia(item)].filter(Boolean).join(" · "))}</span>
-        <span class="ev-troute">${item.source_provider ? `${providerChipHTML(item.source_provider, item.source_instance, ' data-role="source"')}<span class="material-symbols-rounded ev-tarrow" aria-hidden="true">arrow_forward</span>` : ""}<span class="ev-tdests">${dests || `<span class="ev-tnone">No destination yet</span>`}</span></span>
+        <span class="ev-troute">${item.source_provider ? `${providerChipHTML(item.source_provider, item.source_instance, ' data-role="source"')}<span class="material-symbols-rounded ev-tarrow" aria-hidden="true">arrow_forward</span>` : ""}<span class="ev-tdests">${dests || `<span class="ev-tnone">${TH("events.titles.noDestination")}</span>`}</span></span>
       </span>
     </div>`;
 }
@@ -211,10 +216,10 @@ export function titleRowsHTML(items, opts = {}) {
 
 const fullTime = (sec) => {
   const n = Number(sec || 0);
-  return n ? new Date(n * 1000).toLocaleString([], { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "";
+  return n ? new Date(n * 1000).toLocaleString(LOC(), { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "";
 };
 
-const ID_LABELS = { tmdb: "TMDB", imdb: "IMDb", tvdb: "TVDB", show_tmdb: "Show TMDB", show_imdb: "Show IMDb", show_tvdb: "Show TVDB" };
+const ID_LABELS = { tmdb: "TMDB", imdb: "IMDb", tvdb: "TVDB", show_tmdb: T("events.titles.showTmdb"), show_imdb: T("events.titles.showImdb"), show_tvdb: T("events.titles.showTvdb") };
 
 function originItem(item) {
   const ids = item.ids || {};
@@ -245,8 +250,8 @@ export function renderTitleDetail(host, item, ctx) {
   const reviewed = !!item.acknowledged_at;
   const ids = Object.entries(item.ids || {}).filter(([k, v]) => ID_LABELS[k] && v).map(([k, v]) => `<span class="ev-tid">${esc(ID_LABELS[k])} ${esc(v)}</span>`).join("");
   const sourceLine = item.domain === "scrobble"
-    ? `Played on ${providerLabel(item.source_provider)}${item.progress != null && item.progress !== "" ? ` · stopped at ${item.progress}%` : ""}`
-    : `From ${providerLabel(item.source_provider)} by sync`;
+    ? `${T("events.titles.playedOn", {provider: providerLabel(item.source_provider)})}${item.progress != null && item.progress !== "" ? ` · ${T("events.titles.stoppedAtLower", {progress: `${item.progress}%`})}` : ""}`
+    : T("events.titles.fromBySync", {provider: providerLabel(item.source_provider)});
   const steps = [];
   if (item.source_provider) {
     steps.push(`<li class="ev-pstep"><span class="ev-pdot src"><span class="material-symbols-rounded" aria-hidden="true">play_arrow</span></span><div><div class="ev-pline">${providerChipHTML(item.source_provider, item.source_instance)}<time>${esc(fullTime(item.first_event_at))}</time></div><p>${esc(sourceLine)}</p></div></li>`);
@@ -258,33 +263,33 @@ export function renderTitleDetail(host, item, ctx) {
     steps.push(`<li class="ev-pstep"><span class="ev-pdot ${state}"><span class="material-symbols-rounded" aria-hidden="true">${STATE_ICON[state]}</span></span><div><div class="ev-pline">${providerChipHTML(d.provider, d.instance)}<time>${esc(fullTime(d.at))}</time></div><p${state === "fail" ? ` class="ev-pfail"` : ""}>${esc([STATE_LABEL[state], feature, reason].filter(Boolean).join(" · "))}</p></div></li>`);
   }
   for (const r of later) {
-    steps.push(`<li class="ev-pstep"><span class="ev-pdot next"><span class="material-symbols-rounded" aria-hidden="true">east</span></span><div><button type="button" class="ev-plink" data-tid="${esc(r.id)}"><span>${esc(`${r.domain === "scrobble" ? "Later scrobble" : "Later sync"}: ${whatOf(r)}`)}</span><time>${esc(fullTime(r.last_event_at))}</time></button><div class="ev-tdests">${(r.destinations || []).map(destChipHTML).join("")}</div></div></li>`);
+    steps.push(`<li class="ev-pstep"><span class="ev-pdot next"><span class="material-symbols-rounded" aria-hidden="true">east</span></span><div><button type="button" class="ev-plink" data-tid="${esc(r.id)}"><span>${esc(`${r.domain === "scrobble" ? T("events.titles.laterScrobble") : T("events.titles.laterSync")}: ${whatOf(r)}`)}</span><time>${esc(fullTime(r.last_event_at))}</time></button><div class="ev-tdests">${(r.destinations || []).map(destChipHTML).join("")}</div></div></li>`);
   }
   const originDests = (item.destinations || []).filter((d) => d.provider);
   const originHTML = originDests.length
-    ? originDests.map((d, i) => `<details class="ev-origin" data-i="${i}"${i === 0 ? " open" : ""}><summary>${providerChipHTML(d.provider, d.instance)}<span class="ev-origin-feat">${esc(FEATURE_LABEL[d.feature] || d.feature || "")}</span></summary><div class="ev-origin-body cw-origin-body">Looking this up…</div></details>`).join("")
-    : `<div class="ev-empty ev-empty-inline">No destination to explain yet.</div>`;
+    ? originDests.map((d, i) => `<details class="ev-origin" data-i="${i}"${i === 0 ? " open" : ""}><summary>${providerChipHTML(d.provider, d.instance)}<span class="ev-origin-feat">${esc(FEATURE_LABEL[d.feature] || d.feature || "")}</span></summary><div class="ev-origin-body cw-origin-body">${TH("events.titles.lookingUp")}</div></details>`).join("")
+    : `<div class="ev-empty ev-empty-inline">${TH("events.titles.noExplain")}</div>`;
   const earlierHTML = related.length
     ? related.map((r) => `<button type="button" class="ev-erow" data-tid="${esc(r.id)}"><span class="ev-erow-main"><span>${esc(whatOf(r))}</span><span class="ev-erow-sub">${esc(viaOf(r))}</span></span><span class="ev-tdests">${(r.destinations || []).map(destChipHTML).join("")}</span><time>${esc(fullTime(r.last_event_at))}</time></button>`).join("")
-    : `<div class="ev-empty ev-empty-inline">Nothing earlier for this title.</div>`;
+    : `<div class="ev-empty ev-empty-inline">${TH("events.titles.nothingEarlier")}</div>`;
   const tabBtn = (name, label, count) => `<button class="ev-tab${tab === name ? " on" : ""}" data-tab="${name}" type="button" role="tab" aria-selected="${tab === name}">${esc(label)}${count != null ? ` <span class="ev-h4-note">${esc(count)}</span>` : ""}</button>`;
   host.innerHTML = `
     <div class="ev-thead">
       ${coverHTML(item, ctx.tmdbOn, "w342")}
       <div class="ev-thead-main">
         <div class="ev-dhead-row">
-          <span class="ev-badge ${failed ? "error" : item.status === "completed" ? "ok" : "info"}">${esc(failed ? "Failed" : whatOf(item))}</span>
+          <span class="ev-badge ${failed ? "error" : item.status === "completed" ? "ok" : "info"}">${esc(failed ? T("events.outcome.failed") : whatOf(item))}</span>
           <span class="ev-dhead-spacer"></span>
-          ${failed || reviewed ? `<button class="ev-hbtn ev-hbtn-accent${reviewed ? " on" : ""}" id="ev-tack" type="button"><span class="material-symbols-rounded" aria-hidden="true">${reviewed ? "check_circle" : "check"}</span><span>${reviewed ? "Reviewed" : "Mark reviewed"}</span></button>` : ""}
+          ${failed || reviewed ? `<button class="ev-hbtn ev-hbtn-accent${reviewed ? " on" : ""}" id="ev-tack" type="button"><span class="material-symbols-rounded" aria-hidden="true">${reviewed ? "check_circle" : "check"}</span><span>${TH(reviewed ? "events.titles.reviewed" : "events.titles.markReviewed")}</span></button>` : ""}
         </div>
         <div class="ev-dtitle">${esc(titleText(item))}</div>
         <p class="ev-outcome">${esc([subText(item), rowVia(item)].filter(Boolean).join(" · "))}</p>
         ${ids ? `<div class="ev-tids">${ids}</div>` : ""}
       </div>
     </div>
-    <div class="ev-tabs" role="tablist">${tabBtn("path", "Path")}${tabBtn("origin", "Where it comes from")}${sessions.length ? tabBtn("sessions", "Sessions", sessions.length) : ""}${tabBtn("earlier", "Earlier", related.length || null)}</div>
-    <div class="ev-tabpane" data-pane="path"${tab === "path" ? "" : " hidden"}><ol class="ev-path">${steps.join("") || `<li class="ev-empty ev-empty-inline">Nothing recorded yet.</li>`}</ol>${item.run_id && item.domain === "sync" ? `<div class="ev-path-acts"><button type="button" class="ev-tbtn" id="ev-trun"><span class="material-symbols-rounded" aria-hidden="true">sync</span><span>Show this run</span></button><button type="button" class="ev-tbtn" id="ev-tlogs"><span class="material-symbols-rounded" aria-hidden="true">terminal</span><span>View logs</span></button></div>` : ""}</div>
-    <div class="ev-tabpane" data-pane="origin"${tab === "origin" ? "" : " hidden"}><p class="ev-origin-note">Likely path, rebuilt from current data.</p>${originHTML}</div>
+    <div class="ev-tabs" role="tablist">${tabBtn("path", T("events.k.path"))}${tabBtn("origin", T("events.titles.whereFrom"))}${sessions.length ? tabBtn("sessions", T("events.titles.sessions"), sessions.length) : ""}${tabBtn("earlier", T("events.titles.earlier"), related.length || null)}</div>
+    <div class="ev-tabpane" data-pane="path"${tab === "path" ? "" : " hidden"}><ol class="ev-path">${steps.join("") || `<li class="ev-empty ev-empty-inline">${TH("events.titles.nothingRecorded")}</li>`}</ol>${item.run_id && item.domain === "sync" ? `<div class="ev-path-acts"><button type="button" class="ev-tbtn" id="ev-trun"><span class="material-symbols-rounded" aria-hidden="true">sync</span><span>${TH("events.titles.showRun")}</span></button><button type="button" class="ev-tbtn" id="ev-tlogs"><span class="material-symbols-rounded" aria-hidden="true">terminal</span><span>${TH("events.viewLogs")}</span></button></div>` : ""}</div>
+    <div class="ev-tabpane" data-pane="origin"${tab === "origin" ? "" : " hidden"}><p class="ev-origin-note">${TH("events.titles.likelyPath")}</p>${originHTML}</div>
     ${sessions.length ? `<div class="ev-tabpane" data-pane="sessions"${tab === "sessions" ? "" : " hidden"}><div class="ev-earlier">${sessions.map(sessionRowHTML).join("")}</div></div>` : ""}
     <div class="ev-tabpane" data-pane="earlier"${tab === "earlier" ? "" : " hidden"}><div class="ev-earlier">${earlierHTML}</div></div>`;
   bindCovers(host);
@@ -304,7 +309,7 @@ export function renderTitleDetail(host, item, ctx) {
     }).then((data) => {
       if (body.isConnected) renderItemOrigin(body, data, { snapshot: d.provider, instance: d.instance || "default" });
     }).catch(() => {
-      if (body.isConnected) body.textContent = "Could not look this up. You may not have access to this provider.";
+      if (body.isConnected) body.textContent = T("events.titles.lookupFailed");
     });
   };
   const switchTab = (name) => {
@@ -342,11 +347,11 @@ const levelOf = (value, steps) => {
   return 4;
 };
 
-const RANGES = [{ value: "3m", label: "3 months", days: 98, weeks: 14 }, { value: "6m", label: "6 months", days: 189, weeks: 27 }, { value: "12m", label: "1 year", days: 371, weeks: 53 }];
-const METRICS = [{ value: "changes", label: "Changes" }, { value: "runs", label: "Runs" }, { value: "failed", label: "Failures" }];
+const RANGES = [{ value: "3m", label: T("events.range.3m"), days: 98, weeks: 14 }, { value: "6m", label: T("events.range.6m"), days: 189, weeks: 27 }, { value: "12m", label: T("events.range.1y"), days: 371, weeks: 53 }];
+const METRICS = [{ value: "changes", label: T("events.col.changes") }, { value: "runs", label: T("events.view.runs") }, { value: "failed", label: T("events.titles.failures") }];
 
 export const dayRange = (index) => ({ since: index * DAY - TZ, until: index * DAY - TZ + DAY - 1 });
-export const dayLabel = (index) => dateOfIndex(index).toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" });
+export const dayLabel = (index) => dateOfIndex(index).toLocaleDateString(LOC(), { weekday: "short", day: "numeric", month: "short" });
 
 export function createActivityCard(host, { fetchJson, onPickDay, store }) {
   const get = (k, d) => store?.get?.(k, d) ?? d;
@@ -364,18 +369,18 @@ export function createActivityCard(host, { fetchJson, onPickDay, store }) {
   document.body.appendChild(tip);
 
   host.innerHTML = `
-    <section class="ev-activity${collapsed ? " collapsed" : ""}" aria-label="Sync activity">
+    <section class="ev-activity${collapsed ? " collapsed" : ""}" aria-label="${TH("events.titles.syncActivity")}">
       <div class="ev-activity-head">
-        <div class="ev-activity-title"><strong>Sync activity</strong><span class="ev-activity-sum" id="ev-act-sum"></span></div>
+        <div class="ev-activity-title"><strong>${TH("events.titles.syncActivity")}</strong><span class="ev-activity-sum" id="ev-act-sum"></span></div>
         <div class="ev-activity-tools">
-          <div class="ev-seg" role="group" aria-label="Show" id="ev-act-metric">${METRICS.map((m) => `<button type="button" class="ev-seg-btn${m.value === metric ? " on" : ""}" data-v="${m.value}" aria-pressed="${m.value === metric}">${esc(m.label)}</button>`).join("")}</div>
-          <label class="ev-act-range"><span class="ev-sr">Period</span><select id="ev-act-range" class="cw-page-input" data-cw-native-select="true">${RANGES.map((r) => `<option value="${r.value}"${r.value === range ? " selected" : ""}>${esc(r.label)}</option>`).join("")}</select></label>
+          <div class="ev-seg" role="group" aria-label="${TH("events.titles.show")}" id="ev-act-metric">${METRICS.map((m) => `<button type="button" class="ev-seg-btn${m.value === metric ? " on" : ""}" data-v="${m.value}" aria-pressed="${m.value === metric}">${esc(m.label)}</button>`).join("")}</div>
+          <label class="ev-act-range"><span class="ev-sr">${TH("events.titles.period")}</span><select id="ev-act-range" class="cw-page-input" data-cw-native-select="true">${RANGES.map((r) => `<option value="${r.value}"${r.value === range ? " selected" : ""}>${esc(r.label)}</option>`).join("")}</select></label>
         </div>
-        <button type="button" class="ev-icon-btn ev-act-toggle" id="ev-act-toggle" aria-expanded="${!collapsed}" aria-label="${collapsed ? "Show sync activity" : "Hide sync activity"}"><span class="material-symbols-rounded" aria-hidden="true">${collapsed ? "expand_more" : "expand_less"}</span></button>
+        <button type="button" class="ev-icon-btn ev-act-toggle" id="ev-act-toggle" aria-expanded="${!collapsed}" aria-label="${collapsed ? T("events.titles.showActivity") : T("events.titles.hideActivity")}"><span class="material-symbols-rounded" aria-hidden="true">${collapsed ? "expand_more" : "expand_less"}</span></button>
       </div>
       <div class="ev-activity-body"${collapsed ? " hidden" : ""}>
-        <div class="ev-hm-wrap"><div class="ev-hm-scroll" tabindex="0" aria-label="Activity calendar, scroll to see more weeks"><div id="ev-hm"></div></div>
-          <div class="ev-hm-foot"><span>Pick a day to filter the list.</span><span class="ev-hm-legend"><span>Less</span><i class="lv0"></i><i class="lv1"></i><i class="lv2"></i><i class="lv3"></i><i class="lv4"></i><span>More</span><i class="lv0 bad"></i><span>Had a failure</span></span></div>
+        <div class="ev-hm-wrap"><div class="ev-hm-scroll" tabindex="0" aria-label="${TH("events.titles.calendarLabel")}"><div id="ev-hm"></div></div>
+          <div class="ev-hm-foot"><span>${TH("events.titles.pickDayHint")}</span><span class="ev-hm-legend"><span>${TH("events.titles.less")}</span><i class="lv0"></i><i class="lv1"></i><i class="lv2"></i><i class="lv3"></i><i class="lv4"></i><span>${TH("events.titles.more")}</span><i class="lv0 bad"></i><span>${TH("events.titles.hadFailure")}</span></span></div>
         </div>
         <div class="ev-tiles" id="ev-act-tiles"></div>
       </div>
@@ -387,10 +392,10 @@ export function createActivityCard(host, { fetchJson, onPickDay, store }) {
     const last = [...byIndex.values()].filter((e) => e.runs).map((e) => Number(e.d)).sort((a, b) => b - a)[0];
     Q("#ev-act-sum").textContent = collapsed ? `${fmt(totals.runs)} runs · ${fmt(totals.changes)} changes · ${fmt(totals.failed)} failed` : "";
     Q("#ev-act-tiles").innerHTML = [
-      [fmt(totals.runs), "Runs"],
-      [fmt(totals.changes), "Changes"],
-      [fmt(totals.failed), "Failed runs", totals.failed ? " bad" : ""],
-      [last != null ? dateOfIndex(last).toLocaleDateString([], { day: "numeric", month: "short" }) : "–", "Last active day"],
+      [fmt(totals.runs), T("events.view.runs")],
+      [fmt(totals.changes), T("events.col.changes")],
+      [fmt(totals.failed), T("events.titles.failedRuns"), totals.failed ? " bad" : ""],
+      [last != null ? dateOfIndex(last).toLocaleDateString(LOC(), { day: "numeric", month: "short" }) : "–", T("events.titles.lastActive")],
     ].map(([v, k, cls = ""]) => `<div class="ev-tile${cls}"><b>${esc(v)}</b><span>${esc(k)}</span></div>`).join("");
   };
 
@@ -415,13 +420,13 @@ export function createActivityCard(host, { fetchJson, onPickDay, store }) {
         const entry = byIndex.get(index);
         const bad = (entry?.failed || 0) > 0;
         const cls = `ev-hm-cell lv${levelOf(value(entry), steps)}${bad ? " bad" : ""}${index === selected ? " on" : ""}${index === today ? " today" : ""}`;
-        cells.push(`<rect class="${cls}" x="${PAD_L + w * STEP}" y="${PAD_T + d * STEP}" width="${CELL}" height="${CELL}" rx="3.5" data-d="${index}" role="button" tabindex="${index === (selected ?? today) ? 0 : -1}" aria-pressed="${index === selected}" aria-label="${esc(`${dayLabel(index)}: ${fmt(entry?.runs)} runs, ${fmt(entry?.changes)} changes${bad ? ", had a failure" : ""}`)}"></rect>`);
+        cells.push(`<rect class="${cls}" x="${PAD_L + w * STEP}" y="${PAD_T + d * STEP}" width="${CELL}" height="${CELL}" rx="3.5" data-d="${index}" role="button" tabindex="${index === (selected ?? today) ? 0 : -1}" aria-pressed="${index === selected}" aria-label="${esc(`${dayLabel(index)}: ${T(bad ? "events.titles.cellFailed" : "events.titles.cell", {runs: Number(entry?.runs || 0), changes: Number(entry?.changes || 0)})}`)}"></rect>`);
       }
     }
     const axis = [0, 2, 4].map((d) => `<text class="ev-hm-ax" x="0" y="${PAD_T + d * STEP + 10}">${WEEKDAYS[d]}</text>`).join("");
     const width = PAD_L + cfg.weeks * STEP;
     const height = PAD_T + 7 * STEP;
-    Q("#ev-hm").innerHTML = `<svg class="ev-hm-svg" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}" role="group" aria-label="Sync activity calendar">${months.join("")}${axis}${cells.join("")}</svg>`;
+    Q("#ev-hm").innerHTML = `<svg class="ev-hm-svg" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}" role="group" aria-label="${TH("events.titles.calendarAria")}">${months.join("")}${axis}${cells.join("")}</svg>`;
     Q("#ev-hm").querySelectorAll(".ev-hm-cell").forEach((cell) => {
       const index = Number(cell.dataset.d);
       cell.addEventListener("mousemove", (ev) => {
@@ -429,9 +434,9 @@ export function createActivityCard(host, { fetchJson, onPickDay, store }) {
         tip.replaceChildren();
         const head = document.createElement("div");
         head.className = "ev-hm-tip-d";
-        head.textContent = dateOfIndex(index).toLocaleDateString([], { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+        head.textContent = dateOfIndex(index).toLocaleDateString(LOC(), { weekday: "long", day: "numeric", month: "long", year: "numeric" });
         const body = document.createElement("div");
-        body.textContent = e?.runs ? `${fmt(e.runs)} ${e.runs === 1 ? "run" : "runs"} · ${fmt(e.changes)} changes${e.failed ? ` · ${fmt(e.failed)} failed` : ""}` : "No sync runs";
+        body.textContent = e?.runs ? `${T("events.count.run", {count: e.runs})} · ${T("events.titles.changes", {count: e.changes})}${e.failed ? ` · ${T("events.titles.failedCount", {count: e.failed})}` : ""}` : T("events.titles.noSyncRuns");
         tip.append(head, body);
         tip.hidden = false;
         const r = tip.getBoundingClientRect();
@@ -495,7 +500,7 @@ export function createActivityCard(host, { fetchJson, onPickDay, store }) {
     Q(".ev-activity").classList.toggle("collapsed", collapsed);
     const btn = ev.currentTarget;
     btn.setAttribute("aria-expanded", String(!collapsed));
-    btn.setAttribute("aria-label", collapsed ? "Show sync activity" : "Hide sync activity");
+    btn.setAttribute("aria-label", collapsed ? T("events.titles.showActivity") : T("events.titles.hideActivity"));
     btn.querySelector(".material-symbols-rounded").textContent = collapsed ? "expand_more" : "expand_less";
     renderTiles();
     if (!collapsed) renderMap();
@@ -511,7 +516,7 @@ export function createActivityCard(host, { fetchJson, onPickDay, store }) {
 
 const runTime = (epoch) => {
   const n = Number(epoch || 0);
-  return n ? new Date(n * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "--:--";
+  return n ? new Date(n * 1000).toLocaleTimeString(LOC(), { hour: "2-digit", minute: "2-digit" }) : "--:--";
 };
 const runDur = (s) => {
   const n = Number(s || 0);
@@ -520,27 +525,21 @@ const runDur = (s) => {
   if (n < 3600) return `${Math.floor(n / 60)}m ${n % 60}s`;
   return `${(n / 3600).toFixed(1)}h`;
 };
-const RUN_PHRASES = {
-  history: { added: "marked watched", removed: "marked unwatched", updated: "updated in history" },
-  ratings: { added: "rated", removed: "ratings removed", updated: "re-rated" },
-  watchlist: { added: "added to watchlist", removed: "removed from watchlist", updated: "updated in watchlist" },
-  progress: { added: "progress saved", removed: "progress removed", updated: "progress updated" },
-  collection: { added: "added to collection", removed: "removed from collection", updated: "updated in collection" },
-};
+const RUN_PHRASES = new Set(["history", "ratings", "watchlist", "progress", "collection"]);
 
 const runRoutes = (run) => {
   const routes = new Map();
   for (const r of run.pair_rows || []) {
     const key = `${r.src_provider}|${r.src_instance || ""}|${r.dst_provider}|${r.dst_instance || ""}`;
     const entry = routes.get(key) || { src: r.src_provider, srcInst: r.src_instance, dst: r.dst_provider, dstInst: r.dst_instance, parts: [] };
-    const phrases = RUN_PHRASES[r.feature] || {};
+    const known = RUN_PHRASES.has(r.feature);
     const feature = String(FEATURE_LABEL[r.feature] || r.feature || "").toLowerCase();
     for (const k of ["added", "removed", "updated"]) {
       const n = Number(r[k] || 0);
-      if (n) entry.parts.push({ text: `${fmt(n)} ${phrases[k] || `${k} in ${feature}`}` });
+      if (n) entry.parts.push({ text: known ? T(`events.run.${r.feature}.${k}`, {count: n}) : T(`events.run.other.${k}`, {count: n, feature}) });
     }
     const errors = Number(r.errors || 0);
-    if (errors) entry.parts.push({ text: `${fmt(errors)} failed${feature ? ` in ${feature}` : ""}`, bad: true });
+    if (errors) entry.parts.push({ text: feature ? T("events.run.failedIn", {count: errors, feature}) : T("events.titles.failedCount", {count: errors}), bad: true });
     routes.set(key, entry);
   }
   return [...routes.values()].filter((e) => e.parts.length);
@@ -594,7 +593,7 @@ export function runGroups(runs) {
 
 const groupRouteHTML = (group) => group.key
   ? `<span class="ev-rroute">${providerChipHTML(group.src, group.srcInst)}<span class="material-symbols-rounded ev-tarrow" aria-hidden="true">${group.dirs.size > 1 ? "sync_alt" : "arrow_forward"}</span>${providerChipHTML(group.dst, group.dstInst)}</span>`
-  : `<span class="ev-rwhat">Other runs</span>`;
+  : `<span class="ev-rwhat">${TH("events.titles.otherRuns")}</span>`;
 
 const entryParts = (group, entry) => {
   const routes = runRoutes({ pair_rows: entry.rows });
@@ -607,7 +606,7 @@ const childRowHTML = (group, entry, selected, selectedPair) => {
   const status = entry.errors ? "error" : run.status === "running" ? "info" : entry.changes ? "ok" : "idle";
   const parts = entry.active ? entryParts(group, entry) : [];
   const what = parts.length ? parts.map((p) => `<span${p.bad ? ` class="bad"` : ""}>${esc(p.text)}</span>`).join("")
-    : esc(entry.errors ? `${fmt(entry.errors)} failed` : entry.changes ? `${fmt(entry.changes)} changes` : run.status === "running" ? "Running" : "No changes");
+    : esc(entry.errors ? T("events.titles.failedCount", {count: entry.errors}) : entry.changes ? T("events.titles.changes", {count: entry.changes}) : run.status === "running" ? T("events.running") : T("events.changes.none"));
   return `<div class="ev-rrow ev-rchild${String(selected) === String(run.run_id) && (!selectedPair || selectedPair === group.key) ? " sel" : ""}" data-run="${esc(run.run_id)}" data-pair="${esc(group.key)}" tabindex="0" role="button">
       <span class="ev-rbranch" aria-hidden="true"></span>
       <span class="ev-rtime">${esc(runTime(run.started_at))}</span>
@@ -618,18 +617,18 @@ const childRowHTML = (group, entry, selected, selectedPair) => {
 };
 
 export function runRowsHTML(runs, { selected = "", selectedPair = "", open = new Set(), openAll = false } = {}) {
-  if (!runs.length) return `<div class="ev-empty ev-empty-inline">No sync runs on this day.</div>`;
+  if (!runs.length) return `<div class="ev-empty ev-empty-inline">${TH("events.titles.noRunsDay")}</div>`;
   return runGroups(runs).map((group) => {
     const active = group.runs.filter((e) => e.active);
     const quiet = group.runs.filter((e) => !e.active);
     const features = [...group.features].map((f) => FEATURE_LABEL[f] || f).join(", ");
-    const count = `${fmt(group.runs.length)} ${group.runs.length === 1 ? "run" : "runs"}`;
-    const meta = [features, active.length ? count : `${count}, no changes`].filter(Boolean).join(" · ");
+    const count = T("events.count.run", {count: group.runs.length});
+    const meta = [features, active.length ? count : T("events.titles.runsNoChanges", {count: group.runs.length})].filter(Boolean).join(" · ");
     const shown = openAll || open.has(group.key);
     const quietLine = quiet.length ? `<button type="button" class="ev-rquiet" data-group="${esc(group.key)}" aria-expanded="${shown}">
         <span class="ev-rbranch" aria-hidden="true"></span>
-        <span class="ev-rquiet-text">${esc(`${fmt(quiet.length)} ${quiet.length === 1 ? "run" : "runs"} without changes`)}</span>
-        <span class="ev-rquiet-act">${shown ? "Hide" : "Show"}</span>
+        <span class="ev-rquiet-text">${esc(T("events.titles.runsWithoutChanges", {count: quiet.length}))}</span>
+        <span class="ev-rquiet-act">${shown ? T("events.titles.hide") : T("events.titles.show")}</span>
       </button>` : "";
     return `<div class="ev-rgroup">
       <div class="ev-rghead" data-run="${esc(group.runs[0].run.run_id)}" data-pair="${esc(group.key)}" tabindex="0" role="button">${groupRouteHTML(group)}<span class="ev-rgmeta">${esc(meta)}</span></div>
@@ -649,24 +648,24 @@ export function renderRunDetail(host, run, ctx) {
   const lead = pair || groups.find((g) => g.runs[0]?.active) || groups[0];
   const single = (pair || groups.length === 1) && routes.length <= 1;
   const result = single && routes.length ? routes[0].parts.map((p) => p.text).join(", ")
-    : scopedRun.changes ? `${fmt(scopedRun.changes)} changes` : run.status === "running" ? "Running" : "No changes";
-  const failed = scopedRun.errors && !(single && routes.length) ? `${fmt(scopedRun.errors)} failed` : "";
-  const outcome = [result, failed, runDur(run.duration) ? `took ${runDur(run.duration)}` : "", run.dry_run ? "dry run" : ""].filter(Boolean).join(" · ");
+    : scopedRun.changes ? T("events.titles.changes", {count: scopedRun.changes}) : run.status === "running" ? T("events.running") : T("events.changes.none");
+  const failed = scopedRun.errors && !(single && routes.length) ? T("events.titles.failedCount", {count: scopedRun.errors}) : "";
+  const outcome = [result, failed, runDur(run.duration) ? T("events.titles.took", {duration: runDur(run.duration)}) : "", run.dry_run ? T("events.titles.dryRun") : ""].filter(Boolean).join(" · ");
   const summary = !single && routes.length ? `<div class="ev-rsums">${routes.map(routeLineHTML).join("")}</div>` : "";
   const status = scopedRun.errors ? "error" : run.status === "running" ? "info" : "ok";
   host.innerHTML = `
     <div class="ev-dhead">
-      <div class="ev-dhead-row"><span class="ev-badge ${status}">${esc(scopedRun.errors ? "Had failures" : run.status === "running" ? "Running" : "Finished")}</span><span class="ev-dhead-spacer"></span><span class="ev-dtime">${esc(fullTime(run.started_at))}</span></div>
-      <div class="ev-dtitle ev-rdtitle">${lead ? groupRouteHTML(lead) : "Sync run"}${!pair && groups.length > 1 ? `<span class="ev-rdmore">${esc(`+${fmt(groups.length - 1)} more`)}</span>` : ""}</div>
+      <div class="ev-dhead-row"><span class="ev-badge ${status}">${esc(scopedRun.errors ? T("events.titles.hadFailures") : run.status === "running" ? T("events.running") : T("events.k.finished"))}</span><span class="ev-dhead-spacer"></span><span class="ev-dtime">${esc(fullTime(run.started_at))}</span></div>
+      <div class="ev-dtitle ev-rdtitle">${lead ? groupRouteHTML(lead) : T("events.titles.syncRun")}${!pair && groups.length > 1 ? `<span class="ev-rdmore">${esc(T("events.titles.more", {count: groups.length - 1}))}</span>` : ""}</div>
       <p class="ev-outcome">${esc(outcome.charAt(0).toUpperCase() + outcome.slice(1))}</p>
-      ${groups.length > 1 ? `<div class="ev-path-acts" role="group" aria-label="Pairs in this run"><button type="button" class="ev-tbtn" data-run-pair="" aria-pressed="${!pair}">All pairs</button>${groups.map(g => `<button type="button" class="ev-tbtn" data-run-pair="${esc(g.key)}" aria-pressed="${g === pair}">${groupRouteHTML(g)}</button>`).join("")}</div>` : ""}
+      ${groups.length > 1 ? `<div class="ev-path-acts" role="group" aria-label="${TH("events.titles.pairsInRun")}"><button type="button" class="ev-tbtn" data-run-pair="" aria-pressed="${!pair}">${TH("events.titles.allPairs")}</button>${groups.map(g => `<button type="button" class="ev-tbtn" data-run-pair="${esc(g.key)}" aria-pressed="${g === pair}">${groupRouteHTML(g)}</button>`).join("")}</div>` : ""}
     </div>
     ${summary}
-    <h4>Titles <span class="ev-h4-note" id="ev-run-total"></span></h4>
-    <div class="ev-rtitles" id="ev-run-list"><div class="ev-empty ev-empty-inline">Loading titles…</div></div>
+    <h4>${TH("events.view.titles")} <span class="ev-h4-note" id="ev-run-total"></span></h4>
+    <div class="ev-rtitles" id="ev-run-list"><div class="ev-empty ev-empty-inline">${TH("events.titles.loadingTitles")}</div></div>
     <div class="ev-path-acts">
-      <button type="button" class="ev-tbtn" id="ev-run-titles" hidden><span class="material-symbols-rounded" aria-hidden="true">movie</span><span>Show all</span></button>
-      <button type="button" class="ev-tbtn" id="ev-run-logs"><span class="material-symbols-rounded" aria-hidden="true">terminal</span><span>View logs</span></button>
+      <button type="button" class="ev-tbtn" id="ev-run-titles" hidden><span class="material-symbols-rounded" aria-hidden="true">movie</span><span>${TH("events.titles.showAll")}</span></button>
+      <button type="button" class="ev-tbtn" id="ev-run-logs"><span class="material-symbols-rounded" aria-hidden="true">terminal</span><span>${TH("events.viewLogs")}</span></button>
     </div>`;
   host.querySelector("#ev-run-titles")?.addEventListener("click", () => ctx.showTitles?.(run.run_id));
   host.querySelector("#ev-run-logs")?.addEventListener("click", () => window.openLogs?.({ runId: run.run_id, channel: "sync" }));
@@ -692,18 +691,18 @@ async function loadRunTitles(host, run, ctx) {
     const total = Number(all.total || 0);
     listEl.innerHTML = items.length
       ? items.map((it) => runTitleHTML(it, ctx.tmdbOn)).join("")
-      : `<div class="ev-empty ev-empty-inline">${all.preparing ? "Titles are still being prepared. Try again in a moment." : "No titles recorded for this run."}</div>`;
+      : `<div class="ev-empty ev-empty-inline">${all.preparing ? TH("events.titles.preparing") : TH("events.titles.noneForRun")}</div>`;
     const totalEl = host.querySelector("#ev-run-total");
     if (totalEl && total) totalEl.textContent = total > items.length ? `${fmt(items.length)} of ${fmt(total)}` : fmt(total);
     const more = host.querySelector("#ev-run-titles");
     if (more && total > items.length) {
       more.hidden = false;
-      more.querySelector("span:last-child").textContent = ctx.pair ? "Show all titles in run" : `Show all ${fmt(total)}`;
+      more.querySelector("span:last-child").textContent = ctx.pair ? T("events.titles.showAllInRun") : T("events.titles.showAllCount", {count: total});
     }
     bindCovers(listEl);
     listEl.querySelectorAll(".ev-rtitle").forEach((btn) => btn.addEventListener("click", () => ctx.openTitle?.(run.run_id, btn.dataset.tid)));
   } catch {
-    if (listEl.isConnected) listEl.innerHTML = `<div class="ev-empty ev-empty-inline">Could not load the titles of this run.</div>`;
+    if (listEl.isConnected) listEl.innerHTML = `<div class="ev-empty ev-empty-inline">${TH("events.titles.runTitlesFailed")}</div>`;
   }
 }
 

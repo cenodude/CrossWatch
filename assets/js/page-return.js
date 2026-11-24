@@ -2,7 +2,15 @@
 /* CrossWatch - Page return navigation */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 
+const backLabel = (key, english) => (globalThis.window?.CW?.I18n || globalThis.window?.__cwI18n)?.t?.(key) ?? english;
+const BACK_KEYS = {'Main':'navigation.tabs.main', 'Captures':'navigation.tabs.captures', 'Playlists':'navigation.tabs.playlists', 'Editor':'navigation.pages.editor', 'Sync Analyzer':'navigation.back.analyzer', 'Backup & Restore':'navigation.pages.backups', 'Maintenance tools':'navigation.pages.maintenance', 'Tracker':'navigation.tabs.tracker', 'Events':'navigation.pages.events', 'Logs':'navigation.pages.logs', 'Import and Export':'navigation.back.importExport', 'Interactive Sync':'navigation.pages.interactiveSync', 'Settings':'navigation.tabs.settings', 'Connections':'navigation.settingsMenu.connections', 'Sync pairs':'navigation.settingsMenu.pairs', 'Scrobbler':'navigation.settingsMenu.scrobbler', 'Scheduling':'navigation.settingsMenu.scheduling', 'UI and Security':'navigation.settingsMenu.app', 'Maintenance':'navigation.settingsMenu.maintenance', 'Hub':'navigation.tabs.hub', 'Profile':'navigation.account.profileFallback'};
+const localBack = link => ({...link, label: BACK_KEYS[link.label] ? backLabel(BACK_KEYS[link.label], link.label) : link.label});
+
 export function pageBackLink(returnTo, currentHref, source = 'logs') {
+  return localBack(rawBackLink(returnTo, currentHref, source));
+}
+
+function rawBackLink(returnTo, currentHref, source) {
   const fallback = {href:'#main', label:'Main'};
   if (!returnTo) return fallback;
   try {

@@ -2,6 +2,9 @@
 /* Modal for configuring which features and provider instances contribute to the insights statistics. */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 
+const I18N = () => globalThis.window?.CW?.I18n || globalThis.window?.__cwI18n;
+const T = (key, vars) => I18N()?.t?.(key, vars) ?? key;
+const TH = (key, vars) => I18N()?.html?.(key, vars) ?? key;
 const PREF_KEY = "insights.settings.v1";
 const FeatureMeta = () => window.CW?.FeatureMeta || {};
 const ProviderMeta = () => window.CW?.ProviderMeta || {};
@@ -41,16 +44,16 @@ const overviewInstancesFor = (provider) => {
 
 const HTML = `
   <div class="cw-page-preferences">
-    <header class="pf-head"><div><h2>Insights settings</h2><p>Choose the features and instances shown in statistics.</p></div><button class="pf-button" id="is-close" type="button">Close</button></header>
+    <header class="pf-head"><div><h2>${TH("modals.insights.title")}</h2><p>${TH("modals.insights.sub")}</p></div><button class="pf-button" id="is-close" type="button">${TH("modals.insights.close")}</button></header>
     <div class="pf-body">
-      <section class="pf-section"><h3 id="is-feat-heading">Features</h3><div class="feature-list" id="is-feat-grid" role="group" aria-labelledby="is-feat-heading"></div></section>
-      <section class="pf-section"><h3>Provider instances <span id="is-head-chip"></span></h3><div id="is-loading" class="pf-note">Loading providers...</div><div class="prov-grid" id="is-prov-grid" style="display:none"></div></section>
+      <section class="pf-section"><h3 id="is-feat-heading">${TH("modals.insights.features")}</h3><div class="feature-list" id="is-feat-grid" role="group" aria-labelledby="is-feat-heading"></div></section>
+      <section class="pf-section"><h3>${TH("modals.insights.instances")} <span id="is-head-chip"></span></h3><div id="is-loading" class="pf-note">${TH("modals.insights.loading")}</div><div class="prov-grid" id="is-prov-grid" style="display:none"></div></section>
     </div>
-    <footer class="pf-footer"><span class="pf-note" id="is-toast" role="status">Changes apply to statistics.</span><div class="pf-actions"><button class="pf-button pf-reset" id="is-reset" type="button">Restore defaults</button><button class="pf-button primary" id="is-apply" type="button">Apply changes</button></div></footer>
+    <footer class="pf-footer"><span class="pf-note" id="is-toast" role="status">${TH("modals.insights.applyNote")}</span><div class="pf-actions"><button class="pf-button pf-reset" id="is-reset" type="button">${TH("modals.insights.restore")}</button><button class="pf-button primary" id="is-apply" type="button">${TH("modals.insights.apply")}</button></div></footer>
   </div>`;
 
 const parseInstanceList = (raw) => {
-  const out = { ids: [], labels: { default: "Default" } };
+  const out = { ids: [], labels: { default: T("modals.insights.default") } };
   for (const it of Array.isArray(raw) ? raw : []) {
     const id = typeof it === "string" ? it : String(it?.id || "").trim();
     if (!id || out.ids.includes(id)) continue;
@@ -86,7 +89,7 @@ const renderProviderCard = (provider, all, selected, labels) => {
   const key = String(provider || "").toLowerCase(), picked = new Set(selected), count = all.filter((id) => picked.has(id)).length;
   const label = provLabel(key), logo = ProviderMeta().logoPath?.(key) || "";
   const single = all.length === 1;
-  const instanceLabel = id => labels?.[key]?.[id] || (id === "default" ? "Default" : id);
+  const instanceLabel = id => labels?.[key]?.[id] || (id === "default" ? T("modals.insights.default") : id);
   return `<section class="pf-provider prov-card" data-provider="${h(key)}" data-single="${single ? 1 : 0}"><div class="pf-provider-head"><label class="pf-option"><input type="checkbox" ${single ? `data-inst="${h(all[0])}"` : "data-provider-all"} ${count === all.length ? "checked" : ""}>${logo ? `<img src="${h(logo)}" alt="">` : ""}<strong>${h(label)}</strong></label>${single ? `<span class="pf-provider-count">${h(instanceLabel(all[0]))}</span>` : `<span class="pf-provider-count" data-badge>${count} / ${all.length}</span>`}</div>${single ? "" : `<div class="pf-options">${all.map((id) => `<label class="pf-option"><input type="checkbox" data-inst="${h(id)}" ${picked.has(id) ? "checked" : ""}><span>${h(instanceLabel(id))}</span></label>`).join("")}</div>`}</section>`;
 };
 
@@ -127,11 +130,11 @@ export default {
     root.innerHTML = HTML;
 
     const toast = $("#is-toast", root), chip = $("#is-head-chip", root), count = $("#is-providers-count", root), loading = $("#is-loading", root), grid = $("#is-prov-grid", root);
-    const setToast = (msg = "") => { if (toast) toast.textContent = msg || "Changes apply to the statistics panel."; };
+    const setToast = (msg = "") => { if (toast) toast.textContent = msg || T("modals.insights.applyPanel"); };
     const refreshStats = () => {
       const providers = $$(".prov-card", root).length;
-      if (chip) chip.textContent = `${providers} providers`;
-      if (count) count.textContent = `${providers} provider${providers === 1 ? "" : "s"}`;
+      if (chip) chip.textContent = T("modals.insights.providers", {count: providers});
+      if (count) count.textContent = T("modals.insights.providers", {count: providers});
     };
     const updateCard = (card) => {
       if (!card) return;
@@ -152,7 +155,7 @@ export default {
       $$("button[data-feat]", root).forEach(button => button.setAttribute("aria-pressed", "true"));
       $$("input[data-inst]", root).forEach(input => { input.checked = true; });
       $$(".prov-card", root).forEach(updateCard);
-      setToast("Defaults restored. Apply changes to save.");
+      setToast(T("modals.insights.restored"));
     });
 
     try {
@@ -163,7 +166,7 @@ export default {
 
       const provKeys = Object.keys(byProvider).sort((a, b) => a.localeCompare(b));
       if (!provKeys.length) {
-        if (loading) loading.textContent = overviewHasScope() ? "No provider instances assigned to this profile." : "No configured providers yet.";
+        if (loading) loading.textContent = overviewHasScope() ? T("modals.insights.noneAssigned") : T("modals.insights.noneConfigured");
       } else {
         if (loading) loading.style.display = "none";
         if (grid) {
@@ -184,7 +187,7 @@ export default {
         const btn = ev.target?.closest?.("button[data-feat]");
         if (!btn) return;
         btn.setAttribute("aria-pressed", String(btn.getAttribute("aria-pressed") !== "true"));
-        setToast("Unsaved changes.");
+        setToast(T("modals.insights.unsaved"));
       });
 
       root.addEventListener("change", (ev) => {
@@ -196,7 +199,7 @@ export default {
           updateCard(card);
         }
         if (t.matches('input[data-inst]')) updateCard(t.closest('.prov-card'));
-        setToast("Unsaved changes.");
+        setToast(T("modals.insights.unsaved"));
       });
 
       $("#is-apply", root)?.addEventListener("click", () => {
@@ -206,7 +209,7 @@ export default {
           next.features.watchlist = true;
           const fallback = $("#is-feat-watchlist", root);
           if (fallback) fallback.setAttribute("aria-pressed", "true");
-          setToast("At least one feature stays enabled.");
+          setToast(T("modals.insights.oneFeature"));
         }
         next.instances = next.instances && typeof next.instances === "object" ? next.instances : {};
         for (const card of $$(".prov-card", root)) {
@@ -221,9 +224,9 @@ export default {
       });
     } catch (e) {
       console.error("Insight settings mount failed:", e);
-      if (chip) chip.textContent = "Error";
-      if (loading) loading.textContent = `Failed to load providers: ${String(e?.message || e)}`;
-      setToast("Failed to load insight settings. See console.");
+      if (chip) chip.textContent = T("modals.insights.error");
+      if (loading) loading.textContent = T("modals.insights.loadFailed", {error: String(e?.message || e)});
+      setToast(T("modals.insights.failed"));
     }
   }
 };

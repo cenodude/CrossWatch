@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from tests.i18n_source import english_source
 
 
 def test_normalize_scheduling_clamps_custom_interval_to_minimum() -> None:
@@ -214,7 +215,7 @@ def test_recurring_workflow_runs_pair_steps_in_order(monkeypatch) -> None:
 def test_standard_scheduler_toggle_enhancer_repairs_header_mount() -> None:
     from pathlib import Path
 
-    js = Path("assets/js/scheduler.js").read_text(encoding="utf-8")
+    js = english_source(Path("assets/js/scheduler.js").read_text(encoding="utf-8"))
 
     assert 'if (!sel) return;' in js
     assert 'let t = $("#schEnabledToggle")?.closest(".sch-std-toggle") || null;' in js
@@ -226,8 +227,8 @@ def test_standard_scheduler_toggle_enhancer_repairs_header_mount() -> None:
 def test_scheduler_tabs_keep_webhooks_out_of_standard_view() -> None:
     from pathlib import Path
 
-    scheduler_js = Path("assets/js/scheduler.js").read_text(encoding="utf-8")
-    settings_js = Path("assets/helpers/settings-ui.js").read_text(encoding="utf-8")
+    scheduler_js = english_source(Path("assets/js/scheduler.js").read_text(encoding="utf-8"))
+    settings_js = english_source(Path("assets/helpers/settings-ui.js").read_text(encoding="utf-8"))
 
     assert "#sec-scheduling .cw-subpanel[data-sub]{display:none;" in scheduler_js
     assert "#sec-scheduling .cw-subpanel[data-sub].active{display:grid}" in scheduler_js
@@ -236,6 +237,6 @@ def test_scheduler_tabs_keep_webhooks_out_of_standard_view() -> None:
     assert 'try { window.cwSchedProviderEnsure?.(); } catch {}' in scheduler_js
     assert 'webhooks.classList.toggle("hidden", want !== "webhooks");' in settings_js
     assert 'pHooks.dataset.sub = "webhooks";' in settings_js
-    page = Path("ui_frontend.py").read_text(encoding="utf-8")
+    page = english_source(Path("ui_frontend.py").read_text(encoding="utf-8"))
     assert 'data-sub="webhooks">Webhooks</button>' in page
     assert '<div id="sched_webhooks_mount"></div>' in page

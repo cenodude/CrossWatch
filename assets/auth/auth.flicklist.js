@@ -1,5 +1,7 @@
 // assets/auth/auth.flicklist.js
 (function () {
+  const T = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.t?.(key, vars) ?? key;
+  const TH = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.html?.(key, vars) ?? key;
   if (window._flicklistPatched) return;
   window._flicklistPatched = true;
 
@@ -85,7 +87,7 @@
     if (!expiresAt) { t.textContent = ""; return; }
     const left = Math.max(0, Math.ceil((expiresAt * 1000 - Date.now()) / 1000));
     const min = Math.floor(left / 60), sec = left % 60;
-    t.textContent = left ? `Expires in ${min}:${String(sec).padStart(2, "0")}` : "";
+    t.textContent = left ? T("connections.auth.expiresIn", {time: `${min}:${String(sec).padStart(2, "0")}`}) : "";
     if (!left) expireCode();
   }
 
@@ -93,7 +95,7 @@
     try { poller?.stop?.(); } catch {}
     clearInterval(countdownTimer);
     countdownTimer = 0;
-    const st = el("flicklist_qc_status"); if (st) st.textContent = "Link code expired. Start again.";
+    const st = el("flicklist_qc_status"); if (st) st.textContent = T("connections.auth.codeExpiredStart");
     const t = el("flicklist_qc_timer"); if (t) t.textContent = "";
     setPolling(false);
   }
@@ -102,7 +104,7 @@
     const code = txt(data?.user_code);
     const codeInput = el("flicklist_device_code"); if (codeInput) codeInput.value = code || "";
     const codeEl = el("flicklist_qc_code"); if (codeEl) codeEl.textContent = code || "--------";
-    const st = el("flicklist_qc_status"); if (st) st.textContent = "Waiting for approval...";
+    const st = el("flicklist_qc_status"); if (st) st.textContent = T("connections.auth.waitingApproval");
     expiresAt = Number(data?.expires_at || 0) || Math.floor(Date.now() / 1000) + Number(data?.expires_in || 900);
     clearInterval(countdownTimer);
     countdownTimer = setInterval(updateCountdown, 1000);
@@ -112,13 +114,13 @@
 
   function friendlyError(status) {
     const s = String(status || "").toLowerCase();
-    if (s === "missing_client_id") return "FlickList client id is missing.";
-    if (s === "authorization_pending") return "Still waiting for approval.";
-    if (s === "expired" || s === "expired_token") return "The code expired. Start again.";
-    if (s === "slow_down" || s === "rate_limited") return "FlickList asked us to slow down. Waiting a bit.";
-    if (s === "access_denied") return "FlickList approval was denied.";
-    if (s === "invalid_api_key") return "FlickList rejected that API key.";
-    return s ? s.replace(/_/g, " ") : "FlickList request failed.";
+    if (s === "missing_client_id") return T("connections.auth.gen.clientIdMissing", {provider: "FlickList"});
+    if (s === "authorization_pending") return T("connections.auth.stillWaiting");
+    if (s === "expired" || s === "expired_token") return T("connections.auth.codeExpiredStart2");
+    if (s === "slow_down" || s === "rate_limited") return T("connections.auth.gen.slowDown", {provider: "FlickList"});
+    if (s === "access_denied") return T("connections.auth.gen.approvalDenied", {provider: "FlickList"});
+    if (s === "invalid_api_key") return T("connections.auth.gen.rejectedKey", {provider: "FlickList"});
+    return s ? s.replace(/_/g, " ") : T("connections.auth.gen.requestFailedDot", {provider: "FlickList"});
   }
 
   async function hydrate() {
@@ -129,7 +131,7 @@
       const statusMethod = activeMethodFromStatus(d);
       const method = methodOverride || statusMethod;
       setMethodUI(method);
-      note(connected ? (statusMethod === "api_key" ? "Connected with API key" : "Connected with Device Code") : "Ready for Device Code.", connected, connected);
+      note(connected ? (statusMethod === "api_key" ? T("connections.auth.withKey") : T("connections.auth.withDevice")) : T("connections.auth.readyDevice"), connected, connected);
       Shared.maskSecret(el("flicklist_api_key"), !!d.api_key_configured);
       setApiHintVisible(!d.api_key_configured);
       if (d.pending && d.pending.user_code && !poller?.isRunning?.()) {
@@ -137,7 +139,7 @@
         startPolling(d.pending);
       }
     } catch (_) {
-      note("FlickList status check failed.", false);
+      note(T("connections.auth.gen.statusCheckFailed", {provider: "FlickList"}), false);
     }
   }
 
@@ -156,18 +158,18 @@
           if (s && !["authorization_pending", "pending"].includes(s)) return { state: "terminal", message: friendlyError(s) };
           return { state: "pending" };
         },
-        onPending: () => { const st = el("flicklist_qc_status"); if (st) st.textContent = "Waiting for approval..."; },
+        onPending: () => { const st = el("flicklist_qc_status"); if (st) st.textContent = T("connections.auth.waitingApproval"); },
         onAuthorized: async () => {
           stopPoll();
-          note("FlickList connected.", true);
+          note(T("connections.auth.gen.connectedDot", {provider: "FlickList"}), true);
           emitConnected();
           try { window.invalidateConfigCache?.(); } catch {}
           try { window.dispatchEvent(new CustomEvent("auth-changed")); } catch {}
           await hydrate();
         },
-        onExpired: () => { expireCode(); note("The FlickList code expired.", false); },
-        onTerminal: (verdict) => { stopPoll(); note(verdict?.message || "FlickList authorization failed.", false); },
-        onTimeout: () => { expireCode(); note("The FlickList code expired.", false); },
+        onExpired: () => { expireCode(); note(T("connections.auth.gen.codeExpired", {provider: "FlickList"}), false); },
+        onTerminal: (verdict) => { stopPoll(); note(verdict?.message || T("connections.auth.gen.authFailedDot", {provider: "FlickList"}), false); },
+        onTimeout: () => { expireCode(); note(T("connections.auth.gen.codeExpired", {provider: "FlickList"}), false); },
       });
     }
     poller.start({ intervalMs: Math.max(5, Number(data?.interval || 5)) * 1000, deadlineMs: (Number(data?.expires_at || 0) || 0) * 1000 });
@@ -176,8 +178,8 @@
   async function saveApiKey() {
     const input = el("flicklist_api_key");
     const state = Shared.readSecretField(input);
-    if (state.masked) { note("API key unchanged.", true); return; }
-    if (!state.value) { note("Enter your FlickList API key.", false); return; }
+    if (state.masked) { note(T("connections.auth.keyUnchangedDot"), true); return; }
+    if (!state.value) { note(T("connections.auth.gen.enterApiKeyDot", {provider: "FlickList"}), false); return; }
     try {
       const r = await fetchJSON(flApi("/api/flicklist/save"), {
         method: "POST",
@@ -190,22 +192,22 @@
       Shared.maskSecret(input, !!(state.value || d.username));
       setApiHintVisible(false);
       methodOverride = "";
-      note(d.username ? "Connected as " + d.username : "FlickList saved.", true);
+      note(d.username ? T("connections.auth.connectedAs", {name: d.username}) : T("connections.auth.gen.savedDot", {provider: "FlickList"}), true);
       emitConnected();
       try { window.invalidateConfigCache?.(); } catch {}
       try { window.dispatchEvent(new CustomEvent("auth-changed")); } catch {}
       await hydrate();
     } catch (e) {
-      note(e?.message || "FlickList save failed.", false);
+      note(e?.message || T("connections.auth.gen.saveFailedDot", {provider: "FlickList"}), false);
     }
   }
 
   async function startDevice() {
     stopPoll();
-    const win = Shared.openWaitWindow("FlickList", "Requesting a FlickList code...", "FLICKLIST");
+    const win = Shared.openWaitWindow("FlickList", T("connections.auth.gen.requestingCode", {provider: "FlickList"}), "FLICKLIST");
     const startBtn = el("flicklist_device_start");
     if (startBtn) { startBtn.disabled = true; startBtn.classList.add("busy"); }
-    note("Requesting a FlickList link code...", true, false);
+    note(T("connections.auth.gen.requestingLinkCode", {provider: "FlickList"}), true, false);
     try {
       const r = await fetchJSON(flApi("/api/flicklist/device/start"), {
         method: "POST",
@@ -218,14 +220,14 @@
       const url = txt(d.verification_uri_complete) || txt(d.verification_uri) || VERIFY_URL;
       setCode(d);
       startPolling(d);
-      note("Enter the code at flicklist.tv/link.", true, false);
+      note(T("connections.auth.fl.enterCode"), true, false);
       if (!Shared.showWaitCode(win, { key: "FLICKLIST", label: "FlickList", code: txt(d.user_code).toUpperCase(), url })) {
-        note("Popup blocked - open flicklist.tv/link and enter the code.", false);
+        note(T("connections.auth.fl.popup"), false);
       }
     } catch (e) {
       try { if (win && !win.closed) win.close(); } catch (_) {}
       stopPoll();
-      note(e?.message || "Could not start FlickList device login.", false);
+      note(e?.message || T("connections.auth.gen.deviceStartFailed", {provider: "FlickList"}), false);
     } finally {
       if (startBtn) { startBtn.disabled = false; startBtn.classList.remove("busy"); }
     }
@@ -234,7 +236,7 @@
   async function cancelDevice() {
     try { await fetchJSON(flApi("/api/flicklist/device/cancel"), { method: "POST", cache: "no-store" }); } catch (_) {}
     stopPoll();
-    note("FlickList login cancelled.", false);
+    note(T("connections.auth.gen.cancelledDot", {provider: "FlickList"}), false);
   }
 
   async function disconnect() {
@@ -248,11 +250,11 @@
       setApiHintVisible(true);
       const code = el("flicklist_device_code"); if (code) code.value = "";
       const codeEl = el("flicklist_qc_code"); if (codeEl) codeEl.textContent = "--------";
-      note("FlickList disconnected.", false);
+      note(T("connections.auth.gen.disconnectedDot", {provider: "FlickList"}), false);
       try { window.invalidateConfigCache?.(); } catch {}
       try { window.dispatchEvent(new CustomEvent("auth-changed")); } catch {}
     } catch (_) {
-      note("Could not delete FlickList connection.", false);
+      note(T("connections.auth.gen.couldNotDeleteConnection", {provider: "FlickList"}), false);
     }
   }
 

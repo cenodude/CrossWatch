@@ -3,6 +3,8 @@
 /* SyncBar UI component for showing sync progress in the header. */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 (() => {
+  const T = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.t?.(key, vars) ?? key;
+  const TH = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.html?.(key, vars) ?? key;
   const Anch = Object.freeze({ start0: 0, preStart: 35, preEnd: 57, postEnd: 67, applyEnd: 97, done: 100 });
   const clamp = (n, lo = 0, hi = 100) => Math.max(lo, Math.min(hi, Math.round(n)));
   const POST_DONE_GRACE_MS = 20000;
@@ -10,7 +12,7 @@
   const REPLAY_BURST_MS = 500;
   const ETA_MIN_SECONDS = 10;
   const FLY_BADGE_GAP = 12;
-  const WRITE_VERBS = { add: "Adding to", update: "Updating", remove: "Removing from" };
+  const WRITE_VERBS = { add: "dashboard.syncbar.write.add", update: "dashboard.syncbar.write.update", remove: "dashboard.syncbar.write.remove" };
   const writeOp = (d) => (String(d.event || "").match(/^apply:(add|update|remove):/) || [])[1] || "";
   const writeState = (d, prev) => {
     const now = Date.now();
@@ -31,15 +33,15 @@
     const seconds = (Date.now() - w.at) / 1000;
     if (!w.total || w.done >= w.total || w.done <= w.base || seconds < ETA_MIN_SECONDS) return "";
     const remaining = (w.total - w.done) * seconds / (w.done - w.base);
-    return remaining < 60 ? "under a minute left" : `about ${Math.round(remaining / 60)} min left`;
+    return remaining < 60 ? T("dashboard.syncbar.underMinute") : T("dashboard.syncbar.minutesLeft", { count: Math.round(remaining / 60) });
   };
   const readLabel = (d) => [
     [d.provider || d.dst, d.feature].filter(Boolean).join(" "),
-    +d.total > 0 ? `${(+d.done || 0).toLocaleString()} of ${(+d.total).toLocaleString()}` : ""
+    +d.total > 0 ? T("dashboard.syncbar.progressOf", { done: +d.done || 0, total: +d.total }) : ""
   ].filter(Boolean).join(" · ");
   const writeLabel = (w) => [
-    [WRITE_VERBS[w.op] || "Writing to", w.dst, w.feature].filter(Boolean).join(" "),
-    w.total ? `${w.done.toLocaleString()} of ${w.total.toLocaleString()}` : "",
+    T(WRITE_VERBS[w.op] || "dashboard.syncbar.write.generic", { target: [w.dst, w.feature].filter(Boolean).join(" ") }).trim(),
+    w.total ? T("dashboard.syncbar.progressOf", { done: w.done, total: w.total }) : "",
     timeLeft(w)
   ].filter(Boolean).join(" · ");
   const asEpochSec = (v) => {
@@ -441,7 +443,7 @@
       const meta = document.createElement("div");
       const label = document.createElement("div");
       label.className = "sb-label";
-      label.textContent = "Sync status";
+      label.textContent = T("dashboard.progress.title");
       const phase = document.createElement("div");
       phase.className = "sb-phase";
       const phaseText = document.createElement("div");
@@ -455,7 +457,7 @@
       note.className = "sb-note hide";
       const badge = document.createElement("div");
       badge.className = "sb-badge";
-      badge.textContent = "Idle";
+      badge.textContent = T("dashboard.progress.idle");
       headSide.append(note, badge);
       head.append(headMain, headSide);
 
@@ -467,7 +469,7 @@
       fly.className = "sb-fly hide";
       const steps = document.createElement("div");
       steps.className = "sb-steps";
-      [["Start", "start"], ["Discovering", "discovering"], ["Syncing", "syncing"], ["Done", "done"]].forEach(([txt, key]) => {
+      [[T("dashboard.progress.phase.start"), "start"], [T("dashboard.progress.phase.discovering"), "discovering"], [T("dashboard.progress.phase.syncing"), "syncing"], [T("dashboard.progress.phase.done"), "done"]].forEach(([txt, key]) => {
         const s = document.createElement("span");
         s.textContent = txt;
         s.dataset.step = key;
@@ -476,7 +478,7 @@
       rail.append(fill, fly);
       const mobile = document.createElement("div");
       mobile.className = "sb-mobile";
-      mobile.innerHTML = '<div class="sb-mobile-hero"><div class="sb-mobile-ring" aria-hidden="true"><div class="sb-mobile-ring-core"><span class="sb-mobile-symbol material-symbols-rounded">sync</span><strong class="sb-mobile-percent"></strong></div></div><div class="sb-mobile-copy"><span class="sb-mobile-eyebrow">YOUR SYNC</span><strong class="sb-mobile-title"></strong><p class="sb-mobile-detail"></p></div></div><div class="sb-mobile-timeline"><span data-step="start">Start</span><span data-step="discovering">Discover</span><span data-step="syncing">Sync</span><span data-step="done">Done</span></div>';
+      mobile.innerHTML = '<div class="sb-mobile-hero"><div class="sb-mobile-ring" aria-hidden="true"><div class="sb-mobile-ring-core"><span class="sb-mobile-symbol material-symbols-rounded">sync</span><strong class="sb-mobile-percent"></strong></div></div><div class="sb-mobile-copy"><span class="sb-mobile-eyebrow">' + TH("dashboard.syncbar.eyebrow") + '</span><strong class="sb-mobile-title"></strong><p class="sb-mobile-detail"></p></div></div><div class="sb-mobile-timeline"><span data-step="start">' + TH("dashboard.progress.phase.start") + '</span><span data-step="discovering">' + TH("dashboard.syncbar.stepDiscover") + '</span><span data-step="syncing">' + TH("dashboard.syncbar.stepSync") + '</span><span data-step="done">' + TH("dashboard.progress.phase.done") + '</span></div>';
       host.append(mobile, head, rail, steps);
       dom = { head, badge, phaseText, note, rail, fill, fly, steps, mobile };
       this._dom = dom;
@@ -516,19 +518,20 @@
       const isRunning = this.isRunning();
       const shouldFlow = isRunning && !hardDone;
       const currentStep = hardDone ? "done" : this.timeline.post ? "syncing" : this.timeline.pre ? "discovering" : this.timeline.start ? "start" : "";
-      const statusText = this._hadError ? "Error" : hardDone ? "Synced" : this._waiting ? "Waiting" : this._pendingDone ? "Finalizing" : this.timeline.post ? "Syncing" : this.timeline.pre ? "Discovering" : isRunning ? "Starting" : "Idle";
+      const statusKey = this._hadError ? "error" : hardDone ? "synced" : this._waiting ? "waiting" : this._pendingDone ? "finalizing" : this.timeline.post ? "syncing" : this.timeline.pre ? "discovering" : isRunning ? "starting" : "idle";
+      const statusText = T(`dashboard.syncbar.status.${statusKey}`);
       const settled = hardDone || this._hadError;
       const doneAge = settled && this._finishedAt ? (window.relTimeFromEpoch?.(this._finishedAt) || "") : "";
       const phaseLabel = (this._hadError
-        ? `Sync failed${this._exitCode != null ? ` (code ${this._exitCode})` : ""}`
-        : hardDone ? "Completed successfully"
-        : this._waiting ? "Waiting for your sync pairs"
-        : this._pendingDone ? "Wrapping up final tasks"
+        ? (this._exitCode != null ? T("dashboard.syncbar.failedCode", { code: String(this._exitCode) }) : T("dashboard.insights.syncFailed"))
+        : hardDone ? T("dashboard.syncbar.completed")
+        : this._waiting ? T("dashboard.sync.waitingPairs")
+        : this._pendingDone ? T("dashboard.syncbar.wrappingUp")
         : this._writing ? writeLabel(this._writing)
-        : this._reading ? `Reading ${this._reading}`
-        : this.timeline.post ? "Applying changes across enabled features"
-        : this.timeline.pre ? "Scanning current state before applying changes"
-        : "Waiting for the next sync run") + (doneAge ? ` · ${doneAge}` : "");
+        : this._reading ? T("dashboard.syncbar.reading", { target: this._reading })
+        : this.timeline.post ? T("dashboard.syncbar.applying")
+        : this.timeline.pre ? T("dashboard.syncbar.scanning")
+        : T("dashboard.progress.waiting")) + (doneAge ? ` · ${doneAge}` : "");
       this._trackAge(!!doneAge);
 
       badge.textContent = statusText;
@@ -539,8 +542,8 @@
       const mobile = dom.mobile;
       mobile.dataset.state = this._hadError ? "error" : hardDone ? "done" : isRunning ? "running" : "idle";
       mobile.style.setProperty("--sb-mobile-progress", `${this._pctMemo}%`);
-      mobile.querySelector(".sb-mobile-title").textContent = statusText === "Idle" ? "Ready to sync" : statusText === "Synced" ? "All up to date" : statusText;
-      mobile.querySelector(".sb-mobile-detail").textContent = statusText === "Idle" ? "Your next sync starts here." : statusText === "Starting" ? "Preparing your connected services." : phaseLabel;
+      mobile.querySelector(".sb-mobile-title").textContent = statusKey === "idle" ? T("dashboard.syncbar.ready") : statusKey === "synced" ? T("dashboard.syncbar.upToDate") : statusText;
+      mobile.querySelector(".sb-mobile-detail").textContent = statusKey === "idle" ? T("dashboard.syncbar.nextStartsHere") : statusKey === "starting" ? T("dashboard.syncbar.preparing") : phaseLabel;
       let mobilePair = mobile.querySelector(".sb-mobile-pair");
       if (!mobilePair) {
         mobilePair = document.createElement("p");

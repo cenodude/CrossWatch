@@ -2,6 +2,8 @@
 // CrossWatch - Floppy auth UI
 // Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 (function () {
+  const T = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.t?.(key, vars) ?? key;
+  const TH = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.html?.(key, vars) ?? key;
   if (window._floppyAuthPatched) return;
   window._floppyAuthPatched = true;
 
@@ -16,7 +18,7 @@
     sectionId: "sec-floppy",
     selectId: "floppy_instance",
     storageKey: "cw.ui.floppy.auth.instance.v1",
-    title: "Select which Floppy server this config applies to.",
+    title: T("connections.auth.gen.selectServer", {provider: "Floppy"}),
   });
 
   const api = (path) => profile ? profile.api(path) : String(path || "");
@@ -25,23 +27,23 @@
   function friendlyError(code) {
     const key = String(code || "").trim();
     switch (key) {
-      case "server_url_required": return "Enter Floppy server URL";
-      case "api_token_required": return "Enter your Floppy API token";
-      case "invalid_api_token": return "Invalid Floppy API token";
-      case "validation_timeout": return "Floppy validation timed out";
-      case "unreachable": return "Could not reach Floppy";
-      case "invalid_ssl": return "Floppy SSL validation failed";
-      case "validation_bad_response": return "Floppy returned an unexpected response";
-      case "server_error": return "Floppy server error";
+      case "server_url_required": return T("connections.validation.serverUrlRequired", {provider: "Floppy"});
+      case "api_token_required": return T("connections.validation.apiTokenRequired", {provider: "Floppy"});
+      case "invalid_api_token": return T("connections.validation.invalidApiToken", {provider: "Floppy"});
+      case "validation_timeout": return T("connections.validation.timeout", {provider: "Floppy"});
+      case "unreachable": return T("connections.validation.reachFailed", {provider: "Floppy"});
+      case "invalid_ssl": return T("connections.validation.sslFailed", {provider: "Floppy"});
+      case "validation_bad_response": return T("connections.validation.returnedUnexpected", {provider: "Floppy"});
+      case "server_error": return T("connections.validation.serverError", {provider: "Floppy"});
       default:
-        if (key.startsWith("validation_http_")) return "Floppy validation failed";
-        return key || "Not connected";
+        if (key.startsWith("validation_http_")) return T("connections.validation.httpFailed", {provider: "Floppy"});
+        return key || T("connections.auth.notConnected");
     }
   }
 
   function setConn(ok, msg) {
     try { Shared.setConnectLocked("floppy_connect", !!ok); } catch {}
-    return Shared.setStatus("floppy_msg", ok, msg || (ok ? "Connected" : "Not connected"));
+    return Shared.setStatus("floppy_msg", ok, msg || (ok ? T("connections.auth.connected") : T("connections.auth.notConnected")));
   }
 
   function ensureUI() {
@@ -52,9 +54,9 @@
     try {
       const r = await Shared.fetchJSON(api("/api/floppy/status?verify=1"), { cache: "no-store" });
       const ok = !!(r.ok && r.data && r.data.connected);
-      setConn(ok, ok ? "Connected" : friendlyError(r.data && r.data.reason));
+      setConn(ok, ok ? T("connections.auth.connected") : friendlyError(r.data && r.data.reason));
     } catch {
-      setConn(false, "Could not connect to Floppy");
+      setConn(false, T("connections.validation.connectFailed", {provider: "Floppy"}));
     }
   }
 
@@ -85,9 +87,9 @@
     const tokenInput = el("floppy_token");
     const token = txt(tokenInput?.value || "");
     const verify_ssl = !!el("floppy_verify_ssl")?.checked;
-    if (!server) { note("Enter Floppy server URL"); return; }
+    if (!server) { note(T("connections.validation.serverUrlRequired", {provider: "Floppy"})); return; }
     if (!token && !(tokenInput && tokenInput.dataset.hasKey === "1")) {
-      note("Enter your Floppy API token");
+      note(T("connections.validation.apiTokenRequired", {provider: "Floppy"}));
       return;
     }
     try {
@@ -98,10 +100,10 @@
       });
       if (!r.ok || (r.data && r.data.ok === false)) throw new Error(friendlyError(r.data?.error || "save_failed"));
       if (token) Shared.maskSecret(tokenInput, true);
-      note("Floppy saved");
+      note(T("connections.auth.gen.saved", {provider: "Floppy"}));
       await refresh();
     } catch (e) {
-      const msg = e && e.message ? e.message : "Saving Floppy failed";
+      const msg = e && e.message ? e.message : T("connections.validation.saveFailed", {provider: "Floppy"});
       setConn(false, msg);
       note(msg);
     }
@@ -115,9 +117,9 @@
       if (el("floppy_server")) el("floppy_server").value = "";
       Shared.maskSecret(el("floppy_token"), false);
       setConn(false);
-      note("Floppy disconnected");
+      note(T("connections.auth.gen.disconnected", {provider: "Floppy"}));
     } catch (e) {
-      note("Floppy disconnect failed" + (e && e.message ? ": " + e.message : ""));
+      note(T("connections.auth.gen.disconnectFailed", {provider: "Floppy"}) + (e && e.message ? ": " + e.message : ""));
     }
   }
 

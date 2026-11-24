@@ -6,12 +6,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {runInNewContext} from 'node:vm';
+import './i18n-vm-setup.mjs';
+import {englishI18n, withI18n} from './i18n-test-helper.mjs';
 
 const pending = [];
 let ready = true;
 let mode;
 const fetched = [];
-globalThis.window = {setTimeout, clearTimeout};
+globalThis.window = {setTimeout, clearTimeout, __cwI18n: englishI18n()};
 globalThis.document = {getElementById: () => ({}), querySelector: () => null};
 globalThis.fetch = async url => {
   fetched.push(String(url));
@@ -31,10 +33,10 @@ test('model picker filters specialist names, preserves IDs and invalidates stale
     createElement: element, addEventListener(name, fn) { listeners[name] = fn; }, querySelectorAll: () => []};
   let resolveTest;
   const requests = [];
-  runInNewContext(source, {window: {}, document: doc, fetch: async (url, opts) => {
+  runInNewContext(source, withI18n({window: {}, document: doc, fetch: async (url, opts) => {
     requests.push({url, body: JSON.parse(opts.body)});
     return {ok: true, json: async () => url.endsWith('/models') ? {models: ['models/chat-preview', 'models/robotics-2-preview', 'text-embedding-3', 'local-model', 'models/pro-latest', 'models/flash-latest', 'models/preview-latest', 'local:latest']} : new Promise(resolve => { resolveTest = resolve; })};
-  }});
+  }}));
   const click = id => listeners.click({target: {closest: selector => selector === `#${id}` ? {} : null}});
   doc.getElementById('assistant_base_url').value = 'http://local.test/v1';
   click('btn-assistant-models');
@@ -155,7 +157,7 @@ test('runSync returns outcomes and start-only calls never cancel existing runs',
       return response;
     },
   };
-  const run = runInNewContext(`${body}\nrunSync`, context);
+  const run = runInNewContext(`${body}\nrunSync`, withI18n(context));
   assert.equal((await run({pair_id: 'p1', startOnly: true})).error, 'A sync is already running');
   assert.equal(cancelled, 0);
   await run('p1');
@@ -534,7 +536,7 @@ test('the sparkle button opens wiki mode but analyze buttons stay hidden', async
   const answers = [{ok: true, mode: 'wiki', ready: false, wiki_help: true, base_url: '', model: ''}, {ok: true, mode: 'off', ready: false, wiki_help: false, base_url: '', model: ''},
     {ok: true, mode: 'full', ready: true, enabled: true, wiki_help: false, base_url: 'http://x.test/v1', model: 'm'}];
   const win = {};
-  runInNewContext(source, {window: win, document: doc, fetch: async () => ({ok: true, json: async () => answers.shift()})});
+  runInNewContext(source, withI18n({window: win, document: doc, fetch: async () => ({ok: true, json: async () => answers.shift()})}));
   const ask = doc.getElementById('cw-ask-button');
 
   await win.cwAssistantSettings.refresh();
@@ -560,7 +562,7 @@ test('Profile enables AI help without a settings form', async () => {
   const nodes = {'cw-nav-profile-menu': {}, 'cw-ask-button': ask};
   const doc = {documentElement: root, getElementById: id => nodes[id] || null, addEventListener() {}, querySelectorAll: () => []};
   const win = {};
-  runInNewContext(source, {window: win, document: doc, fetch: async () => ({ok: true, json: async () => ({mode: 'full', ready: true})})});
+  runInNewContext(source, withI18n({window: win, document: doc, fetch: async () => ({ok: true, json: async () => ({mode: 'full', ready: true})})}));
   await win.cwAssistantSettings.refresh();
   assert.equal(ask.disabled, false);
   assert.equal(root.dataset.cwAssistant, 'on');

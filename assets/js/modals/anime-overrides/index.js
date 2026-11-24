@@ -1,6 +1,9 @@
 /* assets/js/modals/anime-overrides/index.js */
 /* Anime mapping overrides modal. */
 
+const I18N = () => globalThis.window?.CW?.I18n || globalThis.window?.__cwI18n;
+const T = (key, vars) => I18N()?.t?.(key, vars) ?? key;
+const TH = (key, vars) => I18N()?.html?.(key, vars) ?? key;
 const REQUEST_TIMEOUT_MS = 20_000;
 const API = "/api/anime-mapping/overrides";
 
@@ -33,7 +36,7 @@ async function apiJson(url, opts = {}) {
     if (opts.method && opts.method !== "GET" && (url === API || url.startsWith(`${API}/`))) window.dispatchEvent(new CustomEvent("cw:anime-mappings-changed"));
     return data;
   } catch (e) {
-    if (e?.name === "AbortError") throw new Error("Request timed out");
+    if (e?.name === "AbortError") throw new Error(T("modals.animeOverrides.timedOut"));
     throw e;
   } finally {
     window.clearTimeout(timeout);
@@ -66,7 +69,7 @@ function ruleSummary(row) {
   const span = row.episode_to == null
     ? `${esc(row.episode_start_at)}&hellip;`
     : `${esc(row.episode_start_at)}-${Number(row.episode_start_at) + (Number(row.episode_to) - Number(row.episode_from))}`;
-  return `${from} S${esc(row.match_season)} E${esc(row.episode_from)}-${last} &rarr; ${to} episode ${span}`;
+  return `${from} S${esc(row.match_season)} E${esc(row.episode_from)}-${last} &rarr; ${to} ${TH("modals.animeOverrides.episodeWord")} ${span}`;
 }
 
 export default {
@@ -94,48 +97,48 @@ export default {
           <div class="ao-head-left">
             <div class="ao-head-icon"><span class="material-symbols-rounded" aria-hidden="true">rule_settings</span></div>
             <div>
-              <div class="ao-title">Custom anime mappings</div>
-              <div class="ao-sub">Your rules always win over the AniBridge dataset and the CW Anime DB.</div>
+              <div class="ao-title">${TH("modals.animeOverrides.title")}</div>
+              <div class="ao-sub">${TH("modals.animeOverrides.sub")}</div>
             </div>
           </div>
-          <button type="button" class="ao-close" id="ao-close" title="Close" aria-label="Close"><span class="material-symbols-rounded" aria-hidden="true">close</span></button>
+          <button type="button" class="ao-close" id="ao-close" title="${TH("modals.animeOverrides.close")}" aria-label="${TH("modals.animeOverrides.close")}"><span class="material-symbols-rounded" aria-hidden="true">close</span></button>
         </div>
 
         <div class="ao-body cw-scrollbars">
           <section class="ao-card">
             <div class="ao-card-head">
               <div>
-                <h3 id="ao-form-title">Add a rule</h3>
-                <p>Point a show or movie at the anime entry it really is. Leave the episode fields empty to only correct the ID.</p>
+                <h3 id="ao-form-title">${TH("modals.animeOverrides.addRule")}</h3>
+                <p>${TH("modals.animeOverrides.addRuleHelp")}</p>
               </div>
             </div>
 
             <div class="ao-grid">
-              <label><span>This is a</span>
+              <label><span>${TH("modals.animeOverrides.thisIsA")}</span>
                 <select id="ao-media-type">
-                  <option value="show">TV show</option>
-                  <option value="movie">Movie</option>
+                  <option value="show">${TH("modals.animeOverrides.tvShow")}</option>
+                  <option value="movie">${TH("modals.animeOverrides.movie")}</option>
                 </select>
               </label>
-              <label><span>Name (optional)</span>
+              <label><span>${TH("modals.animeOverrides.nameOptional")}</span>
                 <input id="ao-title" type="text" placeholder="Dragon Ball Z" maxlength="200">
               </label>
             </div>
 
             <div class="ao-rule-row">
               <div class="ao-rule-side">
-                <div class="ao-rule-legend">When the item is</div>
+                <div class="ao-rule-legend">${TH("modals.animeOverrides.whenItem")}</div>
                 <div class="ao-inline">
                   <select id="ao-match-provider"></select>
                   <input id="ao-match-id" type="text" placeholder="ID" maxlength="64">
                 </div>
-                <label class="ao-season" id="ao-season-wrap"><span>Season</span>
-                  <input id="ao-match-season" type="number" min="0" step="1" placeholder="any">
+                <label class="ao-season" id="ao-season-wrap"><span>${TH("modals.animeOverrides.season")}</span>
+                  <input id="ao-match-season" type="number" min="0" step="1" placeholder="${TH("modals.animeOverrides.any")}">
                 </label>
               </div>
               <span class="material-symbols-rounded ao-arrow" aria-hidden="true">arrow_forward</span>
               <div class="ao-rule-side">
-                <div class="ao-rule-legend">Treat it as</div>
+                <div class="ao-rule-legend">${TH("modals.animeOverrides.treatAs")}</div>
                 <div class="ao-inline">
                   <select id="ao-target-namespace"></select>
                   <div class="ao-target-id">
@@ -153,56 +156,56 @@ export default {
               <div class="ao-finder-head">
                 <span class="material-symbols-rounded" aria-hidden="true">travel_explore</span>
                 <div>
-                  <strong>Look up on SIMKL</strong>
-                  <p>SIMKL targets only. Seasons are separate records there, so pick the exact one, or build the whole season chain in one go.</p>
+                  <strong>${TH("modals.animeOverrides.lookUpSimkl")}</strong>
+                  <p>${TH("modals.animeOverrides.lookUpHelp")}</p>
                 </div>
-                <button type="button" class="ao-icon" id="ao-finder-close" title="Close lookup"><span class="material-symbols-rounded" aria-hidden="true">close</span></button>
+                <button type="button" class="ao-icon" id="ao-finder-close" title="${TH("modals.animeOverrides.closeLookup")}"><span class="material-symbols-rounded" aria-hidden="true">close</span></button>
               </div>
               <div class="ao-finder-search">
-                <input id="ao-finder-q" type="text" placeholder="Search SIMKL by title" maxlength="200">
-                <button type="button" class="ao-btn" id="ao-finder-go">Search</button>
+                <input id="ao-finder-q" type="text" placeholder="${TH("modals.animeOverrides.searchSimkl")}" maxlength="200">
+                <button type="button" class="ao-btn" id="ao-finder-go">${TH("modals.animeOverrides.search")}</button>
               </div>
               <p class="ao-finder-status" id="ao-finder-status"></p>
               <div class="ao-finder-list" id="ao-finder-list"></div>
             </section>
 
             <div class="ao-episodes" id="ao-episodes">
-              <div class="ao-rule-legend">Episode numbers (optional)</div>
+              <div class="ao-rule-legend">${TH("modals.animeOverrides.episodeNumbers")}</div>
               <div class="ao-grid ao-grid-3">
-                <label><span>First episode</span><input id="ao-ep-from" type="number" min="1" step="1" placeholder="1"></label>
-                <label><span>Last episode</span><input id="ao-ep-to" type="number" min="1" step="1" placeholder="leave empty for open ended"></label>
-                <label><span>Counts as</span><input id="ao-ep-start" type="number" min="1" step="1" placeholder="40"></label>
+                <label><span>${TH("modals.animeOverrides.firstEpisode")}</span><input id="ao-ep-from" type="number" min="1" step="1" placeholder="1"></label>
+                <label><span>${TH("modals.animeOverrides.lastEpisode")}</span><input id="ao-ep-to" type="number" min="1" step="1" placeholder="${TH("modals.animeOverrides.openEnded")}"></label>
+                <label><span>${TH("modals.animeOverrides.countsAs")}</span><input id="ao-ep-start" type="number" min="1" step="1" placeholder="40"></label>
               </div>
               <p class="ao-hint" id="ao-preview"></p>
             </div>
 
-            <label class="ao-note"><span>Note (optional)</span>
-              <input id="ao-note" type="text" placeholder="Why this rule exists" maxlength="500">
+            <label class="ao-note"><span>${TH("modals.animeOverrides.noteOptional")}</span>
+              <input id="ao-note" type="text" placeholder="${TH("modals.animeOverrides.whyRule")}" maxlength="500">
             </label>
 
             <div class="ao-form-actions">
               <span class="ao-status" id="ao-status"></span>
-              <button type="button" class="ao-btn" id="ao-reset" hidden>Cancel edit</button>
-              <button type="button" class="ao-btn primary" id="ao-save">Add rule</button>
+              <button type="button" class="ao-btn" id="ao-reset" hidden>${TH("modals.animeOverrides.cancelEdit")}</button>
+              <button type="button" class="ao-btn primary" id="ao-save">${TH("modals.animeOverrides.addRuleBtn")}</button>
             </div>
           </section>
 
           <section class="ao-card">
             <div class="ao-card-head compact has-tools">
               <div>
-                <h3>Your rules <span class="ao-count" id="ao-count"></span></h3>
-                <p>Rules are checked in order, top first. A rule that targets a service directly wins for that service. Disabled rules are ignored.</p>
+                <h3>${TH("modals.animeOverrides.yourRules")} <span class="ao-count" id="ao-count"></span></h3>
+                <p>${TH("modals.animeOverrides.rulesHelp")}</p>
               </div>
               <div class="ao-tools">
-                <select id="ao-import-mode" title="How an imported file is applied">
-                  <option value="merge">Merge into my rules</option>
-                  <option value="replace">Replace all rules</option>
+                <select id="ao-import-mode" title="${TH("modals.animeOverrides.importMode")}">
+                  <option value="merge">${TH("modals.animeOverrides.merge")}</option>
+                  <option value="replace">${TH("modals.animeOverrides.replace")}</option>
                 </select>
                 <button type="button" class="ao-btn ao-btn-icon" id="ao-import">
-                  <span class="material-symbols-rounded" aria-hidden="true">upload</span>Import
+                  <span class="material-symbols-rounded" aria-hidden="true">upload</span>${TH("modals.animeOverrides.import")}
                 </button>
                 <button type="button" class="ao-btn ao-btn-icon" id="ao-export">
-                  <span class="material-symbols-rounded" aria-hidden="true">download</span>Export
+                  <span class="material-symbols-rounded" aria-hidden="true">download</span>${TH("modals.animeOverrides.export")}
                 </button>
                 <input type="file" id="ao-file" accept="application/json,.json" hidden>
               </div>
@@ -261,9 +264,9 @@ export default {
       const isSimkl = el("ao-target-namespace").value === "simkl";
       find.hidden = false;
       find.disabled = busy || !isSimkl;
-      find.title = isSimkl ? "Look this up on SIMKL" : "Lookup is available for SIMKL targets only";
+      find.title = isSimkl ? T("modals.animeOverrides.lookThisUp") : T("modals.animeOverrides.simklOnly");
       note.hidden = isSimkl;
-      note.textContent = isSimkl ? "" : "Lookup is available for SIMKL targets only.";
+      note.textContent = isSimkl ? "" : T("modals.animeOverrides.simklOnlyDot");
       if (!isSimkl) el("ao-finder").hidden = true;
     }
 
@@ -310,16 +313,15 @@ export default {
         el("ao-preview").textContent = "";
         return;
       }
-      const last = d.episode_to == null ? "onwards" : `E${d.episode_to}`;
-      const endsAt = d.episode_to == null ? "onwards" : String(d.episode_start_at + (d.episode_to - d.episode_from));
-      el("ao-preview").textContent =
-        `S${d.match_season ?? "?"}E${d.episode_from} to ${last} will be written as episode ${d.episode_start_at} to ${endsAt}.`;
+      const last = d.episode_to == null ? T("modals.animeOverrides.onwards") : `E${d.episode_to}`;
+      const endsAt = d.episode_to == null ? T("modals.animeOverrides.onwards") : String(d.episode_start_at + (d.episode_to - d.episode_from));
+      el("ao-preview").textContent = T("modals.animeOverrides.preview", {from: `S${d.match_season ?? "?"}E${d.episode_from}`, last, start: String(d.episode_start_at), end: endsAt});
     }
 
     function resetForm() {
       editingId = "";
-      el("ao-form-title").textContent = "Add a rule";
-      el("ao-save").textContent = "Add rule";
+      el("ao-form-title").textContent = T("modals.animeOverrides.addRule");
+      el("ao-save").textContent = T("modals.animeOverrides.addRuleBtn");
       el("ao-reset").hidden = true;
       ["ao-title", "ao-match-id", "ao-target-id", "ao-note", "ao-match-season", "ao-ep-from", "ao-ep-to", "ao-ep-start"]
         .forEach((id) => { el(id).value = ""; });
@@ -331,8 +333,8 @@ export default {
 
     function editRow(row) {
       editingId = String(row.id || "");
-      el("ao-form-title").textContent = "Edit rule";
-      el("ao-save").textContent = "Save changes";
+      el("ao-form-title").textContent = T("modals.animeOverrides.editRule");
+      el("ao-save").textContent = T("modals.animeOverrides.saveChanges");
       el("ao-reset").hidden = false;
       el("ao-media-type").value = row.media_type || "show";
       el("ao-title").value = row.title || "";
@@ -347,7 +349,7 @@ export default {
       el("ao-ep-start").value = row.episode_start_at ?? "";
       refreshSelects();
       syncMediaType();
-      setStatus("Editing an existing rule.");
+      setStatus(T("modals.animeOverrides.editing"));
       el("ao-match-id").focus();
     }
 
@@ -357,7 +359,7 @@ export default {
         el("ao-list").innerHTML = `
           <div class="ao-empty">
             <span class="material-symbols-rounded" aria-hidden="true">inbox</span>
-            <p>No custom rules yet. CrossWatch is using the downloaded dataset for every anime.</p>
+            <p>${TH("modals.animeOverrides.noRules")}</p>
           </div>`;
         return;
       }
@@ -365,18 +367,18 @@ export default {
         <div class="ao-row${row.enabled ? "" : " is-off"}" data-id="${esc(row.id)}">
           <div class="ao-row-main">
             <div class="ao-row-title">
-              <span class="ao-chip">${esc(row.media_type === "movie" ? "Movie" : "Show")}</span>
-              ${esc(row.title || "Untitled rule")}
+              <span class="ao-chip">${esc(row.media_type === "movie" ? T("modals.animeOverrides.movie") : T("modals.animeOverrides.show"))}</span>
+              ${esc(row.title || T("modals.animeOverrides.untitled"))}
             </div>
             <div class="ao-row-rule">${ruleSummary(row)}</div>
             ${row.note ? `<div class="ao-row-note">${esc(row.note)}</div>` : ""}
           </div>
           <div class="ao-row-actions">
-            <button type="button" class="ao-icon" data-act="toggle" title="${row.enabled ? "Disable" : "Enable"}">
+            <button type="button" class="ao-icon" data-act="toggle" title="${row.enabled ? T("modals.animeOverrides.disable") : T("modals.animeOverrides.enable")}">
               <span class="material-symbols-rounded" aria-hidden="true">${row.enabled ? "toggle_on" : "toggle_off"}</span>
             </button>
-            <button type="button" class="ao-icon" data-act="edit" title="Edit"><span class="material-symbols-rounded" aria-hidden="true">edit</span></button>
-            <button type="button" class="ao-icon danger" data-act="delete" title="Delete"><span class="material-symbols-rounded" aria-hidden="true">delete</span></button>
+            <button type="button" class="ao-icon" data-act="edit" title="${TH("modals.animeOverrides.edit")}"><span class="material-symbols-rounded" aria-hidden="true">edit</span></button>
+            <button type="button" class="ao-icon danger" data-act="delete" title="${TH("modals.animeOverrides.delete")}"><span class="material-symbols-rounded" aria-hidden="true">delete</span></button>
           </div>
         </div>
       `).join("");
@@ -407,12 +409,12 @@ export default {
           <div class="ao-finder-main">
             <div class="ao-finder-title">${esc(row.label || row.title)}</div>
             <div class="ao-finder-meta">
-              SIMKL ${esc(row.simkl)}${row.year ? ` &middot; ${esc(row.year)}` : ""}${row.tmdb ? ` &middot; TMDB ${esc(row.tmdb)}` : " &middot; no TMDB id"}
+              SIMKL ${esc(row.simkl)}${row.year ? ` &middot; ${esc(row.year)}` : ""}${row.tmdb ? ` &middot; TMDB ${esc(row.tmdb)}` : ` &middot; ${TH("modals.animeOverrides.noTmdb")}`}
             </div>
           </div>
           <div class="ao-finder-actions">
-            <button type="button" class="ao-btn" data-act="use">Use id</button>
-            <button type="button" class="ao-btn primary" data-act="plan">Build seasons</button>
+            <button type="button" class="ao-btn" data-act="use">${TH("modals.animeOverrides.useId")}</button>
+            <button type="button" class="ao-btn primary" data-act="plan">${TH("modals.animeOverrides.buildSeasons")}</button>
           </div>
         </div>
       `).join("");
@@ -420,14 +422,14 @@ export default {
 
     async function runFind() {
       const term = String(el("ao-finder-q").value || "").trim();
-      if (!term) { setFindStatus("Type a title to search for.", "err"); return; }
+      if (!term) { setFindStatus(T("modals.animeOverrides.typeTitle"), "err"); return; }
       setBusy(true);
-      setFindStatus("Searching SIMKL...");
+      setFindStatus(T("modals.animeOverrides.searchingSimkl"));
       try {
         const data = await apiJson(`/api/anime-mapping/simkl/search?q=${encodeURIComponent(term)}`);
         findResults = Array.isArray(data.results) ? data.results : [];
         renderFindResults();
-        setFindStatus(findResults.length ? `${findResults.length} result${findResults.length === 1 ? "" : "s"}.` : "Nothing found on SIMKL for that title.", findResults.length ? "ok" : "err");
+        setFindStatus(findResults.length ? T("modals.animeOverrides.results", {count: findResults.length}) : T("modals.animeOverrides.nothingFound"), findResults.length ? "ok" : "err");
       } catch (e) {
         findResults = [];
         renderFindResults();
@@ -440,9 +442,9 @@ export default {
 
     async function buildSeasonRules(row) {
       const form = readForm();
-      if (!form.match_id) { setFindStatus("Fill in the source ID first, the rules are built against it.", "err"); return; }
+      if (!form.match_id) { setFindStatus(T("modals.animeOverrides.fillSource"), "err"); return; }
       setBusy(true);
-      setFindStatus("Building the season chain...");
+      setFindStatus(T("modals.animeOverrides.building"));
       try {
         const plan = await apiJson("/api/anime-mapping/simkl/plan", {
           method: "POST",
@@ -456,13 +458,13 @@ export default {
           }),
         });
         const planned = Array.isArray(plan.rules) ? plan.rules : [];
-        if (!planned.length) { setFindStatus("SIMKL returned no aired seasons for that entry.", "err"); return; }
+        if (!planned.length) { setFindStatus(T("modals.animeOverrides.noAired"), "err"); return; }
         const summary = planned
           .map((r) => `  ${form.match_provider.toUpperCase()} S${r.match_season} E${r.episode_from}-${r.episode_to}  ->  SIMKL ${r.target_id}  (${r.note})`)
           .join("\n");
-        const skipped = (plan.skipped || []).length ? `\n\nSkipped ${plan.skipped.length} unaired entr${plan.skipped.length === 1 ? "y" : "ies"}.` : "";
-        if (!(await (window.CW?.MobileUI?.ask || window.confirm)(`Add ${planned.length} rules covering ${plan.total_episodes} episodes?\n\n${summary}${skipped}`))) {
-          setFindStatus("Nothing added.");
+        const skipped = (plan.skipped || []).length ? `\n\n${T("modals.animeOverrides.skippedUnaired", {count: plan.skipped.length})}` : "";
+        if (!(await (window.CW?.MobileUI?.ask || window.confirm)(`${T("modals.animeOverrides.confirmPlan", {count: planned.length, episodes: String(plan.total_episodes)})}\n\n${summary}${skipped}`))) {
+          setFindStatus(T("modals.animeOverrides.nothingAdded"));
           return;
         }
         let added = 0;
@@ -473,8 +475,8 @@ export default {
         await refresh();
         resetForm();
         el("ao-finder").hidden = true;
-        setIoStatus(`Added ${added} season rule${added === 1 ? "" : "s"} from SIMKL.`, "ok");
-        window.CW?.DOM?.showToast?.(`Added ${added} anime mapping rules`, true);
+        setIoStatus(T("modals.animeOverrides.addedSeasons", {count: added}), "ok");
+        window.CW?.DOM?.showToast?.(T("modals.animeOverrides.addedToast", {count: added}), true);
       } catch (e) {
         setFindStatus(String(e.message || e), "err");
       } finally {
@@ -505,7 +507,7 @@ export default {
       if (btn.dataset.act === "use") {
         el("ao-target-id").value = row.simkl;
         if (!el("ao-title").value) el("ao-title").value = row.title || "";
-        setFindStatus(`Using SIMKL ${row.simkl}.`, "ok");
+        setFindStatus(T("modals.animeOverrides.usingSimkl", {id: String(row.simkl)}), "ok");
         renderPreview();
         return;
       }
@@ -523,7 +525,7 @@ export default {
     el("ao-save").addEventListener("click", async () => {
       if (busy) return;
       setBusy(true);
-      setStatus("Saving...");
+      setStatus(T("modals.animeOverrides.saving"));
       try {
         await apiJson(API, {
           method: "POST",
@@ -532,8 +534,8 @@ export default {
         });
         await refresh();
         resetForm();
-        setStatus("Rule saved.", "ok");
-        window.CW?.DOM?.showToast?.("Anime mapping rule saved", true);
+        setStatus(T("modals.animeOverrides.saved"), "ok");
+        window.CW?.DOM?.showToast?.(T("modals.animeOverrides.savedToast"), true);
       } catch (e) {
         setStatus(String(e.message || e), "err");
       } finally {
@@ -543,9 +545,9 @@ export default {
 
     el("ao-export").addEventListener("click", async () => {
       if (busy) return;
-      if (!rows.length) { setIoStatus("There is nothing to export yet.", "err"); return; }
+      if (!rows.length) { setIoStatus(T("modals.animeOverrides.nothingExport"), "err"); return; }
       setBusy(true);
-      setIoStatus("Preparing download...");
+      setIoStatus(T("modals.animeOverrides.preparing"));
       let url = "";
       try {
         const r = await fetch(`${API}/export`, { cache: "no-store", credentials: "same-origin" });
@@ -559,9 +561,9 @@ export default {
         document.body.appendChild(a);
         a.click();
         a.remove();
-        setIoStatus(`Exported ${rows.length} rule${rows.length === 1 ? "" : "s"}.`, "ok");
+        setIoStatus(T("modals.animeOverrides.exported", {count: rows.length}), "ok");
       } catch (e) {
-        setIoStatus(`Export failed: ${e.message || e}`, "err");
+        setIoStatus(T("modals.animeOverrides.exportFailed", {error: String(e.message || e)}), "err");
       } finally {
         if (url) window.setTimeout(() => URL.revokeObjectURL(url), 10_000);
         setBusy(false);
@@ -578,18 +580,18 @@ export default {
       const file = ev.target.files?.[0];
       if (!file) return;
       const mode = el("ao-import-mode").value;
-      if (mode === "replace" && rows.length && !(await (window.CW?.MobileUI?.ask || window.confirm)(`Replace all ${rows.length} existing rules with the contents of ${file.name}?`))) {
+      if (mode === "replace" && rows.length && !(await (window.CW?.MobileUI?.ask || window.confirm)(T("modals.animeOverrides.confirmReplace", {count: rows.length, file: file.name})))) {
         el("ao-file").value = "";
         return;
       }
       setBusy(true);
-      setIoStatus(`Importing ${file.name}...`);
+      setIoStatus(T("modals.animeOverrides.importing", {file: file.name}));
       try {
         let parsed;
         try {
           parsed = JSON.parse(await file.text());
         } catch {
-          throw new Error("That file is not valid JSON");
+          throw new Error(T("modals.animeOverrides.invalidJson"));
         }
         const data = await apiJson(`${API}/import`, {
           method: "POST",
@@ -598,14 +600,14 @@ export default {
         });
         await refresh();
         const res = data.result || {};
-        const parts = [`${res.added || 0} added`, `${res.updated || 0} updated`];
-        if (res.skipped_count) parts.push(`${res.skipped_count} skipped`);
-        setIoStatus(`Imported ${file.name}: ${parts.join(", ")}.`, res.skipped_count ? "" : "ok");
-        window.CW?.DOM?.showToast?.(`Anime mappings imported (${res.total || 0} rules)`, true);
+        const parts = [T("modals.animeOverrides.added", {count: res.added || 0}), T("modals.animeOverrides.updated", {count: res.updated || 0})];
+        if (res.skipped_count) parts.push(T("modals.animeOverrides.skipped", {count: res.skipped_count}));
+        setIoStatus(T("modals.animeOverrides.imported", {file: file.name, parts: parts.join(", ")}), res.skipped_count ? "" : "ok");
+        window.CW?.DOM?.showToast?.(T("modals.animeOverrides.importedToast", {count: res.total || 0}), true);
         const first = (res.skipped || [])[0];
         if (first) setIoStatus(`${parts.join(", ")}. First skipped rule: ${first.title || `#${first.index}`} - ${first.reason}`, "err");
       } catch (e) {
-        setIoStatus(`Import failed: ${e.message || e}`, "err");
+        setIoStatus(T("modals.animeOverrides.importFailed", {error: String(e.message || e)}), "err");
       } finally {
         el("ao-file").value = "";
         setBusy(false);
@@ -624,17 +626,17 @@ export default {
       setBusy(true);
       try {
         if (btn.dataset.act === "delete") {
-          if (!(await (window.CW?.MobileUI?.ask || window.confirm)(`Delete the rule for ${row.title || row.match_id}?`))) return;
+          if (!(await (window.CW?.MobileUI?.ask || window.confirm)(T("modals.animeOverrides.confirmDelete", {name: row.title || row.match_id})))) return;
           await apiJson(`${API}/${encodeURIComponent(row.id)}`, { method: "DELETE" });
           if (editingId === row.id) resetForm();
-          setStatus("Rule deleted.", "ok");
+          setStatus(T("modals.animeOverrides.deleted"), "ok");
         } else {
           await apiJson(API, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ ...row, enabled: !row.enabled }),
           });
-          setStatus(row.enabled ? "Rule disabled." : "Rule enabled.", "ok");
+          setStatus(row.enabled ? T("modals.animeOverrides.disabled") : T("modals.animeOverrides.enabled"), "ok");
         }
         await refresh();
       } catch (e) {
@@ -648,7 +650,7 @@ export default {
     try {
       await refresh();
     } catch (e) {
-      setStatus(`Could not load rules: ${e.message || e}`, "err");
+      setStatus(T("modals.animeOverrides.loadFailed", {error: String(e.message || e)}), "err");
     }
     await refreshSimklStatus();
   },

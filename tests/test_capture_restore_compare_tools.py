@@ -7,6 +7,7 @@ import os
 import time
 
 import pytest
+from tests.i18n_source import english_source
 
 
 class MutableSyncOps:
@@ -721,11 +722,11 @@ def test_provider_cleanup_modal_owns_provider_cleanup_ui() -> None:
     from pathlib import Path
 
     root = Path(__file__).resolve().parents[1]
-    snapshots_js = (root / "assets" / "js" / "snapshots.js").read_text(encoding="utf-8")
-    modal_js = (root / "assets" / "js" / "modals" / "provider-cleanup" / "index.js").read_text(encoding="utf-8")
-    modals_js = (root / "assets" / "js" / "modals.js").read_text(encoding="utf-8")
-    settings_py = (root / "ui_frontend.py").read_text(encoding="utf-8")
-    profile_select_js = (root / "assets" / "helpers" / "profile-select.js").read_text(encoding="utf-8")
+    snapshots_js = english_source((root / "assets" / "js" / "snapshots.js").read_text(encoding="utf-8"))
+    modal_js = english_source((root / "assets" / "js" / "modals" / "provider-cleanup" / "index.js").read_text(encoding="utf-8"))
+    modals_js = english_source((root / "assets" / "js" / "modals.js").read_text(encoding="utf-8"))
+    settings_py = english_source((root / "ui_frontend.py").read_text(encoding="utf-8"))
+    profile_select_js = english_source((root / "assets" / "helpers" / "profile-select.js").read_text(encoding="utf-8"))
 
     assert "ss-tools-prov" not in snapshots_js
     assert "ss-tools-inst" not in snapshots_js
@@ -755,7 +756,7 @@ def test_provider_cleanup_modal_owns_provider_cleanup_ui() -> None:
 def test_snapshots_ui_retries_after_auth_setup() -> None:
     from pathlib import Path
 
-    js = (Path(__file__).resolve().parents[1] / "assets" / "js" / "snapshots.js").read_text(encoding="utf-8")
+    js = english_source((Path(__file__).resolve().parents[1] / "assets" / "js" / "snapshots.js").read_text(encoding="utf-8"))
 
     assert "function retryInitAfterAuth()" in js
     assert "page && !page.children.length ? init() : refresh(!!force)" in js
@@ -764,7 +765,7 @@ def test_snapshots_ui_retries_after_auth_setup() -> None:
 def test_captures_ui_compare_selection_validation() -> None:
     from pathlib import Path
 
-    js = (Path(__file__).resolve().parents[1] / "assets" / "js" / "snapshots.js").read_text(encoding="utf-8")
+    js = english_source((Path(__file__).resolve().parents[1] / "assets" / "js" / "snapshots.js").read_text(encoding="utf-8"))
 
     assert "function compareSelectionState()" in js
     assert "selected.length !== 2" in js
@@ -777,7 +778,7 @@ def test_captures_ui_compare_selection_validation() -> None:
 def test_captures_ui_compare_summary_uses_icons() -> None:
     from pathlib import Path
 
-    js = (Path(__file__).resolve().parents[1] / "assets" / "js" / "snapshots.js").read_text(encoding="utf-8")
+    js = english_source((Path(__file__).resolve().parents[1] / "assets" / "js" / "snapshots.js").read_text(encoding="utf-8"))
     summary_body = js[js.index('<div class="ss-diff-summary">') : js.index("async function onDiffRun()")]
 
     assert "material-symbols-rounded" in summary_body
@@ -792,7 +793,7 @@ def test_captures_ui_compare_summary_uses_icons() -> None:
 def test_captures_ui_compare_opens_advanced_modal() -> None:
     from pathlib import Path
 
-    js = (Path(__file__).resolve().parents[1] / "assets" / "js" / "snapshots.js").read_text(encoding="utf-8")
+    js = english_source((Path(__file__).resolve().parents[1] / "assets" / "js" / "snapshots.js").read_text(encoding="utf-8"))
     compare_markup = js[js.index('<div class="ss-compare-panel">') : js.index('<div id="ss-diff-out"')]
     run_body = js[js.index("async function onDiffRun()") : js.index("  function setBusy(")]
 
@@ -811,7 +812,7 @@ def test_captures_ui_compare_opens_advanced_modal() -> None:
 def test_captures_ui_details_toggle_and_scrollbar() -> None:
     from pathlib import Path
 
-    js = (Path(__file__).resolve().parents[1] / "assets" / "js" / "snapshots.js").read_text(encoding="utf-8")
+    js = english_source((Path(__file__).resolve().parents[1] / "assets" / "js" / "snapshots.js").read_text(encoding="utf-8"))
     details_body = js[js.index("async function onViewDetails()") : js.index("  async function onRestore()")]
 
     assert ".ss-detail-pre{scrollbar-width:thin" in js
@@ -824,7 +825,7 @@ def test_captures_ui_details_toggle_and_scrollbar() -> None:
 def test_captures_ui_scheduler_queue_hides_when_empty() -> None:
     from pathlib import Path
 
-    js = (Path(__file__).resolve().parents[1] / "assets" / "js" / "snapshots.js").read_text(encoding="utf-8")
+    js = english_source((Path(__file__).resolve().parents[1] / "assets" / "js" / "snapshots.js").read_text(encoding="utf-8"))
     queue_body = js[js.index("function renderScheduleQueue()") : js.index("  function setScheduleQueueFeedback(")]
 
     assert 'id="ss-schedule-queue-wrap" class="ss-queue hidden"' in js
@@ -837,7 +838,7 @@ def test_captures_ui_scheduler_queue_hides_when_empty() -> None:
 def test_captures_ui_tools_use_flat_danger_and_cleanup_label() -> None:
     from pathlib import Path
 
-    js = (Path(__file__).resolve().parents[1] / "assets" / "js" / "snapshots.js").read_text(encoding="utf-8")
+    js = english_source((Path(__file__).resolve().parents[1] / "assets" / "js" / "snapshots.js").read_text(encoding="utf-8"))
 
     assert "Cleanup Captures" in js
     assert "Cleanup old captures" not in js
@@ -848,7 +849,7 @@ def test_captures_ui_tools_use_flat_danger_and_cleanup_label() -> None:
 def test_captures_ui_restore_mode_handling() -> None:
     from pathlib import Path
 
-    js = (Path(__file__).resolve().parents[1] / "assets" / "js" / "snapshots.js").read_text(encoding="utf-8")
+    js = english_source((Path(__file__).resolve().parents[1] / "assets" / "js" / "snapshots.js").read_text(encoding="utf-8"))
 
     assert 'data-restore-mode="merge"' in js
     assert 'data-restore-mode="clear_restore"' in js
@@ -863,7 +864,7 @@ def test_captures_ui_restore_mode_handling() -> None:
 def test_restore_progress_modal_requires_acknowledgement() -> None:
     from pathlib import Path
 
-    js = (Path(__file__).resolve().parents[1] / "assets" / "js" / "snapshots.js").read_text(encoding="utf-8")
+    js = english_source((Path(__file__).resolve().parents[1] / "assets" / "js" / "snapshots.js").read_text(encoding="utf-8"))
     restore_body = js[js.index("async function onRestore()") : js.index("  async function init()")]
 
     assert 'id="ss-capture-ack"' in js
@@ -876,7 +877,7 @@ def test_restore_progress_modal_requires_acknowledgement() -> None:
 def test_capture_progress_modal_requires_acknowledgement() -> None:
     from pathlib import Path
 
-    js = (Path(__file__).resolve().parents[1] / "assets" / "js" / "snapshots.js").read_text(encoding="utf-8")
+    js = english_source((Path(__file__).resolve().parents[1] / "assets" / "js" / "snapshots.js").read_text(encoding="utf-8"))
     create_body = js[js.index("async function onCreate()") : js.index("  async function onAddToScheduler()")]
 
     assert 'actions.classList.toggle("show", !!data.done || failed);' in js

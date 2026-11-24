@@ -6,6 +6,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { createContext, SourceTextModule } from "node:vm";
+import './i18n-vm-setup.mjs';
 
 for (const queryVersion of ["release-test", ""]) {
   test(`topology entry points bypass stale state and share acknowledgement state (${queryVersion || "window version"})`, async () => {

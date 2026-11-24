@@ -2,20 +2,26 @@
 /* CrossWatch - Events statistics dashboard */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 
+const I18N = () => globalThis.window?.CW?.I18n || globalThis.window?.__cwI18n;
+const T = (key, vars) => I18N()?.t?.(key, vars) ?? key;
+const TH = (key, vars) => I18N()?.html?.(key, vars) ?? key;
+const LOC = () => I18N()?.locale || [];
+
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
 const SERIES = [
-  { key: "sync", label: "Sync runs", color: "var(--ev-ok)" },
-  { key: "watching", label: "Watching", color: "var(--ev-accent)" },
-  { key: "ratings", label: "Ratings", color: "var(--ev-warn)" },
-  { key: "capture", label: "Captures", color: "rgb(var(--cw-feature-history-rgb))" },
-  { key: "backup", label: "Backups", color: "rgb(var(--cw-feature-collection-rgb))" },
-  { key: "audit", label: "Audits", color: "var(--ev-muted)" },
+  { key: "sync", label: T("events.stats.syncRuns"), color: "var(--ev-ok)" },
+  { key: "watching", label: T("events.kind.watching"), color: "var(--ev-accent)" },
+  { key: "ratings", label: T("events.feature.ratings"), color: "var(--ev-warn)" },
+  { key: "capture", label: T("events.tabs.captures"), color: "rgb(var(--cw-feature-history-rgb))" },
+  { key: "backup", label: T("events.tabs.backups"), color: "rgb(var(--cw-feature-collection-rgb))" },
+  { key: "audit", label: T("events.tabs.audits"), color: "var(--ev-muted)" },
 ];
 const OUTCOME_COLOR = { completed: "var(--ev-ok)", warning: "var(--ev-warn)", failed: "var(--ev-err)", active: "var(--ev-accent)", skipped: "var(--ev-muted)", stopped: "rgb(var(--cw-feature-history-rgb))", informational: "var(--ev-info)" };
 const TYPE_COLOR = Object.fromEntries(SERIES.map(s => [s.key, s.color]));
 
-const nf = new Intl.NumberFormat();
+const nf = new Intl.NumberFormat(I18N()?.locale);
+const OUTCOME_LABEL = { completed: T("events.status.completed"), warning: T("events.quick.attention"), failed: T("events.outcome.failed"), active: T("events.outcome.inProgress"), skipped: T("events.outcome.skipped"), stopped: T("events.stats.stoppedBefore"), informational: T("events.outcome.informational") };
 const fmtNum = (n) => nf.format(Math.round(Number(n || 0)));
 const fmtDur = (s) => {
   s = Number(s || 0);
@@ -33,8 +39,8 @@ const fmtDelta = (d) => {
 };
 const tLabel = (epoch, bucket) => {
   const d = new Date(Number(epoch) * 1000);
-  if (bucket < 86400) return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-  return d.toLocaleDateString([], { month: "short", day: "numeric" });
+  if (bucket < 86400) return d.toLocaleTimeString(LOC(), { hour: "2-digit", minute: "2-digit" });
+  return d.toLocaleDateString(LOC(), { month: "short", day: "numeric" });
 };
 
 let TIP;
@@ -53,7 +59,7 @@ const niceScale = (v, ticks = 4) => {
 
 function stackedTrend(rows, bucket) {
   const W = 1000, H = 170, padL = 40, padR = 44, padT = 8, padB = 20;
-  if (!rows.length) return `<div class="stat-empty">No activity in this period.</div>`;
+  if (!rows.length) return `<div class="stat-empty">${TH("events.stats.noActivity")}</div>`;
   const plotW = W - padL - padR, plotH = H - padT - padB;
   const totals = rows.map(r => SERIES.reduce((total, s) => total + Number(r[s.key] || 0), 0));
   const sc = niceScale(Math.max(1, ...totals));
@@ -107,7 +113,7 @@ function stackedTrend(rows, bucket) {
 function donut(segments, opts = {}) {
   const total = segments.reduce((a, s) => a + s.value, 0);
   const S = 220, r = 84, rin = 56, cx = S / 2, cy = S / 2;
-  if (total <= 0) return `<div class="stat-empty">No data.</div>`;
+  if (total <= 0) return `<div class="stat-empty">${TH("events.stats.noData")}</div>`;
   let a0 = -Math.PI / 2;
   const gap = 0.03;
   const arcs = segments.map((s) => {
@@ -121,14 +127,14 @@ function donut(segments, opts = {}) {
     if (s1 <= s0) return "";
     return `<path d="M ${p(s0, r)} A ${r} ${r} 0 ${large} 1 ${p(s1, r)} L ${p(s1, rin)} A ${rin} ${rin} 0 ${large} 0 ${p(s0, rin)} Z" fill="${s.color}"><title>${esc(s.label)}: ${fmtNum(s.value)} (${((s.value / total) * 100).toFixed(1)}%)</title></path>`;
   }).join("");
-  const center = `<text x="${cx}" y="${cy - 4}" class="stat-donut-num">${fmtNum(total)}</text><text x="${cx}" y="${cy + 16}" class="stat-donut-cap">${esc(opts.caption || "Total")}</text>`;
+  const center = `<text x="${cx}" y="${cy - 4}" class="stat-donut-num">${fmtNum(total)}</text><text x="${cx}" y="${cy + 16}" class="stat-donut-cap">${esc(opts.caption || T("events.stats.total"))}</text>`;
   const legend = segments.map((s) => `<div class="stat-lg-item"><span class="stat-lg-dot" style="background:${s.color}"></span><span class="stat-lg-lb">${esc(s.label)}</span><span class="stat-lg-vl">${fmtNum(s.value)} · ${((s.value / total) * 100).toFixed(1)}%</span></div>`).join("");
   return `<div class="stat-donut"><svg viewBox="0 0 ${S} ${S}" class="stat-svg-donut" preserveAspectRatio="xMidYMid meet">${arcs}${center}</svg><div class="stat-legend">${legend}</div></div>`;
 }
 
 function area(points, color, bucket, unit) {
   const W = 520, H = 150, padL = 34, padR = 8, padT = 8, padB = 18;
-  if (!points.length) return `<div class="stat-empty">No data.</div>`;
+  if (!points.length) return `<div class="stat-empty">${TH("events.stats.noData")}</div>`;
   const plotW = W - padL - padR, plotH = H - padT - padB;
   const maxV = niceScale(Math.max(1, ...points.map((p) => p.v))).max;
   const n = points.length;
@@ -163,40 +169,40 @@ export default function createStatsView(host, { fetchJson }) {
     const k = d.kpis || {};
     const bucket = (d.range || {}).bucket || 86400;
     const kpis = [
-      kpiTile("sync", "Sync runs", fmtNum(k.sync_runs?.value), k.sync_runs?.delta),
-      kpiTile("play_circle", "Watching", fmtNum(k.scrobbles?.value), k.scrobbles?.delta),
-      kpiTile("star", "Ratings", fmtNum(k.ratings?.value), k.ratings?.delta),
-      kpiTile("photo_camera", "Captures", fmtNum(k.captures?.value), k.captures?.delta),
-      kpiTile("backup", "Backups", fmtNum(k.backups?.value), k.backups?.delta),
-      kpiTile("shield", "Audits", fmtNum(k.audits?.value), k.audits?.delta),
-      kpiTile("timer", "Avg sync duration", fmtDur(k.avg_duration?.value), k.avg_duration?.delta == null ? null : -k.avg_duration.delta),
-      kpiTile("error", "Failures", fmtNum(k.failures?.value), k.failures?.delta == null ? null : -k.failures.delta, "warn"),
-      kpiTile("block", "Blocked", fmtNum(k.blocked?.value), k.blocked?.delta == null ? null : -k.blocked.delta, "warn"),
-      kpiTile("skip_next", "Skipped deliveries", fmtNum(k.delivery_skips?.value), k.delivery_skips?.delta),
-      kpiTile("verified", "Success rate", fmtPct(k.success_rate?.value), k.success_rate?.delta, "ok"),
-      kpiTile("list_alt", "All activities", fmtNum(k.activities?.value), k.activities?.delta),
+      kpiTile("sync", T("events.stats.syncRuns"), fmtNum(k.sync_runs?.value), k.sync_runs?.delta),
+      kpiTile("play_circle", T("events.kind.watching"), fmtNum(k.scrobbles?.value), k.scrobbles?.delta),
+      kpiTile("star", T("events.feature.ratings"), fmtNum(k.ratings?.value), k.ratings?.delta),
+      kpiTile("photo_camera", T("events.tabs.captures"), fmtNum(k.captures?.value), k.captures?.delta),
+      kpiTile("backup", T("events.tabs.backups"), fmtNum(k.backups?.value), k.backups?.delta),
+      kpiTile("shield", T("events.tabs.audits"), fmtNum(k.audits?.value), k.audits?.delta),
+      kpiTile("timer", T("events.stats.avgDuration"), fmtDur(k.avg_duration?.value), k.avg_duration?.delta == null ? null : -k.avg_duration.delta),
+      kpiTile("error", T("events.titles.failures"), fmtNum(k.failures?.value), k.failures?.delta == null ? null : -k.failures.delta, "warn"),
+      kpiTile("block", T("events.stats.blocked"), fmtNum(k.blocked?.value), k.blocked?.delta == null ? null : -k.blocked.delta, "warn"),
+      kpiTile("skip_next", T("events.stats.skippedDeliveries"), fmtNum(k.delivery_skips?.value), k.delivery_skips?.delta),
+      kpiTile("verified", T("events.stats.successRate"), fmtPct(k.success_rate?.value), k.success_rate?.delta, "ok"),
+      kpiTile("list_alt", T("events.stats.allActivities"), fmtNum(k.activities?.value), k.activities?.delta),
     ].join("");
 
     const legend = SERIES.map((s) => `<div class="stat-lg-item"><span class="stat-lg-dot" style="background:${s.color}"></span><span class="stat-lg-lb">${esc(s.label)}</span></div>`).join("") +
-      `<div class="stat-lg-item"><span class="stat-lg-line"></span><span class="stat-lg-lb">Success rate</span></div>`;
+      `<div class="stat-lg-item"><span class="stat-lg-line"></span><span class="stat-lg-lb">${TH("events.stats.successRate")}</span></div>`;
 
     const routes = (d.routes || []).map((r) => {
-      const kind = `${fmtNum(r.runs)} sync runs · ${fmtNum(r.scrobbles)} watching/rating deliveries · ${fmtNum(r.skipped)} skipped`;
+      const kind = T("events.stats.routeKind", {runs: Number(r.runs || 0), deliveries: Number(r.scrobbles || 0), skipped: Number(r.skipped || 0)});
       const pct = r.success_rate == null ? 0 : r.success_rate;
       return `<tr><td class="stat-rt-route" title="${esc(kind)}">${esc(r.source || "?")} → ${esc(r.destination || "?")}</td>
       <td class="stat-rt-num">${fmtNum(r.volume)}</td>
       <td class="stat-rt-bar"><span class="stat-bar"><span class="stat-bar-fill" style="width:${Math.max(2, pct).toFixed(0)}%"></span></span><span class="stat-rt-pct">${fmtPct(r.success_rate)}</span></td></tr>`;
-    }).join("") || `<tr><td colspan="3" class="stat-empty-cell">No route activity.</td></tr>`;
+    }).join("") || `<tr><td colspan="3" class="stat-empty-cell">${TH("events.stats.noRoutes")}</td></tr>`;
 
     const fails = (d.failure_reasons || []).map((f) => `
       <tr><td class="stat-fr-reason" title="${esc(f.reason)}">${esc(f.label || f.reason)}</td>
       <td class="stat-rt-num">${fmtNum(f.count)}</td>
       <td class="stat-rt-num">${f.share.toFixed(1)}%</td>
-      <td class="stat-fr-trend">${fmtDelta(f.delta)}</td></tr>`).join("") || `<tr><td colspan="4" class="stat-empty-cell">No failures in this period.</td></tr>`;
+      <td class="stat-fr-trend">${fmtDelta(f.delta)}</td></tr>`).join("") || `<tr><td colspan="4" class="stat-empty-cell">${TH("events.stats.noFailures")}</td></tr>`;
 
     const pc = d.duration_percentiles || {};
-    const outcomes = (d.outcomes || []).map((o) => ({ ...o, color: OUTCOME_COLOR[o.key] || "var(--ev-muted)" }));
-    const types = (d.types || []).map((t) => ({ ...t, color: TYPE_COLOR[t.key] || "var(--ev-muted)" }));
+    const outcomes = (d.outcomes || []).map((o) => ({ ...o, label: OUTCOME_LABEL[o.key] || o.label, color: OUTCOME_COLOR[o.key] || "var(--ev-muted)" }));
+    const types = (d.types || []).map((t) => ({ ...t, label: SERIES.find((s) => s.key === t.key)?.label || t.label, color: TYPE_COLOR[t.key] || "var(--ev-muted)" }));
     const whPts = (d.trend || []).map((r) => ({ t: r.t, v: r.webhook }));
     const waPts = (d.trend || []).map((r) => ({ t: r.t, v: r.watcher }));
     const durPts = (d.duration_series || []).map((r) => ({ t: r.t, v: r.avg }));
@@ -206,30 +212,30 @@ export default function createStatsView(host, { fetchJson }) {
         <div class="stat-kpis">${kpis}</div>
 
         <section class="stat-card stat-card-wide">
-          <div class="stat-card-head"><div><h4>Activity trends over time</h4><p>Each activity counts once across destinations. Sync runs use their start date; other activities use their last update.</p><p>Success rate covers completed, failed and attention-needed work. Audits, skips, stopped playback and active work are excluded.</p></div><div class="stat-legend stat-legend-row">${legend}</div></div>
+          <div class="stat-card-head"><div><h4>${TH("events.stats.trends")}</h4><p>${TH("events.stats.trendsHint")}</p><p>${TH("events.stats.rateHint")}</p></div><div class="stat-legend stat-legend-row">${legend}</div></div>
           ${stackedTrend(d.trend || [], bucket)}
         </section>
 
         <div class="stat-grid3">
-          <section class="stat-card"><div class="stat-card-head"><h4>Outcome distribution</h4></div>${donut(outcomes, { caption: "Activities" })}</section>
-          <section class="stat-card"><div class="stat-card-head"><h4>Activity by type</h4></div>${donut(types, { caption: "Total" })}</section>
-          <section class="stat-card"><div class="stat-card-head"><div><h4>Top routes</h4><p>Counts each destination separately, including skipped deliveries.</p></div></div>
-            <table class="stat-table"><thead><tr><th>Route</th><th>Volume</th><th>Success</th></tr></thead><tbody>${routes}</tbody></table>
+          <section class="stat-card"><div class="stat-card-head"><h4>${TH("events.stats.outcomes")}</h4></div>${donut(outcomes, { caption: T("events.stats.activities") })}</section>
+          <section class="stat-card"><div class="stat-card-head"><h4>${TH("events.stats.byType")}</h4></div>${donut(types, { caption: T("events.stats.total") })}</section>
+          <section class="stat-card"><div class="stat-card-head"><div><h4>${TH("events.stats.topRoutes")}</h4><p>${TH("events.stats.topRoutesHint")}</p></div></div>
+            <table class="stat-table"><thead><tr><th>${TH("events.k.route")}</th><th>${TH("events.stats.volume")}</th><th>${TH("events.stats.success")}</th></tr></thead><tbody>${routes}</tbody></table>
           </section>
         </div>
 
         <div class="stat-grid2">
-          <section class="stat-card"><div class="stat-card-head"><h4>Webhook activity</h4></div>${area(whPts, "var(--ev-warn)", bucket, "")}</section>
-          <section class="stat-card"><div class="stat-card-head"><h4>Watcher activity</h4></div>${area(waPts, "var(--ev-info)", bucket, "")}</section>
+          <section class="stat-card"><div class="stat-card-head"><h4>${TH("events.stats.webhook")}</h4></div>${area(whPts, "var(--ev-warn)", bucket, "")}</section>
+          <section class="stat-card"><div class="stat-card-head"><h4>${TH("events.stats.watcher")}</h4></div>${area(waPts, "var(--ev-info)", bucket, "")}</section>
         </div>
 
         <div class="stat-grid2">
-          <section class="stat-card"><div class="stat-card-head"><div><h4>Sync duration over time</h4></div>
+          <section class="stat-card"><div class="stat-card-head"><div><h4>${TH("events.stats.duration")}</h4></div>
             <div class="stat-pcts"><span><b>P50</b> ${fmtDur(pc.p50)}</span><span><b>P90</b> ${fmtDur(pc.p90)}</span><span><b>P99</b> ${fmtDur(pc.p99)}</span></div></div>
             ${lineChart(durPts, "var(--ev-accent)", bucket)}
           </section>
-          <section class="stat-card"><div class="stat-card-head"><h4>Top failure reasons</h4></div>
-            <table class="stat-table"><thead><tr><th>Reason</th><th>Count</th><th>Share</th><th>Trend</th></tr></thead><tbody>${fails}</tbody></table>
+          <section class="stat-card"><div class="stat-card-head"><h4>${TH("events.stats.topFailures")}</h4></div>
+            <table class="stat-table"><thead><tr><th>${TH("events.k.reason")}</th><th>${TH("events.stats.count")}</th><th>${TH("events.stats.share")}</th><th>${TH("events.stats.trend")}</th></tr></thead><tbody>${fails}</tbody></table>
           </section>
         </div>
       </div>`;
@@ -243,7 +249,7 @@ export default function createStatsView(host, { fetchJson }) {
       el.addEventListener("mousemove", (e) => {
         const r = trend[Number(el.dataset.i)]; if (!r) return;
         const rows = SERIES.filter((s) => r[s.key] > 0).map((s) => `<div class="stat-tip-row"><span class="stat-lg-dot" style="background:${s.color}"></span>${esc(s.label)}<b>${fmtNum(r[s.key])}</b></div>`).join("");
-        showTip(`<div class="stat-tip-h">${esc(tLabel(r.t, bucket))}</div>${rows}${r.rate != null ? `<div class="stat-tip-row stat-tip-rate">Success rate<b>${fmtPct(r.rate)}</b></div>` : ""}`, e.clientX, e.clientY);
+        showTip(`<div class="stat-tip-h">${esc(tLabel(r.t, bucket))}</div>${rows}${r.rate != null ? `<div class="stat-tip-row stat-tip-rate">${TH("events.stats.successRate")}<b>${fmtPct(r.rate)}</b></div>` : ""}`, e.clientX, e.clientY);
       });
       el.addEventListener("mouseleave", hideTip);
     });
@@ -278,7 +284,7 @@ export default function createStatsView(host, { fetchJson }) {
       render(d);
       return d;
     } catch (err) {
-      if (alive) host.innerHTML = `<div class="stat-loading"><span class="material-symbols-rounded" aria-hidden="true">error</span>Failed to load statistics.</div>`;
+      if (alive) host.innerHTML = `<div class="stat-loading"><span class="material-symbols-rounded" aria-hidden="true">error</span>${TH("events.stats.loadFailed")}</div>`;
       return null;
     }
   };

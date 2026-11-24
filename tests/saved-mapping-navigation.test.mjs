@@ -7,6 +7,7 @@ import assert from "node:assert/strict";
 import {readFileSync} from "node:fs";
 import vm from "node:vm";
 import {navigateToMapping, resizeMappingColumns} from "../assets/js/editor/saved-mappings.js";
+import './i18n-vm-setup.mjs';
 
 const mapping = {provider:"SIMKL",instance:"second",feature:"history",key:"tmdb:286801#s01e05"};
 function context() {

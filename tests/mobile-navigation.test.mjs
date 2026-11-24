@@ -2,6 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import vm from 'node:vm';
+import {withI18n} from './i18n-test-helper.mjs';
+import './i18n-vm-setup.mjs';
 
 const core = readFileSync(new URL('../assets/helpers/account-menu.js', import.meta.url), 'utf8');
 const source = core.slice(core.indexOf('  function initMobileNavigation()'), core.indexOf('  function normalizeAvatarUrl'));
@@ -35,7 +37,7 @@ function fixture() {
     activeElement: null,
   });
   const window = Object.assign(new EventTarget(), {matchMedia: () => media});
-  const context = vm.createContext({document, window, $: id => nodes.find(node => node.id === id)});
+  const context = vm.createContext(withI18n({document, window, $: id => nodes.find(node => node.id === id)}));
   vm.runInContext(source + '\ninitMobileNavigation();', context);
   const toggle = nodes.find(node => node.id === 'cw-mobile-nav-toggle');
   const panel = nodes.find(node => node.id === 'cw-mobile-navigation');

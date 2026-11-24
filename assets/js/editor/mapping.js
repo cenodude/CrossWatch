@@ -1,6 +1,7 @@
 /* assets/js/editor/mapping.js */
 /* CrossWatch - Shared mapping workspace with staged Editor corrections */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
+const T = (key, vars) => (globalThis.window?.CW?.I18n || globalThis.window?.__cwI18n)?.t?.(key, vars) ?? key;
 export async function openEditorMapping(row, ctx) {
   const {state} = ctx;
   const scope = state.mappingPair ? "pair" : "shared";
@@ -19,7 +20,7 @@ export async function openEditorMapping(row, ctx) {
   const checkCurrentRow = () => {
     if (state.snapshot !== reference.provider || (state.instance || "default") !== reference.instance
         || (state.mappingPair || "") !== reference.pair_id || state.kind !== reference.feature || !state.rows.includes(row)) {
-      throw new Error("The Editor view changed. Reopen mapping for the current item.");
+      throw new Error(T("editor.mapping.viewChanged"));
     }
   };
   const request = (action, extra = {}, options = {}) => ctx.fetchJSON("/api/editor/mapping", {
@@ -50,7 +51,7 @@ export async function openEditorMapping(row, ctx) {
         instance:reference.instance, onSaved:() => { groupsChanged = true; }});
     } : undefined,
     total:1, standalone:true, staged:true, direct, scope,
-    scopes:[{id:scope, label:scope === "pair" ? "Only this sync pair" : "Every sync with this account"}],
+    scopes:[{id:scope, label:scope === "pair" ? T("editor.mapping.onlyPair") : T("editor.mapping.everySync")}],
     onClose:finish, onSaved:finish,
     mappingApi:{
       catalogs:async () => context,
@@ -60,7 +61,7 @@ export async function openEditorMapping(row, ctx) {
       save:async edits => {
         const result = await request("prepare", {item:edits[0].item});
         checkCurrentRow();
-        const error = ctx.commitReplacement(row, result.item, result.key, "Correction ready. Save changes to apply it.");
+        const error = ctx.commitReplacement(row, result.item, result.key, T("editor.mapping.ready"));
         if (error) throw new Error(error);
         if (direct) await ctx.saveChanges();
         return result;

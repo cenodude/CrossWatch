@@ -1721,7 +1721,7 @@ body.cw-has-bottom-nav:has(>header.cw-nav-open)>.cw-pc{visibility:hidden}
 #pairs_list .pair-action-buttons{grid-template-columns:repeat(3,minmax(0,1fr))}
 #pairs_list .pair-action-buttons>.icon-btn{display:flex;flex-direction:column;justify-content:center;gap:4px;height:60px;padding:6px 2px}
 #pairs_list .pair-action-buttons .pair-action-label{display:block;font-size:11px;line-height:1.3;white-space:nowrap}
-#pairs_list .pair-action-buttons>:is([data-pair-logs],[data-pair-reset],[aria-label="Edit"],[aria-label="Delete"]){display:none}
+#pairs_list .pair-action-buttons>:is([data-pair-logs],[data-pair-reset],[data-pair-edit],[data-pair-delete]){display:none}
 }
 
 @media(max-width:760px){

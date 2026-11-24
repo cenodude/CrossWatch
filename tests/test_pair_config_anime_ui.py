@@ -1,14 +1,15 @@
 from __future__ import annotations
 
 from pathlib import Path
+from tests.i18n_source import english_source
 
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_pair_config_anime_mapping_requires_global_setting() -> None:
-    js = (ROOT / "assets" / "js" / "modals" / "pair-config" / "index.js").read_text("utf-8")
-    help_js = (ROOT / "assets" / "js" / "modals" / "pair-config" / "help.js").read_text("utf-8")
+    js = english_source((ROOT / "assets" / "js" / "modals" / "pair-config" / "index.js").read_text("utf-8"))
+    help_js = english_source((ROOT / "assets" / "js" / "modals" / "pair-config" / "help.js").read_text("utf-8"))
 
     assert "Enable global Anime ID Mapping first." in js
     assert "globalAnimeMappingEnabled(state)" in js

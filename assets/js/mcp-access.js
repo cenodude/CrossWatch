@@ -2,6 +2,8 @@
 /* CrossWatch - AI access tokens and connect snippets */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 (function (w, d) {
+  const T = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.t?.(key, vars) ?? key;
+  const TH = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.html?.(key, vars) ?? key;
   if (w.cwMcpAccess) return;
 
   const PLACEHOLDER = "cwt_YOUR_TOKEN";
@@ -34,35 +36,35 @@
 
   const CLIENTS = {
     "claude-code": {
-      note: "Run this once in a terminal",
+      note: T("assistant.mcp.terminal"),
       snippet: (url, token) => `claude mcp add --transport http crosswatch ${url} --header "Authorization: Bearer ${token}"`,
     },
     codex: {
-      note: "Add this to ~/.codex/config.toml",
+      note: T("assistant.mcp.codex"),
       snippet: (url, token) => `[mcp_servers.crosswatch]\nurl = "${url}"\nhttp_headers = { "Authorization" = "Bearer ${token}" }`,
     },
     cursor: {
-      note: "Add this to .cursor/mcp.json",
+      note: T("assistant.mcp.cursor"),
       snippet: (url, token) => json({ mcpServers: { crosswatch: { url, headers: { Authorization: `Bearer ${token}` } } } }),
     },
     "gemini-cli": {
-      note: "Run this once in a terminal",
+      note: T("assistant.mcp.terminal"),
       snippet: (url, token) => `gemini mcp add --transport http --header "Authorization: Bearer ${token}" crosswatch ${url}`,
     },
     "lm-studio": {
-      note: "In LM Studio open Program, Install, Edit mcp.json and add this",
+      note: T("assistant.mcp.lmstudio"),
       snippet: (url, token) => json({ mcpServers: { crosswatch: { url, headers: { Authorization: `Bearer ${token}` } } } }),
     },
     vscode: {
-      note: "For GitHub Copilot, add this to .vscode/mcp.json",
+      note: T("assistant.mcp.copilot"),
       snippet: (url, token) => json({ servers: { crosswatch: { type: "http", url, headers: { Authorization: `Bearer ${token}` } } } }),
     },
     "claude-desktop-docker": {
-      note: "Add this to claude_desktop_config.json",
+      note: T("assistant.mcp.desktop"),
       snippet: (url, token) => json({ mcpServers: { crosswatch: { command: "docker", args: ["exec", "-i", "-e", `CW_TOKEN=${token}`, "crosswatch", "cw", "mcp", "serve"] } } }),
     },
     "claude-desktop": {
-      note: "Add this to claude_desktop_config.json. It needs Node.js on this computer",
+      note: T("assistant.mcp.desktopNode"),
       snippet: (url, token) => {
         const args = ["-y", "mcp-remote", url, "--header", "Authorization:${AUTH_HEADER}"];
         if (url.startsWith("http://")) args.push("--allow-http");
@@ -70,7 +72,7 @@
       },
     },
     other: {
-      note: "Give your app this address and header",
+      note: T("assistant.mcp.generic"),
       snippet: (url, token) => `${url}\nAuthorization: Bearer ${token}`,
     },
   };
@@ -82,16 +84,16 @@
 
   function when(ts) {
     const value = Number(ts || 0);
-    if (value <= 0) return "never";
-    return new Date(value * 1000).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
+    if (value <= 0) return T("assistant.mcp.never");
+    return new Date(value * 1000).toLocaleDateString((w.CW?.I18n || w.__cwI18n)?.locale, { day: "numeric", month: "short", year: "numeric" });
   }
 
   function stateText() {
     if (!loaded) return "";
-    if (!ready) return "Turn on sign-in under Authentication first. AI apps can only connect with a token.";
-    if (rawToken) return "New token filled in below. It is shown only once, so copy the text now.";
-    if (tokens.length) return `Reuse a token you saved earlier, or create a new one. Until then the text below shows ${PLACEHOLDER}.`;
-    return "Create one and it is filled in below.";
+    if (!ready) return T("assistant.mcp.signInFirst");
+    if (rawToken) return T("assistant.mcp.newToken");
+    if (tokens.length) return T("assistant.mcp.reuse", {placeholder: PLACEHOLDER});
+    return T("assistant.mcp.createOne");
   }
 
   function renderTokens() {
@@ -109,9 +111,9 @@
         <span class="material-symbols-rounded" aria-hidden="true">key</span>
         <div>
           <strong>${esc(row.name || row.id)}</strong>
-          <small>Created ${esc(when(row.created_at))}, last used ${esc(when(row.last_used_at))}</small>
+          <small>${TH("assistant.mcp.createdUsed", {created: when(row.created_at), used: when(row.last_used_at)})}</small>
         </div>
-        <button class="cw-ai-revoke" type="button" data-mcp-revoke>Revoke</button>
+        <button class="cw-ai-revoke" type="button" data-mcp-revoke>${TH("assistant.mcp.revoke")}</button>
       </div>`).join("");
   }
 
@@ -154,10 +156,10 @@
         body: JSON.stringify({ name: `AI ${label}`.slice(0, 64), access: "monitor" }),
       });
       rawToken = String(data?.token || "");
-      toast("Token created", true);
+      toast(T("assistant.mcp.created"), true);
       await refresh();
     } catch (err) {
-      toast(err?.message || "Could not create the token");
+      toast(err?.message || T("assistant.mcp.createFailed"));
     }
   }
 
@@ -168,12 +170,12 @@
     if (btn.dataset.cwConfirm !== "1") {
       btn.dataset.cwConfirm = "1";
       btn.classList.add("is-confirming");
-      btn.textContent = "Click again to revoke";
+      btn.textContent = T("assistant.mcp.clickAgain");
       clearTimeout(revokeTimers.get(id));
       revokeTimers.set(id, setTimeout(() => {
         btn.dataset.cwConfirm = "";
         btn.classList.remove("is-confirming");
-        btn.textContent = "Revoke";
+        btn.textContent = T("assistant.mcp.revoke");
         revokeTimers.delete(id);
       }, 4200));
       return;
@@ -183,10 +185,10 @@
     try {
       await api(`${TOKENS_URL}/${encodeURIComponent(id)}`, { method: "DELETE" });
       if (rawToken.startsWith(`cwt_${id}.`)) rawToken = "";
-      toast("Token revoked", true);
+      toast(T("assistant.mcp.revoked"), true);
       await refresh();
     } catch (err) {
-      toast(err?.message || "Could not revoke the token");
+      toast(err?.message || T("assistant.mcp.revokeFailed"));
     }
   }
 
@@ -194,7 +196,7 @@
     const text = String($("mcp_snippet")?.textContent || "");
     if (!text) return;
     const ok = (await w.cwCopyText?.(text)) === true;
-    toast(ok ? "Copied" : "Copy failed, select the text and copy it by hand", ok);
+    toast(ok ? T("assistant.mcp.copied") : T("assistant.mcp.copyFailed"), ok);
   }
 
   d.addEventListener("click", (event) => {

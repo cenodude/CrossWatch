@@ -6,6 +6,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import vm from "node:vm";
 import { hasCumulativeAnimeHistory, sourceWatchStatusAllowed, ratingsDisabledForPair, sanitizeFeaturesForPair } from "../assets/js/modals/pair-config/custom-rules.js";
+import './i18n-vm-setup.mjs';
 
 test("MAL exposes supported surfaces and completion scrobbling", () => {
   const context = { window: {} };

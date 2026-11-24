@@ -1,5 +1,7 @@
 // assets/auth/auth.kodi.js
 (function () {
+  const T = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.t?.(key, vars) ?? key;
+  const TH = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.html?.(key, vars) ?? key;
   if (window._kodiAuthPatched) return;
   window._kodiAuthPatched = true;
 
@@ -15,7 +17,7 @@
     sectionId: "sec-kodi",
     selectId: "kodi_instance",
     storageKey: "cw.ui.kodi.auth.instance.v1",
-    title: "Select which Kodi media client this config applies to.",
+    title: T("connections.auth.kodi.select"),
   });
   const SUBTAB_KEY = "cw.ui.kodi.auth.subtab.v1";
   let H = new Set();
@@ -59,7 +61,7 @@
     connected = !!ok;
     try { Shared.setConnectLocked("kodi_connect", !!ok); } catch {}
     syncTabs();
-    return Shared.setStatus("kodi_msg", ok, msg || (ok ? "Connected" : "Not connected"));
+    return Shared.setStatus("kodi_msg", ok, msg || (ok ? T("connections.auth.connected") : T("connections.auth.notConnected")));
   }
 
   const setFor = (fk) => ({ hist: H, rate: R, prog: P, coll: C, scr: S }[fk]);
@@ -105,7 +107,7 @@
     const host = el("kodi_libraries");
     if (!host) return;
     if (!window.cwWhitelistTable) {
-      host.innerHTML = `<div class="cw-wl"><div class="cw-wl-foot"><div class="cw-wl-note">Empty = all libraries.</div><div class="cw-wl-foot-r"><button type="button" class="cw-wl-load" data-kodi-load-libs><span class="material-symbols-rounded" aria-hidden="true">sync</span>Load libraries</button></div></div></div>`;
+      host.innerHTML = `<div class="cw-wl"><div class="cw-wl-foot"><div class="cw-wl-note">${TH("connections.wl.empty")}</div><div class="cw-wl-foot-r"><button type="button" class="cw-wl-load" data-kodi-load-libs><span class="material-symbols-rounded" aria-hidden="true">sync</span>${TH("connections.auth.loadLibraries")}</button></div></div></div>`;
       void ensureWhitelistTable().then(() => renderLibraries(lastLibraries));
       return;
     }
@@ -115,11 +117,11 @@
     wlHandle = window.cwWhitelistTable.mount({
       host,
       features: [
-        { key: "hist", label: "History" },
-        { key: "rate", label: "Ratings" },
-        { key: "prog", label: "Progress" },
-        { key: "coll", label: "Collections" },
-        { key: "scr", label: "Scrobble", title: "Libraries watchers and webhooks read from. Scrobble destinations use History and Progress, or the libraries set on the route." },
+        { key: "hist", label: T("connections.auth.feat.history") },
+        { key: "rate", label: T("connections.auth.feat.ratings") },
+        { key: "prog", label: T("connections.auth.feat.progress") },
+        { key: "coll", label: T("connections.auth.feat.collections") },
+        { key: "scr", label: T("connections.auth.feat.scrobble"), title: T("connections.auth.feat.scrobbleTitle") },
       ],
       getLibs: () => lastLibraries,
       isOn: (fk, id) => setFor(fk).has(String(id)),
@@ -158,14 +160,14 @@
   const METHOD_KEY = "cw.ui.kodi.auth.method.v1";
   const ADDON_COPY = {
     code: {
-      title: "Connect the Kodi add-on",
-      copy: "The add-on syncs this Kodi library per viewer and reports playback, without Kodi's web server or a JSON-RPC connection. Pair it with a short code.",
-      steps: [["Install add-on", "Install the CrossWatch add-on on Kodi"], ["Get a code", "Press Connect add-on below"], ["Pair", "Enter the address and code in the add-on"]],
+      title: T("connections.auth.kodi.connectTitle"),
+      copy: T("connections.auth.kodi.copyCode"),
+      steps: [[T("connections.auth.kodi.install"), T("connections.auth.kodi.installSub")], [T("connections.auth.kodi.getCode"), T("connections.auth.kodi.getCodeSub")], [T("connections.auth.kodi.pair"), T("connections.auth.kodi.pairSub")]],
     },
     link: {
-      title: "Connect the Kodi add-on",
-      copy: "The add-on syncs this Kodi library per viewer and reports playback. This Kodi is connected over JSON-RPC, so CrossWatch can send the add-on its settings directly.",
-      steps: [["Install add-on", "Install the CrossWatch add-on on Kodi"], ["Link", "Press Link add-on below"], ["Confirm", "Confirm on your TV"]],
+      title: T("connections.auth.kodi.connectTitle"),
+      copy: T("connections.auth.kodi.copyRpc"),
+      steps: [[T("connections.auth.kodi.install"), T("connections.auth.kodi.installSub")], [T("connections.auth.kodi.link"), T("connections.auth.kodi.linkSub")], [T("connections.auth.kodi.confirm"), T("connections.auth.kodi.confirmSub")]],
     },
   };
 
@@ -173,13 +175,13 @@
     <div class="kodi-addon">
       <div id="kodi_addon_live" class="kodi-addon-status" hidden>
         <div id="kodi_addon_info" class="muted"></div>
-        <button id="kodi_addon_repair" class="btn" type="button">Pair again</button>
+        <button id="kodi_addon_repair" class="btn" type="button">${TH("connections.auth.kodi.pairAgain")}</button>
         <div id="kodi_addon_msg" class="msg cw-connection-status-pill hidden" role="status" aria-live="polite"></div>
       </div>
 
       <div id="kodi_addon_sync" class="kodi-sync" hidden>
         <div class="kodi-sync-head">
-          <strong>Library sync</strong>
+          <strong>${TH("connections.auth.kodi.librarySync")}</strong>
           <span id="kodi_addon_sync_note" class="muted"></span>
         </div>
         <div id="kodi_addon_sync_rows" class="kodi-sync-rows"></div>
@@ -187,45 +189,45 @@
       </div>
 
       <div id="kodi_addon_link_row" hidden>
-        <label for="kodi_addon_address">CrossWatch address this Kodi can reach</label>
+        <label for="kodi_addon_address">${TH("connections.auth.kodi.address")}</label>
         <div class="inp-row">
           <input id="kodi_addon_address" class="grow" autocomplete="off" spellcheck="false" autocapitalize="off" placeholder="http://host:8787">
-          <button id="kodi_addon_link" class="btn kodi-addon-primary cw-connection-primary-action" type="button">Link add-on</button>
+          <button id="kodi_addon_link" class="btn kodi-addon-primary cw-connection-primary-action" type="button">${TH("connections.auth.kodi.linkAddon")}</button>
         </div>
         <div class="muted" id="kodi_addon_link_note" style="margin-top:6px"></div>
       </div>
 
       <details id="kodi_addon_alt">
-        <summary id="kodi_addon_alt_sum" class="muted" hidden>Other ways to connect</summary>
+        <summary id="kodi_addon_alt_sum" class="muted" hidden>${TH("connections.auth.kodi.otherWays")}</summary>
         <div class="kodi-addon kodi-addon-alt">
           <div id="kodi_addon_start" class="kodi-addon-status" hidden>
-            <button id="kodi_addon_connect" class="btn" type="button">Connect add-on</button>
-            <span class="muted">Shows a short code to enter in the add-on on your Kodi.</span>
+            <button id="kodi_addon_connect" class="btn" type="button">${TH("connections.auth.kodi.connectAddon")}</button>
+            <span class="muted">${TH("connections.auth.kodi.showsCode")}</span>
           </div>
 
           <div id="kodi_addon_codecard" class="kodi-qc" hidden>
             <div class="kodi-qc-codewrap">
               <div class="kodi-qc-code" id="kodi_addon_code">------</div>
-              <button id="kodi_addon_pair" class="btn" type="button">New code</button>
-              <button id="kodi_addon_cancel" class="btn danger" type="button">Cancel</button>
+              <button id="kodi_addon_pair" class="btn" type="button">${TH("connections.auth.kodi.newCode")}</button>
+              <button id="kodi_addon_cancel" class="btn danger" type="button">${TH("connections.auth.kodi.cancel")}</button>
             </div>
             <div class="kodi-qc-meta">
-              <span class="muted">In the add-on, enter the address <strong id="kodi_addon_address_text"></strong> and this code.</span>
+              <span class="muted">${TH("connections.auth.kodi.enterAddress")} <strong id="kodi_addon_address_text"></strong> ${TH("connections.auth.kodi.andCode")}</span>
               <span class="muted" id="kodi_addon_code_note"></span>
             </div>
           </div>
 
           <details id="kodi_addon_manual" hidden>
-            <summary class="muted">Manual setup</summary>
-            <label for="kodi_addon_url" style="margin-top:8px;display:block">Add-on URL</label>
+            <summary class="muted">${TH("connections.auth.kodi.manual")}</summary>
+            <label for="kodi_addon_url" style="margin-top:8px;display:block">${TH("connections.auth.kodi.addonUrl")}</label>
             <div class="inp-row">
               <input id="kodi_addon_url" class="grow" readonly autocomplete="off" spellcheck="false">
-              <button id="kodi_addon_copy" class="btn" type="button">Copy</button>
-              <button id="kodi_addon_regen" class="btn" type="button">Regenerate</button>
+              <button id="kodi_addon_copy" class="btn" type="button">${TH("connections.auth.copy")}</button>
+              <button id="kodi_addon_regen" class="btn" type="button">${TH("connections.auth.kodi.regenerate")}</button>
             </div>
-            <div class="muted" style="margin-top:6px">Paste this into the Webhook URL setting of the add-on. Regenerating unlinks the add-on until it is paired again.</div>
+            <div class="muted" style="margin-top:6px">${TH("connections.auth.kodi.pasteUrl")}</div>
             <div id="kodi_addon_disable_row" class="inp-row" style="margin-top:12px" hidden>
-              <button id="kodi_addon_disable" class="btn danger" type="button">Turn off add-on</button>
+              <button id="kodi_addon_disable" class="btn danger" type="button">${TH("connections.auth.kodi.turnOff")}</button>
             </div>
           </details>
         </div>
@@ -329,10 +331,10 @@
     if (seconds === null || seconds === undefined || seconds === "") return "";
     const n = Number(seconds);
     if (!Number.isFinite(n) || n < 0) return "";
-    if (n < 90) return "just now";
-    if (n < 5400) return `${Math.round(n / 60)} min ago`;
-    if (n < 129600) return `${Math.round(n / 3600)} h ago`;
-    return `${Math.round(n / 86400)} d ago`;
+    if (n < 90) return T("connections.auth.kodi.justNow");
+    if (n < 5400) return T("connections.auth.kodi.minAgo", {n: Math.round(n / 60)});
+    if (n < 129600) return T("connections.auth.kodi.hAgo", {n: Math.round(n / 3600)});
+    return T("connections.auth.kodi.dAgo", {n: Math.round(n / 86400)});
   }
 
   function stopAddonPoll() {
@@ -353,16 +355,16 @@
     el("kodi_addon_connect")?.addEventListener("click", () => { void pairAddon(); });
     el("kodi_addon_repair")?.addEventListener("click", () => { void pairAddon(); });
     el("kodi_addon_pair")?.addEventListener("click", () => { void pairAddon(); });
-    el("kodi_addon_cancel")?.addEventListener("click", () => { void updateAddon({ enabled: false }, "Pairing cancelled"); });
+    el("kodi_addon_cancel")?.addEventListener("click", () => { void updateAddon({ enabled: false }, T("connections.auth.kodi.pairingCancelled")); });
     el("kodi_addon_link")?.addEventListener("click", () => { void linkAddon(); });
     el("kodi_addon_copy")?.addEventListener("click", () => {
-      void Shared.copyText(el("kodi_addon_url")?.value || "", el("kodi_addon_copy"), { copiedText: "Copied", emptyMessage: "No add-on URL yet." });
+      void Shared.copyText(el("kodi_addon_url")?.value || "", el("kodi_addon_copy"), { copiedText: T("connections.auth.copied"), emptyMessage: T("connections.auth.stremio.noUrl") });
     });
     el("kodi_addon_regen")?.addEventListener("click", () => {
-      if (window.confirm("Regenerate the add-on URL? The add-on stops working until it is paired again.")) void updateAddon({ enabled: true, regenerate: true }, "Kodi add-on URL regenerated");
+      if (window.confirm(T("connections.auth.kodi.confirmRegen"))) void updateAddon({ enabled: true, regenerate: true }, T("connections.auth.kodi.regenerated"));
     });
     el("kodi_addon_disable")?.addEventListener("click", () => {
-      if (window.confirm("Turn off the add-on for this Kodi? The add-on stops working until it is paired again.")) void updateAddon({ enabled: false }, "Kodi add-on turned off");
+      if (window.confirm(T("connections.auth.kodi.confirmOff"))) void updateAddon({ enabled: false }, T("connections.auth.kodi.turnedOff"));
     });
   }
 
@@ -398,7 +400,7 @@
     alt.dataset.kodiRpc = rpc ? "1" : "0";
 
     const connectBtn = el("kodi_addon_connect");
-    connectBtn.textContent = rpc ? "Use a pairing code" : "Connect add-on";
+    connectBtn.textContent = rpc ? T("connections.auth.kodi.usePairing") : T("connections.auth.kodi.connectAddon");
     connectBtn.classList.toggle("kodi-addon-primary", !rpc);
     connectBtn.classList.toggle("cw-connection-primary-action", !rpc);
     el("kodi_addon_start").hidden = rpc ? !!code : open;
@@ -409,31 +411,31 @@
     if (paired && addonPaired === false) addonLinkUntil = 0;
     const linking = Date.now() < addonLinkUntil;
     el("kodi_addon_link_row").hidden = !rpc;
-    el("kodi_addon_link").textContent = paired ? "Link again" : "Link add-on";
+    el("kodi_addon_link").textContent = paired ? T("connections.auth.kodi.linkAgain") : T("connections.auth.kodi.linkAddon");
     el("kodi_addon_link_note").textContent = linking
-      ? "Sent to Kodi. Confirm on the TV to finish."
-      : "Sends the address and a one-time code to the Kodi of this instance. You only confirm on the TV.";
+      ? T("connections.auth.kodi.sentConfirm")
+      : T("connections.auth.kodi.sendsAddress");
     el("kodi_addon_manual").hidden = !open;
     el("kodi_addon_disable_row").hidden = !paired;
     el("kodi_addon_url").value = open ? txt(data.url) : "";
 
     el("kodi_addon_code").textContent = code || "------";
-    el("kodi_addon_code_note").textContent = code ? `Waiting for the add-on, valid for ${Math.max(1, Math.ceil(left / 60))} more min` : "";
+    el("kodi_addon_code_note").textContent = code ? T("connections.auth.kodi.waitingAddon", {n: Math.max(1, Math.ceil(left / 60))}) : "";
     el("kodi_addon_address_text").textContent = txt(data.address);
     const address = el("kodi_addon_address");
     if (address && !txt(address.value) && document.activeElement !== address) address.value = txt(data.address);
 
     if (paired) {
       const seen = addonAge(data.age_seconds);
-      let msg = "Add-on connected";
-      if (!data.active && seen) msg = `Add-on connected, last seen ${seen}`;
+      let msg = T("connections.auth.kodi.addonConnected");
+      if (!data.active && seen) msg = T("connections.auth.kodi.lastSeen", {when: seen});
       Shared.setStatus("kodi_addon_msg", true, msg);
       const info = [];
       if (txt(data.device_name)) info.push(txt(data.device_name));
-      if (txt(data.addon_version)) info.push(`Add-on ${txt(data.addon_version)}`);
+      if (txt(data.addon_version)) info.push(T("connections.auth.kodi.addonVersion", {version: txt(data.addon_version)}));
       const viewers = Array.isArray(data.viewers) ? data.viewers.map(txt).filter(Boolean) : [];
-      if (viewers.length) info.push(`Viewers: ${viewers.join(", ")}`);
-      if (Number(data.pkc_skipped) > 0) info.push(`PKC playback skipped: ${Number(data.pkc_skipped)}`);
+      if (viewers.length) info.push(T("connections.auth.kodi.viewers", {list: viewers.join(", ")}));
+      if (Number(data.pkc_skipped) > 0) info.push(T("connections.auth.kodi.pkcSkipped", {n: Number(data.pkc_skipped)}));
       el("kodi_addon_info").textContent = info.join(" | ");
     } else {
       Shared.setStatusPill("kodi_addon_msg", "hidden");
@@ -450,7 +452,7 @@
       renderSync(null);
     }
 
-    if (paired && addonPaired === false && addonInstance === instance) note("Kodi add-on connected");
+    if (paired && addonPaired === false && addonInstance === instance) note(T("connections.auth.kodi.kodiAddonConnected"));
     addonPaired = paired;
     addonInstance = instance;
     if (code) watchAddon(left);
@@ -465,14 +467,14 @@
     const state = document.createElement("span");
     state.className = "muted kodi-sync-state";
     const pairs = Array.isArray(viewer.pairs) ? viewer.pairs : [];
-    const labels = pairs.map((p) => (p.enabled === false ? `${txt(p.label)} (off)` : txt(p.label))).filter(Boolean).join(", ");
-    state.textContent = pairs.length ? `Syncs with ${labels}${viewer.ready ? "" : ", starts after the first upload"}` : "Not synced yet";
+    const labels = pairs.map((p) => (p.enabled === false ? `${txt(p.label)} (${T("connections.auth.kodi.off")})` : txt(p.label))).filter(Boolean).join(", ");
+    state.textContent = pairs.length ? `${T("connections.auth.kodi.syncsWith", {labels})}${viewer.ready ? "" : `, ${T("connections.auth.kodi.afterUpload")}`}` : T("connections.auth.kodi.notSynced");
     row.append(name, state);
     const used = new Set(pairs.map((p) => `${txt(p.provider)}|${txt(p.instance)}`));
     const free = targets.filter((t) => !used.has(`${txt(t.provider)}|${txt(t.instance)}`));
     if (!free.length) return row;
     const select = document.createElement("select");
-    select.setAttribute("aria-label", `Sync ${name.textContent} with`);
+    select.setAttribute("aria-label", T("connections.auth.kodi.syncWith", {name: name.textContent}));
     free.forEach((t) => {
       const opt = document.createElement("option");
       opt.value = `${txt(t.provider)}|${txt(t.instance)}`;
@@ -482,7 +484,7 @@
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = "btn";
-    btn.textContent = pairs.length ? "Add" : "Set up sync";
+    btn.textContent = pairs.length ? T("connections.auth.kodi.add") : T("connections.auth.kodi.setUpSync");
     btn.addEventListener("click", () => { void setupSync(txt(viewer.viewer_id), select.value, btn); });
     row.append(select, btn);
     return row;
@@ -499,9 +501,9 @@
       return;
     }
     const targets = Array.isArray(data.targets) ? data.targets : [];
-    let msg = "Pick where each viewer's watches and ratings go. CrossWatch adds the sync pair for you.";
-    if (!targets.length) msg = "Connect a service such as Trakt first, then pick it here.";
-    if (!data.sync_on) msg = "Turn on library sync in the add-on on this Kodi to start.";
+    let msg = T("connections.auth.kodi.pickWhere");
+    if (!targets.length) msg = T("connections.auth.kodi.connectService");
+    if (!data.sync_on) msg = T("connections.auth.kodi.turnOnSync");
     el("kodi_addon_sync_note").textContent = msg;
     rows.replaceChildren(...viewers.map((v) => syncRow(v, targets)));
     host.hidden = false;
@@ -531,11 +533,11 @@
         body: JSON.stringify({ viewer_id: viewerId, target, target_instance: raw.slice(cut + 1) || "default" }),
         cache: "no-store",
       });
-      if (!r.ok || !r.data || r.data.ok === false) throw new Error(txt(r.data?.error) || "Could not set up sync");
+      if (!r.ok || !r.data || r.data.ok === false) throw new Error(txt(r.data?.error) || T("connections.auth.kodi.setupFailed"));
       renderSync(r.data);
-      note("Sync set up");
+      note(T("connections.auth.kodi.syncSetUp"));
     } catch (e) {
-      note(e && e.message ? e.message : "Could not set up sync");
+      note(e && e.message ? e.message : T("connections.auth.kodi.setupFailed"));
     } finally {
       syncBusy = false;
       if (btn) btn.disabled = false;
@@ -555,10 +557,10 @@
   async function pairAddon() {
     try {
       const r = await fetchJSON(api("/api/kodi/addon/pair"), { method: "POST", cache: "no-store" });
-      if (!r.ok || !r.data || r.data.ok === false) throw new Error(txt(r.data?.error) || "Could not create a pairing code");
+      if (!r.ok || !r.data || r.data.ok === false) throw new Error(txt(r.data?.error) || T("connections.auth.kodi.codeFailed"));
       renderAddon(r.data);
     } catch (e) {
-      note(e && e.message ? e.message : "Could not create a pairing code");
+      note(e && e.message ? e.message : T("connections.auth.kodi.codeFailed"));
       void loadAddon();
     }
   }
@@ -573,13 +575,13 @@
         body: JSON.stringify({ address: txt(el("kodi_addon_address")?.value || "") }),
         cache: "no-store",
       });
-      if (!r.ok || !r.data || r.data.ok === false) throw new Error(txt(r.data?.error) || "Could not reach the add-on");
-      note("Sent to Kodi. Confirm on the TV.");
+      if (!r.ok || !r.data || r.data.ok === false) throw new Error(txt(r.data?.error) || T("connections.auth.kodi.reachFailed"));
+      note(T("connections.auth.kodi.sent"));
       addonLinkUntil = Date.now() + 120000;
       watchAddon(120);
       await loadAddon();
     } catch (e) {
-      note(e && e.message ? e.message : "Could not reach the add-on");
+      note(e && e.message ? e.message : T("connections.auth.kodi.reachFailed"));
     } finally {
       if (btn) btn.disabled = false;
     }
@@ -594,12 +596,12 @@
         cache: "no-store",
       });
       if (Shared.reportProviderUsage(r)) return void loadAddon();
-      if (!r.ok || !r.data || r.data.ok === false) throw new Error(txt(r.data?.error) || "Kodi add-on update failed");
+      if (!r.ok || !r.data || r.data.ok === false) throw new Error(txt(r.data?.error) || T("connections.auth.kodi.updateFailed"));
       addonPaired = null;
       renderAddon(r.data);
       if (done) note(done);
     } catch (e) {
-      note(e && e.message ? e.message : "Kodi add-on update failed");
+      note(e && e.message ? e.message : T("connections.auth.kodi.updateFailed"));
       void loadAddon();
     }
   }
@@ -607,14 +609,14 @@
   function friendlyError(data) {
     const reason = txt(data?.reason || data?.error);
     switch (reason) {
-      case "missing_server": return "Enter a Kodi server URL";
-      case "invalid_credentials": return "Kodi rejected the credentials";
-      case "unreachable": return "Kodi server is unreachable";
-      case "not_kodi": return "That server is not Kodi";
-      case "version_too_old": return "Kodi 21.0 Omega or newer is required";
-      case "jsonrpc_too_old": return "Kodi JSON-RPC 13.5.0 or newer is required";
-      case "invalid_response": return "Kodi returned an unexpected response";
-      default: return txt(data?.error) || "Kodi connection failed";
+      case "missing_server": return T("connections.auth.kodi.enterUrl");
+      case "invalid_credentials": return T("connections.auth.gen.rejectedCreds", {provider: "Kodi"});
+      case "unreachable": return T("connections.auth.kodi.unreachable");
+      case "not_kodi": return T("connections.auth.kodi.notKodi");
+      case "version_too_old": return T("connections.auth.kodi.version");
+      case "jsonrpc_too_old": return T("connections.auth.kodi.jsonrpc");
+      case "invalid_response": return T("connections.validation.returnedUnexpected", {provider: "Kodi"});
+      default: return txt(data?.error) || T("connections.auth.gen.connectionFailed", {provider: "Kodi"});
     }
   }
 
@@ -645,11 +647,11 @@
       Shared.maskSecret(el("kodi_password"), !!data.has_password);
       const ok = !!(r.ok && data.connected);
       const version = txt(data.kodi_version);
-      setConn(ok, ok ? `Connected${version ? `: Kodi ${version}` : ""}` : "Not connected");
+      setConn(ok, ok ? (version ? T("connections.auth.kodi.connectedVersion", {version}) : T("connections.auth.connected")) : T("connections.auth.notConnected"));
       if (ok) void loadLibraries();
     } catch {
       Shared.maskSecret(el("kodi_password"), false);
-      setConn(false, "Not connected");
+      setConn(false, T("connections.auth.notConnected"));
     }
   }
 
@@ -659,12 +661,12 @@
     const passInfo = Shared.readSecretField(el("kodi_password"));
     const verify_ssl = !!el("kodi_verify_ssl")?.checked;
     if (!server) {
-      note("Enter a Kodi server URL");
+      note(T("connections.auth.kodi.enterUrl"));
       return;
     }
 
     try {
-      setConn(false, "Connecting...");
+      setConn(false, T("connections.auth.connecting"));
       const r = await fetchJSON(api("/api/kodi/connect"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -679,12 +681,12 @@
       if (!r.ok || (r.data && r.data.ok === false)) throw new Error(friendlyError(r.data || {}));
       Shared.maskSecret(el("kodi_password"), passInfo.hasValue);
       const version = txt(r.data?.kodi_version);
-      setConn(true, `Connected${version ? `: Kodi ${version}` : ""}`);
+      setConn(true, version ? T("connections.auth.kodi.connectedVersion", {version}) : T("connections.auth.connected"));
       await loadLibraries(true);
-      note("Kodi connected");
+      note(T("connections.auth.gen.connected", {provider: "Kodi"}));
       await window.CW?.ProvidersUI?.refreshAuthPresentation?.(true);
     } catch (e) {
-      const msg = e && e.message ? e.message : "Kodi connection failed";
+      const msg = e && e.message ? e.message : T("connections.auth.gen.connectionFailed", {provider: "Kodi"});
       setConn(false, msg);
       note(msg);
     }
@@ -700,12 +702,12 @@
       wlHandle = null;
       wlHost = null;
       renderLibraries([]);
-      setConn(false, "Not connected");
+      setConn(false, T("connections.auth.notConnected"));
       await loadAddon();
-      note("Kodi disconnected");
+      note(T("connections.auth.gen.disconnected", {provider: "Kodi"}));
       await window.CW?.ProvidersUI?.refreshAuthPresentation?.(true);
     } catch (e) {
-      note("Kodi disconnect failed" + (e && e.message ? ": " + e.message : ""));
+      note(T("connections.auth.gen.disconnectFailed", {provider: "Kodi"}) + (e && e.message ? ": " + e.message : ""));
     }
   }
 

@@ -3,6 +3,8 @@
 (function () {
   const NS = (window.CW ||= {});
   const Editor = (NS.Editor ||= {});
+  const T = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.t?.(key, vars) ?? key;
+  const TH = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.html?.(key, vars) ?? key;
 
   const DT = () => {
     const dt = window.CW && window.CW.Editor && window.CW.Editor.DateTime;
@@ -18,7 +20,7 @@
     input.step = 1;
     input.className = "cw-input cw-timestamp-input";
     input.value = dt.localInput(row.raw && row.raw[field]);
-    input.title = "Local time; saved in UTC";
+    input.title = T("editor.extra.localTime");
     input.onclick = () => {
       try { input.showPicker?.(); } catch {}
     };
@@ -46,17 +48,17 @@
     if (state.kind === "ratings") {
       icon = "star";
       const r = row.raw && row.raw.rating;
-      if (r == null || r === "") placeholder = "Set rating";
+      if (r == null || r === "") placeholder = T("editor.extra.setRating");
       else label = String(r) + "/10";
     } else if (state.kind === "history") {
       icon = "schedule";
       const w = row.raw && row.raw.watched_at;
-      if (!w) placeholder = "Set time";
+      if (!w) placeholder = T("editor.extra.setTime");
       else label = dt.formatHistoryLabel ? dt.formatHistoryLabel(w) : String(w || "");
     } else if (state.kind === "collection") {
       icon = "inventory_2";
       const c = row.raw && row.raw.collected_at;
-      if (!c) placeholder = "Set date";
+      if (!c) placeholder = T("editor.extra.setDate");
       else label = dt.formatHistoryLabel ? dt.formatHistoryLabel(c) : String(c || "");
     } else if (state.kind === "progress") {
       icon = "play_circle";
@@ -67,7 +69,7 @@
       const dm = d == null ? NaN : Number(d);
       if (!Number.isFinite(pm) || pm <= 0) {
         if (percent != null) label = dt.formatProgressPercent ? dt.formatProgressPercent(percent) : `${percent}%`;
-        else placeholder = "Set progress";
+        else placeholder = T("editor.extra.setProgress");
       }
       else {
         const left = dt.formatMs ? dt.formatMs(pm) : "";
@@ -102,13 +104,13 @@
   function openHistoryEditor(row, anchor, displayEl, ctx = {}) {
     const dt = DT();
     ctx.openPopup(anchor, (pop, close) => {
-      ctx.appendPopupTitle(pop, "Watched at");
-      const dateInput = dt.appendDateTimeInput(pop, row.raw && row.raw.watched_at, "Watched at");
+      ctx.appendPopupTitle(pop, T("editor.extra.watchedAt"));
+      const dateInput = dt.appendDateTimeInput(pop, row.raw && row.raw.watched_at, T("editor.extra.watchedAt"));
 
       ctx.appendPopupActions(pop, [
-        { label: "Clear", kind: "ghost", onClick: () => { row.raw.watched_at = null; ctx.finishExtraChange(row, displayEl, close); } },
-        { label: "Close", kind: "ghost", onClick: close },
-        { label: "Save", kind: "primary", onClick: () => { row.raw.watched_at = dt.dateTimeInputToIso(dateInput.value, row.raw.watched_at) || null; ctx.finishExtraChange(row, displayEl, close); } },
+        { label: T("editor.rowType.clear"), kind: "ghost", onClick: () => { row.raw.watched_at = null; ctx.finishExtraChange(row, displayEl, close); } },
+        { label: T("editor.raw.close"), kind: "ghost", onClick: close },
+        { label: T("editor.extra.save"), kind: "primary", onClick: () => { row.raw.watched_at = dt.dateTimeInputToIso(dateInput.value, row.raw.watched_at) || null; ctx.finishExtraChange(row, displayEl, close); } },
       ]);
 
       dateInput.focus();
@@ -118,13 +120,13 @@
   function openCollectionEditor(row, anchor, displayEl, ctx = {}) {
     const dt = DT();
     ctx.openPopup(anchor, (pop, close) => {
-      ctx.appendPopupTitle(pop, "Collected at");
-      const dateInput = dt.appendDateTimeInput(pop, row.raw && row.raw.collected_at, "Collected at");
+      ctx.appendPopupTitle(pop, T("editor.extra.collectedAt"));
+      const dateInput = dt.appendDateTimeInput(pop, row.raw && row.raw.collected_at, T("editor.extra.collectedAt"));
 
       ctx.appendPopupActions(pop, [
-        { label: "Clear", kind: "ghost", onClick: () => { row.raw.collected_at = null; ctx.finishExtraChange(row, displayEl, close); } },
-        { label: "Close", kind: "ghost", onClick: close },
-        { label: "Save", kind: "primary", onClick: () => { row.raw.collected_at = dt.dateTimeInputToIso(dateInput.value, row.raw.collected_at) || null; ctx.finishExtraChange(row, displayEl, close); } },
+        { label: T("editor.rowType.clear"), kind: "ghost", onClick: () => { row.raw.collected_at = null; ctx.finishExtraChange(row, displayEl, close); } },
+        { label: T("editor.raw.close"), kind: "ghost", onClick: close },
+        { label: T("editor.extra.save"), kind: "primary", onClick: () => { row.raw.collected_at = dt.dateTimeInputToIso(dateInput.value, row.raw.collected_at) || null; ctx.finishExtraChange(row, displayEl, close); } },
       ]);
 
       dateInput.focus();
@@ -134,7 +136,7 @@
   function openProgressEditor(row, anchor, displayEl, ctx = {}) {
     const dt = DT();
     ctx.openPopup(anchor, (pop, close) => {
-      ctx.appendPopupTitle(pop, "Progress");
+      ctx.appendPopupTitle(pop, T("editor.extra.progress"));
 
       const makeInput = (type, props = {}) => Object.assign(document.createElement("input"), { type, ...props });
       const makeField = (label, child, extraClass = "") => {
@@ -155,8 +157,8 @@
       const posInput = makeInput("text", { placeholder: "mm:ss", value: curPos != null && dt.formatMs ? dt.formatMs(curPos) : "" });
       const durInput = makeInput("text", { placeholder: "mm:ss", value: curDur != null && dt.formatMs ? dt.formatMs(curDur) : "" });
 
-      grid.appendChild(makeField("Position", posInput));
-      grid.appendChild(makeField("Duration", durInput));
+      grid.appendChild(makeField(T("editor.extra.position"), posInput));
+      grid.appendChild(makeField(T("editor.extra.duration"), durInput));
       pop.appendChild(grid);
 
       const percentInput = makeInput("number", {
@@ -169,11 +171,11 @@
       const percentWrap = document.createElement("div");
       percentWrap.className = "cw-progress-percent-wrap";
       percentWrap.append(percentInput, Object.assign(document.createElement("span"), { className: "cw-progress-percent-suffix", textContent: "%" }));
-      pop.appendChild(makeField("Percent", percentWrap, "cw-progress-percent-field"));
+      pop.appendChild(makeField(T("editor.extra.percent"), percentWrap, "cw-progress-percent-field"));
 
-      ctx.appendPopupTitle(pop, "Updated at", "10px");
+      ctx.appendPopupTitle(pop, T("editor.extra.updatedAt"), "10px");
 
-      const dateInput = dt.appendDateTimeInput(pop, row.raw && row.raw.progress_at, "Updated at");
+      const dateInput = dt.appendDateTimeInput(pop, row.raw && row.raw.progress_at, T("editor.extra.updatedAt"));
 
       const saveProgress = () => {
         const posMs = dt.parseTimeToMs ? dt.parseTimeToMs(posInput.value) : null;
@@ -192,15 +194,15 @@
 
       ctx.appendPopupActions(pop, [
         {
-          label: "Clear",
+          label: T("editor.rowType.clear"),
           kind: "ghost",
           onClick: () => {
             for (const key of ["progress_ms", "duration_ms", "progress_percent", "progress_at"]) row.raw[key] = null;
             ctx.finishExtraChange(row, displayEl, close);
           }
         },
-        { label: "Close", kind: "ghost", onClick: close },
-        { label: "Save", kind: "primary", onClick: saveProgress },
+        { label: T("editor.raw.close"), kind: "ghost", onClick: close },
+        { label: T("editor.extra.save"), kind: "primary", onClick: saveProgress },
       ]);
 
       posInput.focus();
@@ -210,7 +212,7 @@
   function openRatingEditor(row, anchor, displayEl, ctx = {}) {
     const dt = DT();
     ctx.openPopup(anchor, (pop, close) => {
-      ctx.appendPopupTitle(pop, "Rating");
+      ctx.appendPopupTitle(pop, T("editor.meta.rating"));
 
       const current = row.raw && row.raw.rating != null ? Number(row.raw.rating) : null;
       const scale = ctx.state?.ratingScale;
@@ -221,7 +223,7 @@
       const values = scale?.values || [];
       const half = !scale?.labels && values.some(value => !Number.isInteger(value * scale.display_factor));
       const slots = scale?.labels || !values.length ? values : Array.from({length: scale.max * (half ? 2 : 1)}, (_, i) => (i + 1) / (half ? 2 : 1) / scale.display_factor);
-      const ratingLabel = value => value == null ? "Not rated" : scale?.labels?.[value] || `${value * (scale?.display_factor ?? 1)}/${scale?.max ?? 10}`;
+      const ratingLabel = value => value == null ? T("editor.extra.notRated") : scale?.labels?.[value] || `${value * (scale?.display_factor ?? 1)}/${scale?.max ?? 10}`;
       const wrapper = document.createElement("div");
       wrapper.className = "cw-editor-rating";
       const scoreSummary = document.createElement("div");
@@ -229,12 +231,12 @@
       const score = document.createElement("strong");
       score.textContent = ratingLabel(selected);
       score.setAttribute("data-editor-rating-value", "");
-      scoreSummary.append(score, Object.assign(document.createElement("span"), {textContent: "Your rating"}));
+      scoreSummary.append(score, Object.assign(document.createElement("span"), {textContent: T("editor.extra.yourRating")}));
       const grid = document.createElement("div");
       grid.className = scale?.labels ? "cw-rating-grid" : `cw-editor-stars${half ? " is-half" : ""}`;
       grid.setAttribute("style", `--mw-rating-slots:${slots.length || 10}`);
       grid.setAttribute("role", "group");
-      grid.setAttribute("aria-label", "Rating");
+      grid.setAttribute("aria-label", T("editor.meta.rating"));
       const buttons = [];
       const preview = value => {
         score.textContent = ratingLabel(value);
@@ -248,7 +250,7 @@
         pill.type = "button";
         pill.disabled = !values.includes(i);
         pill.setAttribute("data-editor-rating", String(i));
-        pill.setAttribute("aria-label", `Rate ${ratingLabel(i)}`);
+        pill.setAttribute("aria-label", T("library.quickAdd.rate", {value: String(ratingLabel(i))}));
         pill.setAttribute("aria-pressed", String(selected === i));
         if (scale.labels) pill.textContent = scale.labels[i];
         else {
@@ -286,25 +288,25 @@
       pop.appendChild(wrapper);
       if (!scale?.values?.length) {
         const message = document.createElement("p");
-        message.textContent = "Select a provider with rating support to choose a score.";
+        message.textContent = T("editor.extra.selectProvider");
         pop.appendChild(message);
       }
       const dates = document.createElement("details");
       const summary = document.createElement("summary");
-      summary.textContent = "Rated at";
+      summary.textContent = T("editor.extra.ratedAt");
       dates.appendChild(summary);
-      const dateInput = dt.appendDateTimeInput(dates, row.raw && row.raw.rated_at, "Rated at");
+      const dateInput = dt.appendDateTimeInput(dates, row.raw && row.raw.rated_at, T("editor.extra.ratedAt"));
       const initialDate = dateInput.value;
       ctx.appendPopupActions(dates, [
-        { label: "Save date", kind: "primary", onClick: () => {
+        { label: T("editor.extra.saveDate"), kind: "primary", onClick: () => {
           row.raw.rated_at = dt.dateTimeInputToIso(dateInput.value, row.raw.rated_at);
           ctx.finishExtraChange(row, displayEl, close);
         } },
       ]);
       pop.appendChild(dates);
       ctx.appendPopupActions(pop, [
-        { label: "Clear", kind: "ghost", onClick: () => { row.raw.rating = null; ctx.finishExtraChange(row, displayEl, close); } },
-        { label: "Close", kind: "ghost", onClick: close },
+        { label: T("editor.rowType.clear"), kind: "ghost", onClick: () => { row.raw.rating = null; ctx.finishExtraChange(row, displayEl, close); } },
+        { label: T("editor.raw.close"), kind: "ghost", onClick: close },
       ]);
     });
   }

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
+from tests.i18n_source import english_source
 
 PROFILE_ID = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 INSTANCE_UID = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
@@ -207,7 +208,7 @@ def test_scrobbler_overview_exposes_global_anime_mapping_flag() -> None:
 
 
 def test_route_modal_disables_anime_mapping_when_global_off() -> None:
-    text = Path("assets/js/modals/scrobbler-route/index.js").read_text("utf-8")
+    text = english_source(Path("assets/js/modals/scrobbler-route/index.js").read_text("utf-8"))
 
     assert "globalAnimeMappingEnabled()" in text
     assert "global_anime_mapping_enabled" in text
@@ -216,7 +217,7 @@ def test_route_modal_disables_anime_mapping_when_global_off() -> None:
 
 
 def test_webhook_modal_disables_anime_mapping_when_global_off() -> None:
-    text = Path("assets/js/modals/scrobbler-webhook/index.js").read_text("utf-8")
+    text = english_source(Path("assets/js/modals/scrobbler-webhook/index.js").read_text("utf-8"))
 
     assert "globalAnimeMappingEnabled()" in text
     assert "webhookAnimeMappingEnabled(sink)" in text

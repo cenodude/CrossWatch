@@ -1,14 +1,18 @@
 // assets/helpers/whitelist_table.js
 // Shared whitelist table for media-server connection modals (Plex / Emby / Jellyfin).
 (function (w, d) {
+  const T = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.t?.(key, vars) ?? key;
+  const TH = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.html?.(key, vars) ?? key;
   if (w.cwWhitelistTable) return;
 
   const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
   function relTime(ts) {
-    if (!ts) return "never";
+    if (!ts) return T("pairs.wl.never");
+    const rel = (window.CW?.I18n || window.__cwI18n)?.relative;
+    if (typeof rel === "function") return rel(ts);
     const s = Math.max(0, Math.floor((Date.now() - ts) / 1000));
-    if (s < 5) return "just now";
+    if (s < 5) return T("pairs.wl.justNow");
     if (s < 60) return `${s}s ago`;
     const m = Math.floor(s / 60);
     if (m < 60) return `${m} min ago`;
@@ -37,7 +41,7 @@
 
     const libId = (l) => String(l.id != null ? l.id : l.key);
     const libTitle = (l) => String(l.title || l.name || libId(l));
-    const missingTitle = (id) => `Missing library (${id})`;
+    const missingTitle = (id) => T("pairs.libs.missing", {id: String(id)});
 
     function withMissing(libs) {
       if (!libs.length) return libs;
@@ -69,14 +73,14 @@
     }
 
     function rowsHTML(libs) {
-      if (!libs.length) return `<div class="cw-wl-empty">No libraries loaded. Click “Load libraries”.</div>`;
+      if (!libs.length) return `<div class="cw-wl-empty">${TH("pairs.wl.noneLoaded")}</div>`;
       return libs.map((l) => {
         const id = libId(l);
         const checks = features.map((f) => {
           const on = isOn(f.key, id);
           return `<label class="cw-wl-check cw-wl-${f.key}"><input type="checkbox" data-feat="${f.key}" ${on ? "checked" : ""} aria-label="${esc(f.label)} — ${esc(libTitle(l))}"><span class="cw-wl-box"></span><span class="cw-wl-feature-label" aria-hidden="true">${esc(f.label)}</span></label>`;
         }).join("");
-        const tip = l.missing ? `${libTitle(l)} · no longer on the server. Untick it to remove it.` : `${libTitle(l)} · #${id}`;
+        const tip = l.missing ? `${libTitle(l)} · ${T("pairs.wl.gone")}` : `${libTitle(l)} · #${id}`;
         return `<div class="cw-wl-row" data-id="${esc(id)}"${l.missing ? ' data-missing="1"' : ""} title="${esc(tip)}">
           <span class="cw-wl-handle" aria-hidden="true"></span>
           <span class="cw-wl-ic">${LIB_ICON}</span>
@@ -88,7 +92,7 @@
 
     function stampText() {
       const ts = host.__cwWlLoadedAt || 0;
-      return ts ? `Last loaded: ${relTime(ts)}` : "Not loaded yet";
+      return ts ? TH("pairs.wl.lastLoaded", {when: relTime(ts)}) : TH("pairs.wl.notLoaded");
     }
 
     function render() {
@@ -98,16 +102,16 @@
         <div class="cw-wl" style="--wl-feature-count:${featureCount}">
           <div class="cw-wl-scroll">
             <div class="cw-wl-colrow">
-              <div class="cw-wl-collib"><span class="cw-wl-desktop-label">Library</span><span class="cw-wl-mobile-label">Toggle all libraries</span></div>
+              <div class="cw-wl-collib"><span class="cw-wl-desktop-label">${TH("pairs.wl.library")}</span><span class="cw-wl-mobile-label">${TH("pairs.wl.toggleAll")}</span></div>
               <div class="cw-wl-cols">${colHeadHTML()}</div>
             </div>
             <div class="cw-wl-rows">${rowsHTML(withMissing(libs))}</div>
           </div>
           <div class="cw-wl-foot">
-            <div class="cw-wl-note">${esc(opts.note || "Empty = all libraries.")}</div>
+            <div class="cw-wl-note">${esc(opts.note || T("pairs.wl.empty"))}</div>
             <div class="cw-wl-foot-r">
               <span class="cw-wl-stamp">${stampText()}</span>
-              <button type="button" class="cw-wl-load" data-act="load"><span class="material-symbols-rounded" aria-hidden="true">sync</span>Load libraries</button>
+              <button type="button" class="cw-wl-load" data-act="load"><span class="material-symbols-rounded" aria-hidden="true">sync</span>${TH("pairs.cfg.loadLibraries")}</button>
             </div>
           </div>
         </div>`;

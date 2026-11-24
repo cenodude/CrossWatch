@@ -3,7 +3,11 @@
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 const LABELS = {anilist: "AniList", mal: "MAL", anidb: "AniDB", kitsu: "Kitsu", simkl: "SIMKL",
   tmdb: "TMDB", tvdb: "TVDB", imdb: "IMDb", trakt: "Trakt"};
-const VIA = {mapping: "Anime ID Mapping", custom: "Your custom mapping", direct: "Same anime ID", ids: "Same IDs"};
+const I18N = () => globalThis.window?.CW?.I18n || globalThis.window?.__cwI18n;
+const T = (key, vars) => I18N()?.t?.(key, vars) ?? key;
+const TH = (key, vars) => I18N()?.html?.(key, vars) ?? key;
+const VIA_KEYS = new Set(["mapping", "custom", "direct", "ids"]);
+const viaText = via => VIA_KEYS.has(via) ? T(`editor.origin.via.${via}`) : via;
 const ID_ORDER = ["tmdb", "imdb", "tvdb", "trakt", "simkl", "mal", "anilist"];
 const openOrigins = new WeakMap();
 
@@ -37,7 +41,7 @@ function idsText(item) {
 
 function itemText(item) {
   if (!item) return "";
-  const title = item.series_title || item.show_title || item.title || item.name || "Untitled";
+  const title = item.series_title || item.show_title || item.title || item.name || T("editor.table.untitled");
   const year = item.year ? ` (${item.year})` : "";
   const coord = item.season != null ? ` S${item.season}${item.episode != null ? `E${item.episode}` : ""}` : "";
   const ids = idsText(item);
@@ -45,22 +49,22 @@ function itemText(item) {
 }
 
 function fixText(fix) {
-  const scope = fix.scope === "pair" ? "this pair" : "all pairs";
-  if (!fix.original_key) return `Added by you in the Editor (${scope})`;
+  const scope = T(fix.scope === "pair" ? "editor.origin.thisPair" : "editor.origin.allPairs");
+  if (!fix.original_key) return T("editor.origin.addedByYou", {scope});
   const was = itemText(fix.original) || fix.original_key;
-  return `Your fix (${scope}), was: ${was}`;
+  return T("editor.origin.yourFix", {scope, was});
 }
 
 function rowFixText(fix) {
-  const scope = fix.scope === "pair" ? "this pair" : "all pairs";
-  if (!fix.original_key) return `This row was added by you in the Editor (${scope}).`;
-  return `This row is your fix (${scope}). Original: ${itemText(fix.original) || fix.original_key}`;
+  const scope = T(fix.scope === "pair" ? "editor.origin.thisPair" : "editor.origin.allPairs");
+  if (!fix.original_key) return T("editor.origin.rowAdded", {scope});
+  return T("editor.origin.rowFix", {scope, original: itemText(fix.original) || fix.original_key});
 }
 
 function episodesText(group) {
-  if (group.first_episode == null) return group.count > 1 ? `${group.count} items` : "";
+  if (group.first_episode == null) return group.count > 1 ? T("editor.origin.items", {count: group.count}) : "";
   const span = group.first_episode === group.last_episode ? `E${group.first_episode}` : `E${group.first_episode}-${group.last_episode}`;
-  return `${span} · ${group.count} episode${group.count === 1 ? "" : "s"}`;
+  return `${span} · ${T("profile.media.count.episode", {count: group.count})}`;
 }
 
 function providerMeta() {
@@ -70,7 +74,7 @@ function providerMeta() {
 function profileText(provider, instance) {
   const meta = providerMeta();
   const id = String(instance || "default").trim() || "default";
-  const named = id => meta.instanceLabel?.(provider, id) || (id.toLowerCase() === "default" ? "Default instance" : id);
+  const named = id => meta.instanceLabel?.(provider, id) || (id.toLowerCase() === "default" ? T("editor.groups.defaultInstance") : id);
   if (!id.includes("~")) return named(id);
   const [account, ...user] = id.split("~");
   return `${named(account)} · ${user.join("~")}`;
@@ -104,7 +108,7 @@ function renderSource(group) {
   const card = el("div", "cw-origin-card");
   card.append(providerChip(group.provider, group.instance));
   const head = el("div", "cw-origin-card-head");
-  head.append(el("strong", "", group.title || "Untitled"));
+  head.append(el("strong", "", group.title || T("editor.table.untitled")));
   if (group.year) head.append(el("span", "cw-origin-muted", ` (${group.year})`));
   card.append(head);
   if (group.pair_label) card.append(el("div", "cw-origin-muted", group.pair_label));
@@ -112,28 +116,26 @@ function renderSource(group) {
   const coord = [linkText(group.link) || (group.season != null ? `S${group.season}` : ""), episodesText(group)]
     .filter(Boolean).join(" · ");
   if (coord) card.append(chainLine("→", coord, false));
-  card.append(chainLine("→", VIA[group.via] || group.via, true));
+  card.append(chainLine("→", viaText(group.via), true));
   if (group.anime) card.append(chainLine("→", animeText(group.anime), false));
   if (group.kind_mismatch) {
-    const own = group.kind === "movie" ? "movie" : "show";
-    const other = own === "movie" ? "show" : "movie";
     card.append(el("div", "cw-origin-warn",
-      `Matched through a ${label(group.link?.namespace)} ${other} with the same ID as this ${own}. Movie and show IDs are numbered separately, so this match is likely wrong.`));
+      T(group.kind === "movie" ? "editor.origin.mismatchMovie" : "editor.origin.mismatchShow", {ns: label(group.link?.namespace)})));
   }
   return card;
 }
 
 function renderLinks(links, total) {
   const box = el("div", "cw-origin-links");
-  box.append(el("div", "cw-origin-muted", "The mapping links this entry to:"));
+  box.append(el("div", "cw-origin-muted", T("editor.origin.mappingLinks")));
   const list = el("ul", "cw-origin-list");
   links.forEach(link => {
-    const via = link.via === "custom" ? " (your custom mapping)" : "";
+    const via = link.via === "custom" ? ` (${T("editor.origin.yourCustom")})` : "";
     const eps = link.episodes ? ` E${link.episodes}` : "";
     list.append(el("li", "", `${linkText(link)}${eps}${via}`));
   });
   box.append(list);
-  if (total > links.length) box.append(el("div", "cw-origin-muted", `${total - links.length} more not shown.`));
+  if (total > links.length) box.append(el("div", "cw-origin-muted", T("editor.origin.more", {count: total - links.length})));
   return box;
 }
 
@@ -142,14 +144,14 @@ export function renderItemOrigin(body, data, state = {}) {
   const animeMode = data.mode === "anime";
   const anime = data.anime || [];
   const head = el("div", "cw-origin-entry");
-  head.append(el("span", "cw-origin-label", "Destination"));
+  head.append(el("span", "cw-origin-label", T("editor.origin.destination")));
   if (state.snapshot) head.append(providerChip(state.snapshot, state.instance || "default"));
-  head.append(el("strong", "", data.title || "This item"));
+  head.append(el("strong", "", data.title || T("editor.origin.thisItem")));
   if (data.row_fix) head.append(el("div", "cw-origin-muted", rowFixText(data.row_fix)));
   if (anime.length) {
-    const prefix = animeMode ? "" : "On anime trackers: ";
+    const prefix = animeMode ? "" : `${T("editor.origin.onTrackers")} `;
     head.append(el("div", "cw-origin-muted", prefix + anime.map(entry => {
-      const eps = entry.episodes?.length ? ` episode ${entry.episodes.join(", ")}` : "";
+      const eps = entry.episodes?.length ? ` ${T("editor.origin.episodeList", {list: entry.episodes.join(", ")})}` : "";
       return `${animeText(entry)}${eps}`;
     }).join(" · ")));
   }
@@ -157,47 +159,47 @@ export function renderItemOrigin(body, data, state = {}) {
 
   if (data.import_sources?.length) {
     const imports = el("div", "cw-origin-sources");
-    imports.append(el("div", "cw-origin-label", "Tracker import sources"));
+    imports.append(el("div", "cw-origin-label", T("editor.origin.importSources")));
     data.import_sources.forEach(source => imports.append(providerChip(source.provider, source.instance)));
-    imports.append(el("p", "cw-origin-note", "These services imported this feature into this Tracker. This does not prove which service added this particular entry; matches below use saved source snapshots."));
+    imports.append(el("p", "cw-origin-note", T("editor.origin.importNote")));
     body.append(imports);
   }
 
   if (animeMode && !anime.length) {
     const why = data.mapping_ready
-      ? "No anime ID found for this item, and Anime ID Mapping does not link it to an anime entry."
-      : "No anime ID found for this item. Anime ID Mapping is not loaded, so CrossWatch cannot look further.";
+      ? T("editor.origin.noAnimeLinked")
+      : T("editor.origin.noAnimeNotLoaded");
     body.append(el("p", "cw-origin-note", why));
     return;
   }
   if (animeMode && !data.mapping_ready) {
-    body.append(el("p", "cw-origin-note", "Anime ID Mapping is not loaded. Only direct IDs and custom mappings were checked."));
+    body.append(el("p", "cw-origin-note", T("editor.origin.notLoaded")));
   }
 
   if (data.search_truncated) {
-    body.append(el("p", "cw-origin-warn", "The mapping search hit its limit, so this list may be incomplete."));
+    body.append(el("p", "cw-origin-warn", T("editor.origin.limit")));
   }
 
   const sources = data.sources || [];
   if (sources.length) {
-    body.append(el("div", "cw-origin-label", "Comes from"));
+    body.append(el("div", "cw-origin-label", T("editor.origin.comesFrom")));
     const list = el("div", "cw-origin-sources");
     sources.forEach(group => list.append(renderSource(group)));
     body.append(list);
     if (data.sources_total > sources.length) {
-      body.append(el("div", "cw-origin-muted", `${data.sources_total - sources.length} more not shown.`));
+      body.append(el("div", "cw-origin-muted", T("editor.origin.more", {count: data.sources_total - sources.length})));
     }
     return;
   }
 
   const pairs = data.pairs || [];
-  let note = "No sync pair sends this feature to this provider, so there are no sources to check.";
+  let note = T("editor.origin.noPair");
   if (pairs.length) {
     note = data.import_sources?.length
-      ? "No matching source record was found in the saved snapshots. Source records may not have been saved, or may have changed since the import."
+      ? T("editor.origin.noSnapshot")
       : animeMode
-      ? "No title in your sources maps to this entry. It may come from an older mapping or a title match."
-      : "No title in your sources has the same IDs. It may have been added on this provider directly, or matched by title.";
+      ? T("editor.origin.noMaps")
+      : T("editor.origin.noIds");
   }
   body.append(el("p", "cw-origin-note", note));
   if (animeMode && (data.links || []).length) body.append(renderLinks(data.links, data.links_total || data.links.length));
@@ -217,18 +219,18 @@ export function openItemOrigin(row, anchor, ctx) {
   ctx.openPopup(anchor, (pop, close) => {
     openOrigins.set(anchor, {pop, close});
     pop.classList.add("cw-origin-pop");
-    ctx.appendPopupTitle(pop, "Where does this come from?");
-    const body = el("div", "cw-origin-body", "Looking this up...");
+    ctx.appendPopupTitle(pop, T("editor.table.origin"));
+    const body = el("div", "cw-origin-body", T("editor.origin.looking"));
     pop.append(body);
     const finish = data => {
       const actions = [];
       if (ctx.canReplaceRow?.(row) && ctx.openMapping) {
-        actions.push({label: "Edit mapping", kind: "primary", onClick: () => { close(); ctx.openMapping(row); }});
+        actions.push({label: T("editor.table.editMapping"), kind: "primary", onClick: () => { close(); ctx.openMapping(row); }});
       }
       if (data && (data.mode === "anime" || (data.anime || []).length)) {
-        actions.push({label: "Custom anime mappings", onClick: () => { close(); window.openAnimeOverridesModal?.(); }});
+        actions.push({label: T("editor.origin.custom"), onClick: () => { close(); window.openAnimeOverridesModal?.(); }});
       }
-      actions.push({label: "Close", kind: "ghost", onClick: close});
+      actions.push({label: T("editor.raw.close"), kind: "ghost", onClick: close});
       ctx.appendPopupActions(pop, actions);
       ctx.positionPopup?.(pop, anchor);
     };
@@ -243,7 +245,7 @@ export function openItemOrigin(row, anchor, ctx) {
       finish(data);
     }).catch(error => {
       if (!pop.isConnected) return;
-      body.textContent = error?.message || "Lookup failed.";
+      body.textContent = error?.message || T("editor.origin.failed");
       finish(null);
     });
   }, {trackAnchorOnScroll: true});

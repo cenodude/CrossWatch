@@ -3,6 +3,8 @@
 (function () {
   const NS = (window.CW ||= {});
   const Editor = (NS.Editor ||= {});
+  const T = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.t?.(key, vars) ?? key;
+  const TH = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.html?.(key, vars) ?? key;
   let deferredRefreshTimer = null;
 
   function renderMappingScope(ctx, data) {
@@ -14,8 +16,8 @@
       label.id = "cw-mapping-scope-label";
       label.className = "cw-advanced-only";
       label.htmlFor = "cw-mapping-scope";
-      label.textContent = "Fixes for";
-      label.title = "Which syncs use the fixes you make here";
+      label.textContent = T("editor.load.fixesFor");
+      label.title = T("editor.load.fixesForTitle");
       const created = document.createElement("select");
       created.id = "cw-mapping-scope";
       created.name = "cw-mapping-scope";
@@ -26,8 +28,8 @@
     const pairs = data.mapping_scopes || [];
     const hide = !ctx.isPolicySource() || !!ctx.isMergedView?.() || !pairs.length;
     label.hidden = select.hidden = hide;
-    select.replaceChildren(new Option("Every sync with this account", ""),
-      ...pairs.map(pair => new Option(`Only ${pair.label}`, pair.id)));
+    select.replaceChildren(new Option(T("editor.mapping.everySync"), ""),
+      ...pairs.map(pair => new Option(T("editor.load.only", {name: pair.label}), pair.id)));
     select.value = ctx.state.mappingPair || "";
     window.CW?.IconSelect?.enhance(select, {className:"cw-plain-select",sortAlphabetically:true});
     const wrap = select.nextElementSibling?.classList?.contains("cw-icon-select") ? select.nextElementSibling : null;
@@ -36,7 +38,7 @@
       wrap.style.display = hide ? "none" : "";
     }
     select.onchange = async () => {
-      if (ctx.state.loading || ctx.state.saving || (ctx.state.hasChanges && !(await (window.CW?.MobileUI?.ask || window.confirm)("Discard unsaved Editor changes and switch mapping scope?")))) {
+      if (ctx.state.loading || ctx.state.saving || (ctx.state.hasChanges && !(await (window.CW?.MobileUI?.ask || window.confirm)(T("editor.load.discard"))))) {
         select.value = ctx.state.mappingPair || "";
         return;
       }
@@ -97,7 +99,7 @@
         state.playlistOriginalKeys = [];
         ctx.renderRows();
         ctx.showStateHint("playlist");
-        ctx.setTag("loaded", "No endpoint");
+        ctx.setTag("loaded", T("editor.load.noEndpoint"));
         ctx.setStatus("");
         ctx.syncActionButtons();
         return;
@@ -109,7 +111,7 @@
     ctx.host?.setAttribute("aria-busy", "true");
     ctx.syncActionButtons();
     if (!(state.rows || []).length) ctx.renderRows();
-    ctx.setTag("warn", "Loading");
+    ctx.setTag("warn", T("editor.load.loading"));
     try {
       const params = new URLSearchParams({ kind: state.kind, source: state.source });
       if (ctx.isProviderPickerSource() && state.snapshot) {
@@ -126,7 +128,7 @@
         if (profile) params.set("user_profile", profile);
       }
       const data = await ctx.fetchJSON(`/api/editor${merged ? "/merged" : ""}?${params.toString()}`);
-      if (data && data.ok === false) throw new Error(data.error || data.detail || "Load failed");
+      if (data && data.ok === false) throw new Error(data.error || data.detail || T("editor.load.failed"));
       state.ratingScale = data.rating_scale || null;
       renderMappingScope(ctx, data);
 
@@ -225,7 +227,7 @@
         ctx.showStateHint(state.snapshot ? null : "playlist");
       }
 
-      ctx.setTag("loaded", "Ready");
+      ctx.setTag("loaded", T("editor.files.ready"));
       if (state.source === "playlist" && state.playlistWarnings.length) {
         ctx.setStatus(state.playlistWarnings[0]);
       }
@@ -243,11 +245,11 @@
         state.items = {};
         state.rows = [];
         ctx.renderRows();
-        ctx.setTag("warn", "Missing state");
+        ctx.setTag("warn", T("editor.load.missingState"));
         ctx.setStatus("");
       } else {
         if (!(state.rows || []).length) ctx.renderRows();
-        ctx.setTag("error", "Load failed");
+        ctx.setTag("error", T("editor.load.failed"));
         ctx.setStatus(msg);
       }
     } finally {

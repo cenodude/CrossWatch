@@ -2,6 +2,9 @@
 /* CrossWatch - Captures/Snapshots page UI logic */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 (function () {
+  const T = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.t?.(key, vars) ?? key;
+  const TH = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.html?.(key, vars) ?? key;
+  const LOCALE = () => (window.CW?.I18n || window.__cwI18n)?.locale;
   const authSetupPending = () => window.cwIsAuthSetupPending?.() === true;
   const isManagedUser = () => document.documentElement?.dataset?.cwRole === "user";
   const schedulerAvailable = () => !isManagedUser();
@@ -108,7 +111,7 @@ const toast = (msg, ok = true) => {
     const m = String(stamp || "").match(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/);
     if (!m) return "";
     const d = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]));
-    return d.toLocaleString();
+    return d.toLocaleString(LOCALE());
   }
 
   function _findSnapByPath(path) {
@@ -284,8 +287,8 @@ function bundleKey(s) {
   function snapCreatedText(snap) {
     if (!snap) return "-";
     if (snap.stamp) return fmtTsFromStamp(snap.stamp) || "-";
-    if (snap.created_at) return new Date(String(snap.created_at)).toLocaleString();
-    if (snap.mtime) return new Date(Number(snap.mtime || 0) * 1000).toLocaleString();
+    if (snap.created_at) return new Date(String(snap.created_at)).toLocaleString(LOCALE());
+    if (snap.mtime) return new Date(Number(snap.mtime || 0) * 1000).toLocaleString(LOCALE());
     return "-";
   }
 
@@ -300,7 +303,7 @@ function bundleKey(s) {
       d = new Date(Number(snap.mtime || 0) * 1000);
     }
     if (!d || Number.isNaN(d.getTime())) return snapCreatedText(snap);
-    return d.toLocaleString(undefined, {
+    return d.toLocaleString(LOCALE(), {
       year: "numeric",
       month: "numeric",
       day: "numeric",
@@ -317,7 +320,7 @@ function bundleKey(s) {
 
   function snapTypeLabel(snap) {
     const feature = String(snap?.feature || "").toLowerCase();
-    return feature === "all" ? "Full set" : "Feature";
+    return feature === "all" ? T("snapshots.fullSet") : T("snapshots.feature");
   }
 
   function compareSelectionState() {
@@ -326,12 +329,12 @@ function bundleKey(s) {
     const result = { ...pick, selected, ok: false, reason: "" };
     if (selected.length !== 2) {
       result.reason = selected.length
-        ? `Comparison needs exactly two captures. ${selected.length} selected.`
-        : "Select exactly two captures to enable comparison.";
+        ? T("snapshots.compare.needTwo", {count: selected.length})
+        : T("snapshots.compare.selectTwo");
       return result;
     }
     if (!pick.sa || !pick.sb) {
-      result.reason = "One selected capture is no longer available.";
+      result.reason = T("snapshots.compare.gone");
       return result;
     }
     const pa = String(pick.sa.provider || "").toLowerCase();
@@ -341,21 +344,21 @@ function bundleKey(s) {
     const fa = String(pick.sa.feature || "").toLowerCase();
     const fb = String(pick.sb.feature || "").toLowerCase();
     if (pa !== pb) {
-      result.reason = "Selected captures use different providers.";
+      result.reason = T("snapshots.compare.providers");
       return result;
     }
     if (ia !== ib) {
-      result.reason = "Selected captures use different profiles.";
+      result.reason = T("snapshots.compare.profiles");
       return result;
     }
     if (fa !== fb) {
-      result.reason = "Selected captures use different features.";
+      result.reason = T("snapshots.compare.features");
       return result;
     }
     result.ok = !!pick.a && !!pick.b && pick.a !== pick.b;
     result.reason = result.ok
-      ? `Comparison enabled for ${(pick.sa.provider || "-").toUpperCase()} / ${fa || "-"} / ${snapInstance(pick.sa)}.`
-      : "Select two different captures.";
+      ? T("snapshots.compare.enabledFor", {target: `${(pick.sa.provider || "-").toUpperCase()} / ${fa || "-"} / ${snapInstance(pick.sa)}`})
+      : T("snapshots.compare.different");
     return result;
   }
 
@@ -375,9 +378,9 @@ function bundleKey(s) {
     setStat("providers", overview.providers);
     setStat("full-sets", overview.fullSets);
     setStat("latest", overview.latest ? snapCreatedMinuteText(overview.latest) : "-");
-    setSub("latest", overview.latest ? `${String(overview.latest.provider || "-").toUpperCase()} / ${String(overview.latest.feature || "-").toLowerCase()}` : "No captures yet");
+    setSub("latest", overview.latest ? `${String(overview.latest.provider || "-").toUpperCase()} / ${String(overview.latest.feature || "-").toLowerCase()}` : T("snapshots.none"));
     setStat("scheduled", overview.scheduledJobs);
-    setSub("scheduled", overview.scheduledJobs ? "Queued or drafted" : "No queued jobs");
+    setSub("scheduled", overview.scheduledJobs ? T("snapshots.queuedDrafted") : T("snapshots.noQueued"));
   }
 
   function render() {
@@ -388,62 +391,62 @@ function bundleKey(s) {
     const overview = snapshotOverview();
     const latest = overview.latest;
     const latestMain = latest ? snapCreatedMinuteText(latest) : "-";
-    const latestSub = latest ? `${String(latest.provider || "-").toUpperCase()} / ${String(latest.feature || "-").toLowerCase()}` : "No captures yet";
+    const latestSub = latest ? `${String(latest.provider || "-").toUpperCase()} / ${String(latest.feature || "-").toLowerCase()}` : T("snapshots.none");
     page.innerHTML = `
       <div class="ss-top cw-page-hero cw-page-hero-captures" data-hero-icon="database">
         <div class="ss-top-copy cw-page-hero-copy">
           <div class="cw-page-hero-kicker">CAPTURES</div>
-          <div class="ss-title cw-page-hero-title">Captures</div>
-          <div class="ss-sub cw-page-hero-sub">Save snapshots of your provider data, compare changes, and restore whenever needed.</div>
+          <div class="ss-title cw-page-hero-title">${TH("snapshots.title")}</div>
+          <div class="ss-sub cw-page-hero-sub">${TH("snapshots.subtitle")}</div>
         </div>
-        <div class="ss-actions cw-page-hero-actions ss-hero-summary" id="ss-hero-summary" aria-label="Capture sync summary">
-          <div class="ss-hero-seg ss-hero-sync"><span>Synced</span><strong id="ss-sync-time">not yet</strong></div>
-          <button id="ss-refresh" class="ss-hero-refresh" title="Refresh captures" aria-label="Refresh captures"><span id="ss-refresh-icon" class="material-symbol ss-refresh-icon">refresh</span></button>
+        <div class="ss-actions cw-page-hero-actions ss-hero-summary" id="ss-hero-summary" aria-label="${TH("snapshots.summaryLabel")}">
+          <div class="ss-hero-seg ss-hero-sync"><span>${TH("snapshots.synced")}</span><strong id="ss-sync-time">not yet</strong></div>
+          <button id="ss-refresh" class="ss-hero-refresh" title="${TH("snapshots.refresh")}" aria-label="${TH("snapshots.refresh")}"><span id="ss-refresh-icon" class="material-symbol ss-refresh-icon">refresh</span></button>
         </div>
       </div>
       <div class="ss-topstats">
-        ${summaryCard("database", "Total captures", overview.total, "Across all providers", "captures")}
-        ${summaryCard("groups", "Providers", overview.providers, "Active providers", "providers")}
-        ${summaryCard("layers", "Full sets", overview.fullSets, "Complete snapshots", "full-sets")}
-        ${summaryCard("calendar_month", "Latest capture", latestMain, latestSub, "latest")}
-        ${summaryCard("schedule", "Scheduled jobs", overview.scheduledJobs, overview.scheduledJobs ? "Queued or drafted" : "No queued jobs", "scheduled")}
+        ${summaryCard("database", T("snapshots.stats.total"), overview.total, T("snapshots.stats.allProviders"), "captures")}
+        ${summaryCard("groups", T("snapshots.stats.providers"), overview.providers, T("snapshots.stats.activeProviders"), "providers")}
+        ${summaryCard("layers", T("snapshots.stats.fullSets"), overview.fullSets, T("snapshots.stats.complete"), "full-sets")}
+        ${summaryCard("calendar_month", T("snapshots.stats.latest"), latestMain, latestSub, "latest")}
+        ${summaryCard("schedule", T("snapshots.stats.scheduled"), overview.scheduledJobs, overview.scheduledJobs ? T("snapshots.queuedDrafted") : T("snapshots.noQueued"), "scheduled")}
       </div>
       <div class="ss-wrap">
         <div class="ss-col">
           <div class="ss-card ss-accent cw-page-panel">
             <div class="ss-card-head">
               <div class="ss-headcopy">
-                <h3>Create capture</h3>
-                <div class="ss-headsub">Choose the source, set capture options, then create now or queue for scheduler.</div>
+                <h3>${TH("snapshots.create.title")}</h3>
+                <div class="ss-headsub">${TH("snapshots.create.hint")}</div>
               </div>
             </div>
             <div class="ss-create-flow">
               <div class="ss-stepper">
-                <div class="ss-step on"><span>1</span><b>Source</b></div>
-                <div class="ss-step"><span>2</span><b>Options</b></div>
-                <div class="ss-step"><span>3</span><b>Review</b></div>
+                <div class="ss-step on"><span>1</span><b>${TH("snapshots.step.source")}</b></div>
+                <div class="ss-step"><span>2</span><b>${TH("snapshots.step.options")}</b></div>
+                <div class="ss-step"><span>3</span><b>${TH("snapshots.step.review")}</b></div>
               </div>
               <div class="ss-create-fields">
-                <label>Provider<div class="ss-field"><select id="ss-prov"></select></div></label>
-                <label>Instance<div class="ss-field"><select id="ss-prov-inst" class="input grow"></select></div></label>
-                <label>Capture type<div class="ss-field"><select id="ss-feature"></select></div></label>
-                <label>Optional label<div class="ss-field"><input id="ss-label" maxlength="12" placeholder="e.g. Maint" /></div><small>Max 12 characters</small></label>
+                <label>${TH("snapshots.provider")}<div class="ss-field"><select id="ss-prov"></select></div></label>
+                <label>${TH("snapshots.instance")}<div class="ss-field"><select id="ss-prov-inst" class="input grow"></select></div></label>
+                <label>${TH("snapshots.captureType")}<div class="ss-field"><select id="ss-feature"></select></div></label>
+                <label>${TH("snapshots.optionalLabel")}<div class="ss-field"><input id="ss-label" maxlength="12" placeholder="${TH("snapshots.labelPlaceholder")}" /></div><small>${TH("snapshots.max12")}</small></label>
               </div>
               <div id="ss-create-review" class="ss-selected-card ss-small"></div>
               <div class="ss-create-actions">
-                <button id="ss-create" class="btn primary" type="button"><span class="material-symbols-rounded" aria-hidden="true">bolt</span><span class="ss-btn-label">Create now</span></button>
-                <button id="ss-add-schedule" class="btn" type="button"><span class="material-symbols-rounded" aria-hidden="true">schedule</span><span class="ss-btn-label">Queue for scheduler</span></button>
+                <button id="ss-create" class="btn primary" type="button"><span class="material-symbols-rounded" aria-hidden="true">bolt</span><span class="ss-btn-label">${TH("snapshots.createNow")}</span></button>
+                <button id="ss-add-schedule" class="btn" type="button"><span class="material-symbols-rounded" aria-hidden="true">schedule</span><span class="ss-btn-label">${TH("snapshots.queueForScheduler")}</span></button>
               </div>
             </div>
             <div id="ss-schedule-queue-wrap" class="ss-queue hidden">
               <div class="ss-queue-head">
                 <div>
-                  <div class="ss-queue-title">Scheduler queue</div>
-                  <div class="ss-queue-note">Queue capture schedules here, then send them to Advanced Scheduling.</div>
+                  <div class="ss-queue-title">${TH("snapshots.queue.title")}</div>
+                  <div class="ss-queue-note">${TH("snapshots.queue.hint")}</div>
                 </div>
                 <div class="ss-queue-actions">
-                  <button id="ss-send-schedule-queue" class="btn" type="button">Send queue</button>
-                  <button id="ss-clear-schedule-queue" class="btn" type="button">Clear queue</button>
+                  <button id="ss-send-schedule-queue" class="btn" type="button">${TH("snapshots.queue.send")}</button>
+                  <button id="ss-clear-schedule-queue" class="btn" type="button">${TH("snapshots.queue.clear")}</button>
                 </div>
               </div>
               <div id="ss-queue-feedback" class="ss-small ss-muted" style="display:none;padding:9px 10px;border-radius:12px;border:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.03)"></div>
@@ -455,8 +458,8 @@ function bundleKey(s) {
           <div class="ss-card ss-browser-card ss-lockable cw-page-panel">
             <div class="ss-card-head ss-list-head">
               <div class="ss-headcopy">
-                <h3>Capture browser</h3>
-                <div class="ss-headsub">Tick a row to load it for restore and select it for compare and tools. Clicking a row loads it too.</div>
+                <h3>${TH("snapshots.browser.title")}</h3>
+                <div class="ss-headsub">${TH("snapshots.browser.hint")}</div>
               </div>
             </div>
             <div class="ss-toolbar cw-page-toolbar">
@@ -464,20 +467,20 @@ function bundleKey(s) {
                 <div id="ss-filter-provider-wrap" class="ss-filtermini"><select id="ss-filter-provider" class="input"></select></div>
                 <div id="ss-filter-feature-wrap" class="ss-filtermini"><select id="ss-filter-feature" class="input"></select></div>
                 <div id="ss-filter-kind-wrap" class="ss-filtermini"><select id="ss-filter-kind" class="input"></select></div>
-                <button id="ss-filter-clear" class="btn ss-filterclear" type="button"><span class="material-symbols-rounded">filter_list</span>Filters</button>
+                <button id="ss-filter-clear" class="btn ss-filterclear" type="button"><span class="material-symbols-rounded">filter_list</span>${TH("snapshots.filters")}</button>
               </div>
-              <div id="ss-capture-lock" class="ss-lockmsg hidden"><span class="material-symbol">hourglass_top</span><div>Creating capture... browser, restore, compare, and tools unlock after refresh.</div></div>
+              <div id="ss-capture-lock" class="ss-lockmsg hidden"><span class="material-symbol">hourglass_top</span><div>${TH("snapshots.creatingHint")}</div></div>
             </div>
             <div id="ss-list" class="ss-list"></div>
             <div id="ss-list-footer" class="ss-row" style="justify-content:space-between;margin:10px 0 14px"></div>
-            <div id="ss-bulk" class="ss-bulk cw-selection-bar" role="group" aria-label="Selected captures" hidden>
+            <div id="ss-bulk" class="ss-bulk cw-selection-bar" role="group" aria-label="${TH("snapshots.selectedLabel")}" hidden>
               <span class="cw-selection-count" aria-live="polite"><span class="material-symbols-rounded" aria-hidden="true">check_box_outline_blank</span><strong data-ss-count>0</strong><span>selected</span></span>
-              <button class="cw-selection-button" type="button" data-ss-bulk="visible"><span class="material-symbols-rounded" aria-hidden="true">visibility</span>Visible</button>
-              <button class="cw-selection-button" type="button" data-ss-bulk="none"><span class="material-symbols-rounded" aria-hidden="true">close</span>Clear</button>
+              <button class="cw-selection-button" type="button" data-ss-bulk="visible"><span class="material-symbols-rounded" aria-hidden="true">visibility</span>${TH("snapshots.visible")}</button>
+              <button class="cw-selection-button" type="button" data-ss-bulk="none"><span class="material-symbols-rounded" aria-hidden="true">close</span>${TH("snapshots.clear")}</button>
               <span class="cw-selection-actions">
-                <button class="cw-selection-button" type="button" data-ss-bulk="compare" title="Compare two captures"><span class="material-symbols-rounded" aria-hidden="true">compare_arrows</span>Compare</button>
-                <button class="cw-selection-button" type="button" data-ss-bulk="export"><span class="material-symbols-rounded" aria-hidden="true">download</span>Export</button>
-                <button class="cw-selection-button is-danger" type="button" data-ss-bulk="delete"><span class="material-symbols-rounded" aria-hidden="true">delete</span>Delete</button>
+                <button class="cw-selection-button" type="button" data-ss-bulk="compare" title="${TH("snapshots.compare.twoLabel")}"><span class="material-symbols-rounded" aria-hidden="true">compare_arrows</span>${TH("snapshots.compare.btn")}</button>
+                <button class="cw-selection-button" type="button" data-ss-bulk="export"><span class="material-symbols-rounded" aria-hidden="true">download</span>${TH("snapshots.export")}</button>
+                <button class="cw-selection-button is-danger" type="button" data-ss-bulk="delete"><span class="material-symbols-rounded" aria-hidden="true">delete</span>${TH("snapshots.bulkDelete")}</button>
               </span>
             </div>
           </div>
@@ -486,38 +489,38 @@ function bundleKey(s) {
           <div class="ss-card ss-lockable cw-page-panel" data-coll="restore">
             <div class="ss-card-head">
               <div class="ss-headcopy">
-                <h3>Restore capture</h3>
-                <div class="ss-headsub">Restore stays visible so the target and method are always clear.</div>
+                <h3>${TH("snapshots.restore.title")}</h3>
+                <div class="ss-headsub">${TH("snapshots.restore.hint")}</div>
               </div>
             </div>
-            <div id="ss-selected" class="ss-selected-card ss-selected-empty">Pick a capture from the browser.</div>
-            <div class="ss-target-label">Target instance</div>
+            <div id="ss-selected" class="ss-selected-card ss-selected-empty">${TH("snapshots.restore.pick")}</div>
+            <div class="ss-target-label">${TH("snapshots.restore.target")}</div>
             <div class="ss-row"><select id="ss-restore-inst" class="input grow"></select></div>
             <div class="ss-restore-modebar">
               <div class="ss-restore-modes">
-                <button class="ss-modebtn active" type="button" data-restore-mode="merge"><strong>Merge missing</strong><span>Only add items</span></button>
-                <button class="ss-modebtn" type="button" data-restore-mode="clear_restore"><strong>Replace</strong><span>Match capture</span></button>
+                <button class="ss-modebtn active" type="button" data-restore-mode="merge"><strong>${TH("snapshots.restore.merge")}</strong><span>${TH("snapshots.restore.onlyAdd")}</span></button>
+                <button class="ss-modebtn" type="button" data-restore-mode="clear_restore"><strong>${TH("snapshots.restore.replace")}</strong><span>${TH("snapshots.restore.match")}</span></button>
               </div>
-              <select id="ss-restore-mode" class="input hidden" aria-hidden="true"><option value="merge">Merge missing only</option><option value="clear_restore">Replace exactly</option></select>
-              <div id="ss-restore-warning" class="ss-restore-warning hidden">Replace exactly clears the target feature first, then restores this capture.</div>
+              <select id="ss-restore-mode" class="input hidden" aria-hidden="true"><option value="merge">${TH("snapshots.restore.mergeOnly")}</option><option value="clear_restore">${TH("snapshots.restore.replaceExactly")}</option></select>
+              <div id="ss-restore-warning" class="ss-restore-warning hidden">${TH("snapshots.restore.replaceHint")}</div>
             </div>
-            <div id="ss-restore-statuses" class="ss-small ss-muted hidden">Supported title statuses are restored in both modes. Planned follows Watchlist.</div>
-            <div class="ss-row" style="margin-top:12px"><button id="ss-restore" class="btn danger cw-danger-confirm" style="width:100%" type="button"><span class="material-symbols-rounded" aria-hidden="true">restore</span><span>Restore capture</span></button></div>
-            <div id="ss-restore-progress" class="ss-progress hidden"><div class="ss-pbar"></div><div class="ss-plabel">Working...</div></div>
+            <div id="ss-restore-statuses" class="ss-small ss-muted hidden">${TH("snapshots.restore.statusesHint")}</div>
+            <div class="ss-row" style="margin-top:12px"><button id="ss-restore" class="btn danger cw-danger-confirm" style="width:100%" type="button"><span class="material-symbols-rounded" aria-hidden="true">restore</span><span>${TH("snapshots.restore.title")}</span></button></div>
+            <div id="ss-restore-progress" class="ss-progress hidden"><div class="ss-pbar"></div><div class="ss-plabel">${TH("snapshots.working")}</div></div>
             <div id="ss-restore-out" class="ss-small ss-muted" style="margin-top:10px"></div>
           </div>
           <div class="ss-card ss-lockable cw-page-panel" data-coll="compare">
             <div class="ss-card-head">
               <div class="ss-headcopy">
-                <h3>Compare captures</h3>
-                <div class="ss-headsub">Comparison requires exactly two compatible captures.</div>
+                <h3>${TH("snapshots.compare.title")}</h3>
+                <div class="ss-headsub">${TH("snapshots.compare.requires")}</div>
               </div>
             </div>
             <div class="ss-compare-panel">
               <div id="ss-compare-state" class="ss-compare-state"></div>
               <div id="ss-diff-picked" class="ss-picked ss-compare-picks"></div>
               <div class="ss-compare-actions">
-                <button id="ss-diff-run" class="btn" type="button">Compare Captures</button>
+                <button id="ss-diff-run" class="btn" type="button">${TH("snapshots.compare.titleCaps")}</button>
               </div>
               <div id="ss-diff-out" class="ss-muted ss-small"></div>
             </div>
@@ -525,17 +528,17 @@ function bundleKey(s) {
           <div class="ss-card ss-lockable cw-page-panel" data-coll="tools">
             <div class="ss-card-head">
               <div class="ss-headcopy">
-                <h3>Tools</h3>
-                <div class="ss-headsub">Secondary actions for selected captures.</div>
+                <h3>${TH("snapshots.tools.title")}</h3>
+                <div class="ss-headsub">${TH("snapshots.tools.hint")}</div>
               </div>
             </div>
             <div class="ss-tools-list">
-              <button id="ss-export-selected" class="ss-tool-btn" type="button"><span class="material-symbols-rounded">download</span><span class="ss-tool-main"><span class="ss-tool-title">Export selected</span><span class="ss-tool-sub">Download selected capture data</span></span><span class="material-symbols-rounded">chevron_right</span></button>
-              <button id="ss-delete" class="ss-tool-btn danger" type="button"><span class="material-symbols-rounded">delete</span><span class="ss-tool-main"><span class="ss-tool-title">Delete selected</span><span class="ss-tool-sub">Remove selected captures</span></span><span class="material-symbols-rounded">chevron_right</span></button>
-              <button id="ss-cleanup-old" class="ss-tool-btn danger" type="button"><span class="material-symbols-rounded">auto_delete</span><span class="ss-tool-main"><span class="ss-tool-title">Cleanup Captures</span><span class="ss-tool-sub">Remove all stored captures</span></span><span class="material-symbols-rounded">chevron_right</span></button>
-              <button id="ss-view-details" class="ss-tool-btn" type="button"><span class="material-symbols-rounded">info</span><span class="ss-tool-main"><span class="ss-tool-title">View details</span><span class="ss-tool-sub">Show technical details</span></span><span class="material-symbols-rounded">chevron_right</span></button>
+              <button id="ss-export-selected" class="ss-tool-btn" type="button"><span class="material-symbols-rounded">download</span><span class="ss-tool-main"><span class="ss-tool-title">${TH("snapshots.tools.export")}</span><span class="ss-tool-sub">${TH("snapshots.tools.exportHint")}</span></span><span class="material-symbols-rounded">chevron_right</span></button>
+              <button id="ss-delete" class="ss-tool-btn danger" type="button"><span class="material-symbols-rounded">delete</span><span class="ss-tool-main"><span class="ss-tool-title">${TH("snapshots.tools.delete")}</span><span class="ss-tool-sub">${TH("snapshots.tools.deleteHint")}</span></span><span class="material-symbols-rounded">chevron_right</span></button>
+              <button id="ss-cleanup-old" class="ss-tool-btn danger" type="button"><span class="material-symbols-rounded">auto_delete</span><span class="ss-tool-main"><span class="ss-tool-title">${TH("snapshots.tools.cleanup")}</span><span class="ss-tool-sub">${TH("snapshots.tools.cleanupHint")}</span></span><span class="material-symbols-rounded">chevron_right</span></button>
+              <button id="ss-view-details" class="ss-tool-btn" type="button"><span class="material-symbols-rounded">info</span><span class="ss-tool-main"><span class="ss-tool-title">${TH("snapshots.tools.details")}</span><span class="ss-tool-sub">${TH("snapshots.tools.detailsHint")}</span></span><span class="material-symbols-rounded">chevron_right</span></button>
             </div>
-            <div id="ss-tools-progress" class="ss-progress hidden"><div class="ss-pbar"></div><div class="ss-plabel">Working...</div></div>
+            <div id="ss-tools-progress" class="ss-progress hidden"><div class="ss-pbar"></div><div class="ss-plabel">${TH("snapshots.working")}</div></div>
             <div id="ss-tools-out" class="ss-small ss-muted hidden" style="margin-top:10px"></div>
             <div id="ss-detail-out" class="ss-code ss-detail-pre hidden"></div>
           </div>
@@ -546,19 +549,19 @@ function bundleKey(s) {
           <div class="ss-capture-modal-head">
             <div class="ss-capture-icon"><span class="material-symbols-rounded">database_upload</span></div>
             <div>
-              <div id="ss-capture-modal-title" class="ss-capture-title">Creating capture</div>
-              <div id="ss-capture-modal-sub" class="ss-capture-sub">Preparing provider capture...</div>
+              <div id="ss-capture-modal-title" class="ss-capture-title">${TH("snapshots.progress.creating")}</div>
+              <div id="ss-capture-modal-sub" class="ss-capture-sub">${TH("snapshots.progress.preparing")}</div>
             </div>
           </div>
           <div class="ss-capture-meter" aria-hidden="true"><div id="ss-capture-meter-fill" class="ss-capture-meter-fill"></div></div>
-          <div class="ss-capture-progress-line"><span id="ss-capture-percent">0%</span><b id="ss-capture-stage">Starting</b></div>
+          <div class="ss-capture-progress-line"><span id="ss-capture-percent">0%</span><b id="ss-capture-stage">${TH("snapshots.stage.starting")}</b></div>
           <div class="ss-capture-grid">
-            <div><span>Provider</span><b id="ss-capture-provider">-</b></div>
-            <div><span>Instance</span><b id="ss-capture-instance">default</b></div>
-            <div><span>Feature</span><b id="ss-capture-feature">-</b></div>
-            <div><span>Items</span><b id="ss-capture-items">-</b></div>
+            <div><span>${TH("snapshots.provider")}</span><b id="ss-capture-provider">-</b></div>
+            <div><span>${TH("snapshots.instance")}</span><b id="ss-capture-instance">default</b></div>
+            <div><span>${TH("snapshots.feature")}</span><b id="ss-capture-feature">-</b></div>
+            <div><span>${TH("snapshots.items")}</span><b id="ss-capture-items">-</b></div>
           </div>
-          <div id="ss-capture-message" class="ss-capture-message">Starting capture...</div>
+          <div id="ss-capture-message" class="ss-capture-message">${TH("snapshots.progress.startingCapture")}</div>
           <div id="ss-capture-actions" class="ss-capture-actions">
             <button id="ss-capture-ack" class="btn" type="button">OK</button>
           </div>
@@ -592,7 +595,7 @@ function bundleKey(s) {
     $("#ss-clear-schedule-queue", page)?.addEventListener("click", () => {
       state.scheduleQueue = [];
       renderScheduleQueue();
-      setScheduleQueueFeedback("Queue cleared", true);
+      setScheduleQueueFeedback(T("snapshots.queue.cleared"), true);
     });
     $("#ss-prov", page)?.addEventListener("change", () => { repopFeatures(); repopCreateInstances(); updateCreateReview(); });
     $("#ss-prov-inst", page)?.addEventListener("change", () => updateCreateReview());
@@ -661,7 +664,7 @@ function bundleKey(s) {
     const el = $(sel, page);
     if (!el) return;
     const lab = $(".ss-plabel", el);
-    if (lab) lab.textContent = label || "Working...";
+    if (lab) lab.textContent = label || T("snapshots.working");
     el.style.setProperty("--pcol", tone === "danger" ? "var(--danger)" : "var(--accent)");
     el.classList.toggle("hidden", !on);
   }
@@ -695,7 +698,7 @@ function bundleKey(s) {
     if (!btn) return;
     btn.classList.remove("is-confirming");
     btn.style.removeProperty("--ss-confirm-progress");
-    btn.innerHTML = `<span class="material-symbols-rounded" aria-hidden="true">restore</span><span>Restore capture</span>`;
+    btn.innerHTML = `<span class="material-symbols-rounded" aria-hidden="true">restore</span><span>${TH("snapshots.restore.title")}</span>`;
   }
 
   function armRestoreConfirm() {
@@ -704,7 +707,7 @@ function bundleKey(s) {
     state.restoreConfirmUntil = Date.now() + 4200;
     if (!btn) return;
     btn.classList.add("is-confirming");
-    btn.innerHTML = `<span class="material-symbols-rounded" aria-hidden="true">warning</span><span>Confirm restore</span>`;
+    btn.innerHTML = `<span class="material-symbols-rounded" aria-hidden="true">warning</span><span>${TH("snapshots.restore.confirm")}</span>`;
     if (state.restoreConfirmTimer) clearTimeout(state.restoreConfirmTimer);
     if (state.restoreConfirmRaf) cancelAnimationFrame(state.restoreConfirmRaf);
     const tick = () => {
@@ -723,25 +726,27 @@ function bundleKey(s) {
 
   function captureStageLabel(stage) {
     const key = String(stage || "").toLowerCase();
-    if (key === "queued") return "Queued";
-    if (key === "waiting") return "Waiting";
-    if (key === "reading") return "Reading provider";
-    if (key === "planning") return "Planning changes";
-    if (key === "clearing") return "Clearing target";
-    if (key === "restoring") return "Restoring items";
-    if (key === "normalizing") return "Normalizing items";
-    if (key === "writing") return "Writing capture";
-    if (key === "feature_done") return "Feature complete";
-    if (key === "bundling") return "Bundling full set";
-    if (key === "done") return "Done";
-    if (key === "error") return "Failed";
-    return "Starting";
+    if (key === "queued") return T("snapshots.stage.queued");
+    if (key === "waiting") return T("snapshots.stage.waiting");
+    if (key === "reading") return T("snapshots.stage.reading");
+    if (key === "planning") return T("snapshots.stage.planning");
+    if (key === "clearing") return T("snapshots.stage.clearing");
+    if (key === "restoring") return T("snapshots.stage.restoring");
+    if (key === "normalizing") return T("snapshots.stage.normalizing");
+    if (key === "writing") return T("snapshots.stage.writing");
+    if (key === "feature_done") return T("snapshots.stage.featureDone");
+    if (key === "bundling") return T("snapshots.stage.bundling");
+    if (key === "done") return T("snapshots.stage.done");
+    if (key === "error") return T("snapshots.stage.failed");
+    return T("snapshots.stage.starting");
   }
 
   function captureFeatureLabel(feature) {
     const raw = String(feature || "").trim().toLowerCase();
     if (!raw) return "-";
-    return raw === "all" ? "All features" : raw.charAt(0).toUpperCase() + raw.slice(1);
+    const known = { history: "events.feature.history", ratings: "events.feature.ratings", watchlist: "events.feature.watchlist", progress: "events.feature.progress", collection: "events.feature.collections" };
+    if (known[raw]) return T(known[raw]);
+    return raw === "all" ? T("snapshots.allFeatures") : raw.charAt(0).toUpperCase() + raw.slice(1);
   }
 
   function captureItemText(progress) {
@@ -750,18 +755,18 @@ function bundleKey(s) {
       const removed = Number(progress?.removed);
       const hasAdded = Number.isFinite(added) && added > 0;
       const hasRemoved = Number.isFinite(removed) && removed > 0;
-      if (hasAdded || hasRemoved) return `${hasAdded ? added.toLocaleString() : "0"} added, ${hasRemoved ? removed.toLocaleString() : "0"} removed`;
+      if (hasAdded || hasRemoved) return T("snapshots.progress.addedRemoved", {added: hasAdded ? added : 0, removed: hasRemoved ? removed : 0});
     }
     const done = Number(progress?.items_done ?? progress?.total_items);
     const featureItems = Number(progress?.feature_items);
     const hasDone = Number.isFinite(done) && done > 0;
     const hasFeature = Number.isFinite(featureItems) && featureItems > 0;
-    if (hasDone && hasFeature && done !== featureItems) return `${done.toLocaleString()} total, ${featureItems.toLocaleString()} current`;
-    if (hasDone) return `${done.toLocaleString()} items`;
-    if (hasFeature) return `${featureItems.toLocaleString()} current`;
+    if (hasDone && hasFeature && done !== featureItems) return T("snapshots.progress.totalCurrent", {total: done, current: featureItems});
+    if (hasDone) return T("snapshots.progress.items", {count: done});
+    if (hasFeature) return T("snapshots.progress.current", {count: featureItems});
     const seen = Number(progress?.activity_seen);
-    if (Number.isFinite(seen) && seen > 0) return `${seen.toLocaleString()} seen`;
-    if (String(progress?.stage || "").toLowerCase() === "reading") return "Counting...";
+    if (Number.isFinite(seen) && seen > 0) return T("snapshots.progress.seen", {count: seen});
+    if (String(progress?.stage || "").toLowerCase() === "reading") return T("snapshots.counting");
     return "-";
   }
 
@@ -776,8 +781,8 @@ function bundleKey(s) {
     const featureTotal = Number(data.feature_total || 1);
     const featureIndex = Number(data.feature_index || 0);
     const sub = featureTotal > 1 && featureIndex > 0
-      ? `Feature ${featureIndex} of ${featureTotal}`
-      : "Single capture";
+      ? T("snapshots.progress.featureOf", {n: featureIndex, total: featureTotal})
+      : T("snapshots.progress.single");
 
     $("#ss-capture-meter-fill", page)?.style.setProperty("width", `${percent}%`);
     const pct = $("#ss-capture-percent", page);
@@ -789,7 +794,7 @@ function bundleKey(s) {
     const stage = $("#ss-capture-stage", page);
     if (stage) stage.textContent = captureStageLabel(data.stage);
     const title = $("#ss-capture-modal-title", page);
-    if (title) title.textContent = failed ? (restore ? "Restore failed" : "Capture failed") : data.done ? (restore ? "Restore complete" : "Capture complete") : (restore ? "Restoring capture" : "Creating capture");
+    if (title) title.textContent = failed ? (restore ? T("snapshots.restore.failed") : T("snapshots.capture.failed")) : data.done ? (restore ? T("snapshots.restore.complete") : T("snapshots.capture.complete")) : (restore ? T("snapshots.restore.restoring") : T("snapshots.progress.creating"));
     const subtitle = $("#ss-capture-modal-sub", page);
     if (subtitle) subtitle.textContent = sub;
     const provider = $("#ss-capture-provider", page);
@@ -801,7 +806,7 @@ function bundleKey(s) {
     const items = $("#ss-capture-items", page);
     if (items) items.textContent = captureItemText(data);
     const msg = $("#ss-capture-message", page);
-    if (msg) msg.textContent = String(data.message || "Working...");
+    if (msg) msg.textContent = String(data.message || T("snapshots.working"));
     const actions = $("#ss-capture-actions", page);
     if (actions) actions.classList.toggle("show", !!data.done || failed);
     modal.classList.toggle("is-error", failed);
@@ -827,7 +832,7 @@ function bundleKey(s) {
       done: false,
       operation: seed?.operation || "capture",
       stage: "starting",
-      message: seed?.operation === "restore" ? "Preparing restore..." : "Preparing capture...",
+      message: seed?.operation === "restore" ? T("snapshots.progress.preparingRestore") : T("snapshots.progress.preparingCapture"),
       percent: 3,
       provider: seed?.provider || "",
       instance: seed?.instance || "default",
@@ -874,7 +879,7 @@ function bundleKey(s) {
         }
       } catch (e) {
         misses += 1;
-        updateCaptureProgressModal({ stage: "waiting", message: "Waiting for progress update...", percent: 8 });
+        updateCaptureProgressModal({ stage: "waiting", message: T("snapshots.progress.waiting"), percent: 8 });
         if (misses >= 8) throw e;
       }
       await sleep(700);
@@ -896,7 +901,7 @@ function bundleKey(s) {
           if (progress.done) return;
         }
       } catch (e) {
-        updateCaptureProgressModal({ stage: "waiting", message: "Waiting for progress update...", percent: 8 });
+        updateCaptureProgressModal({ stage: "waiting", message: T("snapshots.progress.waiting"), percent: 8 });
       }
       state.captureProgressTimer = window.setTimeout(tick, 650);
     };
@@ -917,11 +922,11 @@ function bundleKey(s) {
     const provider = String($("#ss-prov", page)?.value || "").toUpperCase() || "-";
     const instance = String($("#ss-prov-inst", page)?.value || "default") || "default";
     const feature = String($("#ss-feature", page)?.value || "").toLowerCase() || "-";
-    const label = String($("#ss-label", page)?.value || "").trim().slice(0, 12) || "No label";
+    const label = String($("#ss-label", page)?.value || "").trim().slice(0, 12) || T("snapshots.noLabel");
     host.innerHTML = `
-      <div class="ss-review-line"><span>Source</span><b>${escapeHtml(provider)} / ${escapeHtml(instance)}</b></div>
-      <div class="ss-review-line"><span>Feature</span><b>${escapeHtml(feature === "all" ? "All features" : feature)}</b></div>
-      <div class="ss-review-line"><span>Label</span><b>${escapeHtml(label)}</b></div>
+      <div class="ss-review-line"><span>${TH("snapshots.step.source")}</span><b>${escapeHtml(provider)} / ${escapeHtml(instance)}</b></div>
+      <div class="ss-review-line"><span>${TH("snapshots.feature")}</span><b>${escapeHtml(feature === "all" ? T("snapshots.allFeatures") : feature)}</b></div>
+      <div class="ss-review-line"><span>${TH("snapshots.label")}</span><b>${escapeHtml(label)}</b></div>
     `;
     updateCreateActionsAvailability();
   }
@@ -936,7 +941,7 @@ function bundleKey(s) {
       const btn = $(id, page);
       if (!btn) return;
       btn.disabled = !enabled;
-      btn.title = enabled ? "" : "Pick a provider first";
+      btn.title = enabled ? "" : T("snapshots.pickProvider");
     });
   }
 
@@ -950,9 +955,9 @@ function bundleKey(s) {
       btn.disabled = !!state.busy || !enabled;
       btn.title = enabled ? "" : title;
     };
-    set("#ss-export-selected", selected.length > 0, "Select at least one capture");
-    set("#ss-delete", selected.length > 0, "Select or load a capture");
-    set("#ss-view-details", !!state.selectedSnap || selected.length > 0, "Select or load a capture");
+    set("#ss-export-selected", selected.length > 0, T("snapshots.selectAtLeastOne"));
+    set("#ss-delete", selected.length > 0, T("snapshots.selectOrLoad"));
+    set("#ss-view-details", !!state.selectedSnap || selected.length > 0, T("snapshots.selectOrLoad"));
     syncCaptureBulkBar(page);
   }
 
@@ -968,7 +973,7 @@ function bundleKey(s) {
     $$("[data-ss-bulk]", bar).forEach((btn) => {
       const isCompare = btn.dataset.ssBulk === "compare";
       btn.disabled = !!state.busy || (isCompare && !compare.ok);
-      if (isCompare) btn.title = compare.reason || "Compare two captures";
+      if (isCompare) btn.title = compare.reason || T("snapshots.compare.twoLabel");
     });
   }
 
@@ -1066,13 +1071,13 @@ function bundleKey(s) {
     const hasStatuses = Number(state.selectedSnap?.stats?.title_statuses || 0) > 0;
     $("#ss-restore-statuses", page)?.classList.toggle("hidden", !hasStatuses);
     const mergeHint = $('[data-restore-mode="merge"] span', page);
-    if (mergeHint) mergeHint.textContent = hasStatuses ? "Add items + restore statuses" : "Only add items";
+    if (mergeHint) mergeHint.textContent = hasStatuses ? T("snapshots.restore.addStatuses") : T("snapshots.restore.onlyAdd");
 
     b.disabled = state.busy || !state.selectedPath || !instOk;
-    b.title = !state.selectedPath ? "Select a snapshot first" : (!instOk ? "Target instance not configured" : "");
+    b.title = !state.selectedPath ? T("snapshots.selectFirst") : (!instOk ? T("snapshots.targetNotConfigured") : "");
     if (d) {
       d.disabled = state.busy || !state.selectedPath;
-      d.title = state.selectedPath ? "" : "Select a snapshot first";
+      d.title = state.selectedPath ? "" : T("snapshots.selectFirst");
     }
 
     if (instSel) {
@@ -1105,18 +1110,18 @@ function updateDiffAvailability() {
   if (!page) return;
   const stateInfo = diffSelection();
   const { ok } = stateInfo;
-  const hint = stateInfo.reason || "Pick two compatible captures";
+  const hint = stateInfo.reason || T("snapshots.compare.pickTwo");
   const count = (Array.isArray(state.diffPick) ? state.diffPick.filter(Boolean) : []).length;
   const status = $("#ss-compare-state", page);
   if (status) {
     status.classList.toggle("ok", !!ok);
     status.innerHTML = `
       <span class="material-symbols-rounded" aria-hidden="true">${ok ? "compare_arrows" : "info"}</span>
-      <div class="ss-compare-state-copy"><b>${ok ? "Ready to compare" : "Comparison disabled"}</b><span>${escapeHtml(hint)}</span></div>
+      <div class="ss-compare-state-copy"><b>${ok ? T("snapshots.compare.ready") : T("snapshots.compare.disabled")}</b><span>${escapeHtml(hint)}</span></div>
       <div class="ss-compare-count"><strong>${count}</strong><span>selected</span></div>
     `;
   }
-  [["#ss-diff-run", ok ? "Compare Captures" : hint]].forEach(([id, title]) => {
+  [["#ss-diff-run", ok ? T("snapshots.compare.titleCaps") : hint]].forEach(([id, title]) => {
     const el = $(id, page);
     if (!el) return;
     el.disabled = state.busy || !ok;
@@ -1134,7 +1139,7 @@ function renderDiffPicked() {
   const picks = Array.isArray(state.diffPick) ? state.diffPick.filter(Boolean) : [];
   if (picks.length !== 2) {
     const scope = _diffScope();
-    const scopeText = scope ? `${scope.provider} / ${scope.feature}` : "No compare scope yet";
+    const scopeText = scope ? `${scope.provider} / ${scope.feature}` : T("snapshots.compare.noScope");
     host.innerHTML = `
       <div class="ss-compare-empty">
         <div><b>${picks.length}/2 captures selected</b><span>${escapeHtml(scopeText)}</span></div>
@@ -1149,9 +1154,9 @@ function renderDiffPicked() {
     d.setAttribute("draggable", "true");
     d.dataset.diffIndex = String(idx);
     d.dataset.diffPath = String(path || "");
-    d.title = "Drag to swap A/B";
+    d.title = T("snapshots.compare.drag");
     if (!snap) {
-      d.innerHTML = `<div class="ss-pick-date">${tag}</div><div class="ss-muted ss-small">Capture not found</div>`;
+      d.innerHTML = `<div class="ss-pick-date">${tag}</div><div class="ss-muted ss-small">${TH("snapshots.compare.notFound")}</div>`;
       return d;
     }
     const feat = String(snap.feature || "-").toLowerCase();
@@ -1216,13 +1221,13 @@ function renderDiff() {
 
   const sum = r.summary || {};
   const trunc = r.truncated || {};
-  const extra = (trunc.added || trunc.removed || trunc.updated) ? ` (showing up to ${r.limit} per section)` : "";
+  const extra = (trunc.added || trunc.removed || trunc.updated) ? ` ${T("snapshots.diff.showingUpTo", {count: r.limit})}` : "";
   out.innerHTML = `
 <div class="ss-diff-summary">
-  <span class="ss-pill" title="${sum.added ?? 0} added" aria-label="${sum.added ?? 0} added"><span class="material-symbols-rounded" aria-hidden="true">add_circle</span><strong>${sum.added ?? 0}</strong></span>
-  <span class="ss-pill" title="${sum.removed ?? 0} deleted" aria-label="${sum.removed ?? 0} deleted"><span class="material-symbols-rounded" aria-hidden="true">delete</span><strong>${sum.removed ?? 0}</strong></span>
-  <span class="ss-pill" title="${sum.updated ?? 0} updated" aria-label="${sum.updated ?? 0} updated"><span class="material-symbols-rounded" aria-hidden="true">edit</span><strong>${sum.updated ?? 0}</strong></span>
-  <span class="ss-pill" title="${sum.unchanged ?? 0} unchanged" aria-label="${sum.unchanged ?? 0} unchanged"><span class="material-symbols-rounded" aria-hidden="true">check_circle</span><strong>${sum.unchanged ?? 0}</strong></span>
+  <span class="ss-pill" title="${TH("snapshots.diff.added", {count: sum.added ?? 0})}" aria-label="${TH("snapshots.diff.added", {count: sum.added ?? 0})}"><span class="material-symbols-rounded" aria-hidden="true">add_circle</span><strong>${sum.added ?? 0}</strong></span>
+  <span class="ss-pill" title="${TH("snapshots.diff.deleted", {count: sum.removed ?? 0})}" aria-label="${TH("snapshots.diff.deleted", {count: sum.removed ?? 0})}"><span class="material-symbols-rounded" aria-hidden="true">delete</span><strong>${sum.removed ?? 0}</strong></span>
+  <span class="ss-pill" title="${TH("snapshots.diff.updated", {count: sum.updated ?? 0})}" aria-label="${TH("snapshots.diff.updated", {count: sum.updated ?? 0})}"><span class="material-symbols-rounded" aria-hidden="true">edit</span><strong>${sum.updated ?? 0}</strong></span>
+  <span class="ss-pill" title="${TH("snapshots.diff.unchanged", {count: sum.unchanged ?? 0})}" aria-label="${TH("snapshots.diff.unchanged", {count: sum.unchanged ?? 0})}"><span class="material-symbols-rounded" aria-hidden="true">check_circle</span><strong>${sum.unchanged ?? 0}</strong></span>
 </div>
 ${extra ? `<div class="ss-small ss-muted" style="margin-top:8px;text-align:center">${extra}</div>` : ""}`;
 }
@@ -1231,8 +1236,8 @@ async function onDiffRun() {
   const page = document.getElementById("page-snapshots");
   if (!page) return;
   const { a, b, ok } = diffSelection();
-  if (!ok) return toast("Pick two captures from the same provider and instance", false);
-  if (!window.openCaptureCompare) return toast("Capture Compare page not available", false);
+  if (!ok) return toast(T("snapshots.compare.sameProvider"), false);
+  if (!window.openCaptureCompare) return toast(T("snapshots.compare.unavailable"), false);
   window.openCaptureCompare({ aPath: a, bPath: b });
 }
 
@@ -1281,7 +1286,7 @@ async function onDiffRun() {
       if (!sel) return;
       const cur = String(sel.value || "");
       sel.innerHTML = "";
-      const rows = addAll ? [{ id: "", label: "All providers", configured: true }].concat(configured) : opts;
+      const rows = addAll ? [{ id: "", label: T("snapshots.allProviders"), configured: true }].concat(configured) : opts;
       rows.forEach((p) => {
         const o = document.createElement("option");
         o.value = p.id || "";
@@ -1317,11 +1322,11 @@ repopDiffSelects();
   function _fillInstanceSelect(sel, pid, prefer) {
     if (!sel) return;
     const p = _providerById(pid);
-    const insts = Array.isArray(p?.instances) ? p.instances : [{ id: "default", label: "Default", configured: true }];
+    const insts = Array.isArray(p?.instances) ? p.instances : [{ id: "default", label: T("snapshots.default"), configured: true }];
     const cur = String(prefer ?? sel.value ?? "");
     sel.innerHTML = "";
 
-    const options = insts.length ? insts : [{ id: "default", label: "Default", configured: true }];
+    const options = insts.length ? insts : [{ id: "default", label: T("snapshots.default"), configured: true }];
     options.forEach((it) => {
       const id = String(it?.id || "default");
       const label = String(it?.label || id || "default");
@@ -1390,7 +1395,7 @@ repopDiffSelects();
       featureOptions.forEach((k) => {
         const o = document.createElement("option");
         o.value = k;
-        o.textContent = (k === "all") ? "All features" : k;
+        o.textContent = (k === "all") ? T("snapshots.allFeatures") : k;
         if (k === "all") o.disabled = !featureOptions.slice(1).some((name) => !!feats[name]);
         else o.disabled = !feats[k];
         fSel.appendChild(o);
@@ -1403,16 +1408,16 @@ repopDiffSelects();
       ["", ...featureOptions.slice(1)].forEach((k) => {
         const o = document.createElement("option");
         o.value = k;
-        o.textContent = k || "All features";
+        o.textContent = k || T("snapshots.allFeatures");
         fFeat.appendChild(o);
       });
     }
     const fKind = $("#ss-filter-kind", page);
     if (fKind && fKind.options.length === 0) {
       [
-        ["", "All types"],
-        ["manual", "Manual"],
-        ["auto", "Auto"],
+        ["", T("snapshots.allTypes")],
+        ["manual", T("snapshots.manual")],
+        ["auto", T("snapshots.auto")],
       ].forEach(([value, label]) => {
         const o = document.createElement("option");
         o.value = value;
@@ -1514,18 +1519,18 @@ repopDiffSelects();
     if (footer) {
       footer.innerHTML = "";
       if (topOnly.length > limit) {
-        footer.innerHTML = `<div class="ss-small ss-muted">Showing ${limit} of ${topOnly.length} captures</div><button id="ss-more" class="btn">Show all (${topOnly.length})</button>`;
+        footer.innerHTML = `<div class="ss-small ss-muted">${TH("snapshots.list.showingOf", {shown: limit, total: topOnly.length})}</div><button id="ss-more" class="btn">${TH("snapshots.list.showAll", {count: topOnly.length})}</button>`;
       } else if (state.showAll && topOnly.length > (state.listLimit || 8)) {
-        footer.innerHTML = `<div class="ss-small ss-muted">Showing ${topOnly.length} of ${topOnly.length} captures</div><button id="ss-less" class="btn">Show less</button>`;
+        footer.innerHTML = `<div class="ss-small ss-muted">${TH("snapshots.list.showingOf", {shown: topOnly.length, total: topOnly.length})}</div><button id="ss-less" class="btn">${TH("snapshots.list.showLess")}</button>`;
       } else {
-        footer.innerHTML = topOnly.length ? `<div class="ss-small ss-muted">Showing ${topOnly.length} capture${topOnly.length === 1 ? "" : "s"}</div>` : "";
+        footer.innerHTML = topOnly.length ? `<div class="ss-small ss-muted">${TH("snapshots.list.showing", {count: topOnly.length})}</div>` : "";
       }
       $("#ss-more", footer)?.addEventListener("click", () => { state.showAll = true; renderList(); });
       $("#ss-less", footer)?.addEventListener("click", () => { state.showAll = false; renderList(); });
     }
 
     if (rows.length === 0) {
-      list.innerHTML = `<div class="ss-empty ss-empty-captures" role="status"><span class="material-symbols-rounded ss-empty-icon" aria-hidden="true">inventory_2</span><div class="ss-empty-text">No captures found.</div></div>`;
+      list.innerHTML = `<div class="ss-empty ss-empty-captures" role="status"><span class="material-symbols-rounded ss-empty-icon" aria-hidden="true">inventory_2</span><div class="ss-empty-text">${TH("snapshots.noneFound")}</div></div>`;
       updateSelectionToolsAvailability();
       return;
     }
@@ -1536,12 +1541,12 @@ repopDiffSelects();
           <thead>
             <tr>
               <th class="ss-col-check"></th>
-              <th class="ss-col-provider">Provider</th>
-              <th class="ss-col-feature">Feature</th>
-              <th class="ss-col-type">Type</th>
-              <th class="ss-col-label">Label</th>
-              <th class="ss-col-created">Created</th>
-              <th class="ss-col-profile">Instance</th>
+              <th class="ss-col-provider">${TH("snapshots.provider")}</th>
+              <th class="ss-col-feature">${TH("snapshots.feature")}</th>
+              <th class="ss-col-type">${TH("snapshots.type")}</th>
+              <th class="ss-col-label">${TH("snapshots.label")}</th>
+              <th class="ss-col-created">${TH("snapshots.created")}</th>
+              <th class="ss-col-profile">${TH("snapshots.instance")}</th>
               <th class="ss-col-menu"></th>
             </tr>
           </thead>
@@ -1578,25 +1583,25 @@ repopDiffSelects();
       const picks = Array.isArray(state.diffPick) ? state.diffPick.filter(Boolean) : [];
       const checked = path && picks.includes(path);
       const feat = String(s.feature || "-").toLowerCase();
-      const featureLabel = feat === "all" ? "All features" : feat;
+      const featureLabel = feat === "all" ? T("snapshots.allFeatures") : feat;
       const isBundle = feat === "all";
       const exp = !!(state.expandedBundles && state.expandedBundles[path]);
       const ixPick = path ? picks.indexOf(path) : -1;
       const abTag = ixPick === 0 ? "A" : (ixPick === 1 ? "B" : "");
-      const extra = isBundle && childCount ? `<button class="ss-mini" data-act="toggle">${exp ? "Hide" : "Show"} ${childCount}</button>` : "";
+      const extra = isBundle && childCount ? `<button class="ss-mini" data-act="toggle">${TH(exp ? "snapshots.hideN" : "snapshots.showN", {n: childCount})}</button>` : "";
       const label = s.label ? _uiCaptureLabel(s.label) : "-";
 
       const item = document.createElement("tr");
       item.className = `${child ? "child " : ""}${state.selectedPath === path ? "active " : ""}${checked ? "checked" : ""}`;
       item.dataset.path = path;
       item.innerHTML = `
-        <td class="ss-col-check"><label class="ss-pickcell">${abTag ? `<span class="ss-ab ${abTag === "A" ? "a" : "b"}" data-act="diffremove" title="Unselect capture">${abTag}</span>` : ""}<input class="ss-chk" type="checkbox" name="ss-diffpick" title="Select capture" aria-label="Select capture" data-act="diffpick" ${checked ? "checked" : ""} /></label></td>
-        <td data-label="Provider" class="ss-col-provider"><span class="ss-badge ok" data-provider="${escapeHtml(String(s.provider || "").toLowerCase())}">${escapeHtml((s.provider || "-").toUpperCase())}</span></td>
-        <td data-label="Feature" class="ss-col-feature" title="${escapeHtml(featureLabel)}"><span class="ss-feature-cell"><span class="ss-feature-label">${escapeHtml(featureLabel)}</span>${extra}</span></td>
-        <td data-label="Type" class="ss-col-type">${escapeHtml(snapTypeLabel(s))}</td>
-        <td data-label="Label" class="ss-col-label ${s.label ? "" : "ss-row-muted"}">${escapeHtml(String(label).slice(0, 60))}</td>
-        <td data-label="Created" class="ss-col-created">${escapeHtml(snapCreatedText(s))}</td>
-        <td data-label="Profile" class="ss-col-profile">${escapeHtml(snapInstance(s))}</td>
+        <td class="ss-col-check"><label class="ss-pickcell">${abTag ? `<span class="ss-ab ${abTag === "A" ? "a" : "b"}" data-act="diffremove" title="${TH("snapshots.unselect")}">${abTag}</span>` : ""}<input class="ss-chk" type="checkbox" name="ss-diffpick" title="${TH("snapshots.select")}" aria-label="${TH("snapshots.select")}" data-act="diffpick" ${checked ? "checked" : ""} /></label></td>
+        <td data-label="${TH("snapshots.col.provider")}" class="ss-col-provider"><span class="ss-badge ok" data-provider="${escapeHtml(String(s.provider || "").toLowerCase())}">${escapeHtml((s.provider || "-").toUpperCase())}</span></td>
+        <td data-label="${TH("snapshots.col.feature")}" class="ss-col-feature" title="${escapeHtml(featureLabel)}"><span class="ss-feature-cell"><span class="ss-feature-label">${escapeHtml(featureLabel)}</span>${extra}</span></td>
+        <td data-label="${TH("snapshots.col.type")}" class="ss-col-type">${escapeHtml(snapTypeLabel(s))}</td>
+        <td data-label="${TH("snapshots.col.label")}" class="ss-col-label ${s.label ? "" : "ss-row-muted"}">${escapeHtml(String(label).slice(0, 60))}</td>
+        <td data-label="${TH("snapshots.col.created")}" class="ss-col-created">${escapeHtml(snapCreatedText(s))}</td>
+        <td data-label="${TH("snapshots.col.profile")}" class="ss-col-profile">${escapeHtml(snapInstance(s))}</td>
         <td class="ss-col-menu"><span class="material-symbols-rounded">chevron_right</span></td>
       `;
 
@@ -1663,7 +1668,7 @@ function renderSelected() {
     if (!s) {
       host.classList.add("ss-selected-empty");
       host.classList.remove("ss-muted");
-      host.innerHTML = `<div class="ss-selected-title">No capture selected</div><div class="ss-small ss-muted">Pick one from the browser to inspect or restore it.</div>`;
+      host.innerHTML = `<div class="ss-selected-title">${TH("snapshots.noneSelected")}</div><div class="ss-small ss-muted">${TH("snapshots.noneSelectedHint")}</div>`;
       return;
     }
 
@@ -1672,7 +1677,7 @@ function renderSelected() {
     const featStats = stats.features || null;
     const inst = String(s.instance || s.instance_id || s.profile || "default");
     const showInst = inst && String(inst).toLowerCase() !== "default";
-    const created = s.created_at ? new Date(String(s.created_at)).toLocaleString() : "-";
+    const created = s.created_at ? new Date(String(s.created_at)).toLocaleString(LOCALE()) : "-";
     const selectedStats = (featStats ? Object.entries(featStats) : Object.entries(by))
       .slice(0, 4)
       .map(([k, v]) => `<div class="ss-selected-stat"><strong>${Number(v || 0)}</strong><span>${escapeHtml(String(k || ""))}</span></div>`)
@@ -1687,11 +1692,11 @@ function renderSelected() {
           <span class="ss-badge">${String(s.feature || "").toLowerCase()}</span>
           ${s.label ? `<span class="ss-badge warn">${escapeHtml(_uiCaptureLabel(s.label)).slice(0, 40)}</span>` : ``}
         </div>
-        <div class="ss-selected-count"><strong>${Number(stats.count || 0)}</strong><span>items</span></div>
+        <div class="ss-selected-count"><strong>${Number(stats.count || 0)}</strong><span>${TH("snapshots.itemsWord", {count: Number(stats.count || 0)})}</span></div>
       </div>
       <div class="ss-selected-meta">
-        <div class="ss-selected-kv"><b>Captured</b> ${escapeHtml(created)}</div>
-        ${stats.title_statuses != null ? `<div class="ss-selected-kv"><b>Title statuses</b> ${Number(stats.title_statuses)} captured</div>` : ``}
+        <div class="ss-selected-kv"><b>${TH("snapshots.captured")}</b> ${escapeHtml(created)}</div>
+        ${stats.title_statuses != null ? `<div class="ss-selected-kv"><b>${TH("snapshots.titleStatuses")}</b> ${TH("snapshots.capturedCount", {count: Number(stats.title_statuses)})}</div>` : ``}
       </div>
       ${selectedStats ? `<div class="ss-selected-stats">${selectedStats}</div>` : ``}
     `;
@@ -1708,15 +1713,15 @@ function renderSelected() {
   }
 
   function fmtSyncTime(value) {
-    if (!value) return "not yet";
+    if (!value) return T("snapshots.notYet");
     const diff = Math.max(0, Date.now() - Number(value));
     const mins = Math.floor(diff / 60000);
-    if (mins < 1) return "just now";
-    if (mins < 60) return `${mins} min ago`;
+    if (mins < 1) return T("playlists.ago.justNow");
+    if (mins < 60) return T("playlists.ago.minutes", {count: mins});
     const hours = Math.floor(mins / 60);
-    if (hours < 24) return `${hours}h ago`;
+    if (hours < 24) return T("playlists.ago.hours", {count: hours});
     const days = Math.floor(hours / 24);
-    return `${days} day${days === 1 ? "" : "s"} ago`;
+    return T("playlists.ago.days", {count: days});
   }
 
   function updateSyncStatus() {
@@ -1729,8 +1734,8 @@ function renderSelected() {
     const status = state.refreshBusy ? "refreshing" : state.lastRefreshFailed ? "failed" : "ready";
     wrap.dataset.state = status;
     time.textContent = fmtSyncTime(state.lastSyncAt);
-    time.title = state.lastSyncAt ? new Date(Number(state.lastSyncAt)).toLocaleString() : "";
-    wrap.title = status === "failed" ? "Latest refresh failed" : "";
+    time.title = state.lastSyncAt ? new Date(Number(state.lastSyncAt)).toLocaleString(LOCALE()) : "";
+    wrap.title = status === "failed" ? T("snapshots.latestFailed") : "";
     if (btn) btn.disabled = state.refreshBusy;
   }
 
@@ -1796,7 +1801,7 @@ function renderSelected() {
       updateSyncStatus();
       console.warn("[snapshots] refresh failed", e);
       console.warn("[snapshots]", `Refresh failed: ${e.message || e}`);
-      toast(`Snapshots refresh failed: ${e.message || e}`, false);
+      toast(T("snapshots.toast.refreshFailed", {error: e.message || e}), false);
     } finally {
       state.refreshBusy = false;
       updateSyncStatus();
@@ -1819,10 +1824,10 @@ function renderSelected() {
       renderSelected();
       updateRestoreAvailability();
       $("#ss-restore-out") && ($("#ss-restore-out").textContent = "");
-      toast("Snapshot loaded", true);
+      toast(T("snapshots.loaded"), true);
     } catch (e) {
       console.warn("[snapshots] read failed", e);
-      toast(`Snapshot read failed: ${e.message || e}`, false);
+      toast(T("snapshots.toast.readFailed", {error: e.message || e}), false);
     } finally {
       setProgress("#ss-restore-progress", false, "", "danger");
       setRefreshSpinning(false);
@@ -1839,8 +1844,8 @@ function renderSelected() {
     const feature = String($("#ss-feature", page)?.value || "").toLowerCase();
     const label = String($("#ss-label", page)?.value || "").trim().slice(0, 12);
 
-    if (!provider) return toast("Pick a provider first", false);
-    if (!feature) return toast("Pick a feature", false);
+    if (!provider) return toast(T("snapshots.pickProvider"), false);
+    if (!feature) return toast(T("snapshots.pickFeature"), false);
     const progressId = newCaptureProgressId();
     state.captureProgressId = progressId;
     state.captureBusy = true;
@@ -1855,7 +1860,7 @@ function renderSelected() {
         ok: true,
         done: true,
         stage: "done",
-        message: "Capture complete.",
+        message: T("snapshots.capture.completeDot"),
         percent: 100,
         provider,
         instance,
@@ -1865,8 +1870,8 @@ function renderSelected() {
         total_items: Number(snap?.stats?.count || 0),
         result_path: snap.path || "",
       } : await waitForCaptureProgress(progressId);
-      if (!progress) throw new Error("Capture progress was interrupted.");
-      if (progress.ok === false) throw new Error(progress.error || progress.message || "Capture failed");
+      if (!progress) throw new Error(T("snapshots.capture.interrupted"));
+      if (progress.ok === false) throw new Error(progress.error || progress.message || T("snapshots.capture.failed"));
       updateCaptureProgressModal(progress);
       $("#ss-label", page).value = "";
       await refresh(true, false);
@@ -1877,7 +1882,7 @@ function renderSelected() {
       }
       setTimeout(() => refresh(true, false), 450);
       setTimeout(() => refresh(true, false), 1600);
-      toast("Capture created", true);
+      toast(T("snapshots.capture.created"), true);
     } catch (e) {
       console.warn("[snapshots] create failed", e);
       const msg = String(e && e.message ? e.message : e);
@@ -1885,7 +1890,7 @@ function renderSelected() {
         ok: false,
         done: true,
         stage: "error",
-        message: msg.toLowerCase().includes("timeout") ? "Capture is still running longer than expected." : msg,
+        message: msg.toLowerCase().includes("timeout") ? T("snapshots.capture.slow") : msg,
         percent: 100,
         provider,
         instance,
@@ -1893,11 +1898,11 @@ function renderSelected() {
         current_feature: feature,
       });
       if (msg.toLowerCase().includes("timeout")) {
-        toast("Create is taking longer than expected. Refreshing...", true);
+        toast(T("snapshots.capture.slowCreate"), true);
         setTimeout(() => refresh(true, false), 1200);
         setTimeout(() => refresh(true, false), 5000);
       } else {
-        toast(`Snapshot create failed: ${msg}`, false);
+        toast(T("snapshots.toast.createFailed", {error: msg}), false);
       }
     } finally {
       state.captureBusy = false;
@@ -1915,11 +1920,11 @@ function renderSelected() {
     const feature = String($("#ss-feature", page)?.value || "").toLowerCase();
     const label = String($("#ss-label", page)?.value || "").trim().slice(0, 12) || "auto-{provider}-{feature}-{date}";
     if (!provider) {
-      toast("Pick a provider first", false);
+      toast(T("snapshots.pickProvider"), false);
       return null;
     }
     if (!feature) {
-      toast("Pick a feature first", false);
+      toast(T("snapshots.pickFeatureFirst"), false);
       return null;
     }
     return { provider, instance, feature, label_template: label };
@@ -1962,7 +1967,7 @@ function renderSelected() {
           <div class="ss-queue-main">${escapeHtml(main)}</div>
           <div class="ss-queue-sub">${escapeHtml(label)}</div>
         </div>
-        <button class="btn" type="button" data-queue-remove="${index}">Remove</button>
+        <button class="btn" type="button" data-queue-remove="${index}">${TH("snapshots.remove")}</button>
       </div>`;
     }).join("");
     $$("[data-queue-remove]", host).forEach((btn) => {
@@ -1971,7 +1976,7 @@ function renderSelected() {
         if (!Number.isFinite(ix) || ix < 0) return;
         state.scheduleQueue.splice(ix, 1);
         renderScheduleQueue();
-        setScheduleQueueFeedback("Removed from queue", true);
+        setScheduleQueueFeedback(T("snapshots.queue.removed"), true);
       });
     });
   }
@@ -1992,15 +1997,15 @@ function renderSelected() {
     const btn = $("#ss-add-schedule", page);
     if (!btn || !message) return;
     const label = btn.querySelector(".ss-btn-label");
-    btn.dataset.defaultText ||= label?.textContent || "Queue for scheduler";
+    btn.dataset.defaultText ||= label?.textContent || T("snapshots.queueForScheduler");
     if (btn.__ssQueueFlashTimer) clearTimeout(btn.__ssQueueFlashTimer);
     if (label) label.textContent = message;
     else btn.textContent = message;
     btn.style.borderColor = ok ? "rgba(98,238,181,.30)" : "rgba(255,122,122,.26)";
     btn.style.boxShadow = ok ? "0 0 12px rgba(25,195,125,.18)" : "0 0 12px rgba(255,77,79,.18)";
     btn.__ssQueueFlashTimer = setTimeout(() => {
-      if (label) label.textContent = btn.dataset.defaultText || "Queue for scheduler";
-      else btn.textContent = btn.dataset.defaultText || "Queue for scheduler";
+      if (label) label.textContent = btn.dataset.defaultText || T("snapshots.queueForScheduler");
+      else btn.textContent = btn.dataset.defaultText || T("snapshots.queueForScheduler");
       btn.style.borderColor = "";
       btn.style.boxShadow = "";
     }, ms);
@@ -2033,24 +2038,24 @@ function renderSelected() {
   function onQueueScheduleDraft() {
     const payload = readScheduleDraft();
     if (!payload) {
-      setScheduleQueueFeedback("Check provider and feature first", false);
+      setScheduleQueueFeedback(T("snapshots.queue.checkFirst"), false);
       return;
     }
     const key = scheduleQueueKey(payload);
     if (state.scheduleQueue.some((item) => scheduleQueueKey(item) === key)) {
-      setScheduleQueueFeedback("Already in queue", false);
-      toast("That capture schedule is already queued", false);
+      setScheduleQueueFeedback(T("snapshots.queue.already"), false);
+      toast(T("snapshots.queue.alreadyHint"), false);
       return;
     }
     state.scheduleQueue.push(payload);
     renderScheduleQueue();
-    setScheduleQueueFeedback("Added to queue", true);
-    toast(`Queued ${state.scheduleQueue.length} capture schedule${state.scheduleQueue.length === 1 ? "" : "s"}`, true);
+    setScheduleQueueFeedback(T("snapshots.queue.added"), true);
+    toast(T("snapshots.queue.queued", {count: state.scheduleQueue.length}), true);
   }
 
   async function onSendScheduleQueue() {
     const items = Array.isArray(state.scheduleQueue) ? state.scheduleQueue.slice() : [];
-    if (!items.length) return toast("Queue at least one capture schedule first", false);
+    if (!items.length) return toast(T("snapshots.queue.needOne"), false);
 
     try { window.showTab?.("settings"); } catch {}
     setTimeout(async () => {
@@ -2065,15 +2070,15 @@ function renderSelected() {
           applied = !!window.prefillCaptureSchedules?.(items.slice());
           if (!applied) await new Promise((resolve) => setTimeout(resolve, 80));
         }
-        if (!applied) throw new Error("Unable to add queued capture schedules.");
+        if (!applied) throw new Error(T("snapshots.queue.addFailed"));
         state.scheduleQueue = [];
         renderScheduleQueue();
         sec?.scrollIntoView({ behavior: "smooth", block: "start" });
-        toast(`Added ${items.length} capture schedule${items.length === 1 ? "" : "s"} to Scheduling. Pick times, then save settings.`, true);
+        toast(T("snapshots.queue.sent", {count: items.length}), true);
       } catch (e) {
         console.warn("[snapshots] queued scheduler prefill failed", e);
-        const msg = String(e && e.message ? e.message : e) || "Unable to add queued capture schedules";
-        toast(`Queue send failed: ${msg}`, false);
+        const msg = String(e && e.message ? e.message : e) || T("snapshots.queue.addFailedShort");
+        toast(T("snapshots.toast.queueFailed", {error: msg}), false);
       }
     }, 80);
   }
@@ -2084,10 +2089,10 @@ function renderSelected() {
 
   async function onDeleteSelected() {
     const paths = selectedCapturePaths();
-    if (!paths.length) return toast("Select a capture first", false);
+    if (!paths.length) return toast(T("snapshots.selectFirstCapture"), false);
     const msg = paths.length === 1
-      ? "Delete the selected capture? Bundle captures also remove their child captures."
-      : `Delete ${paths.length} selected captures? Bundle captures also remove their child captures.`;
+      ? T("snapshots.confirmDeleteOne")
+      : T("snapshots.confirmDeleteMany", {count: paths.length});
     if (!(await (window.CW?.MobileUI?.ask || window.confirm)(msg))) return;
 
     setBusy(true);
@@ -2102,7 +2107,7 @@ function renderSelected() {
         const res = r && r.result ? r.result : null;
         const ok = res ? !!res.ok : !!(r && r.ok);
         if (!ok) {
-          const err = (res && res.errors && res.errors.length) ? res.errors.join(" | ") : (r && r.error) ? r.error : "Delete failed";
+          const err = (res && res.errors && res.errors.length) ? res.errors.join(" | ") : (r && r.error) ? r.error : T("snapshots.deleteFailed");
           console.warn("[snapshots]", err);
           toast(err, false);
           return;
@@ -2117,10 +2122,10 @@ function renderSelected() {
       updateRestoreAvailability();
 
       await refresh(true, false);
-      toast(paths.length === 1 ? "Capture deleted" : "Captures deleted", true);
+      toast(paths.length === 1 ? T("snapshots.deleted") : T("snapshots.deletedMany"), true);
     } catch (e) {
       console.warn("[snapshots]", "Delete failed: " + (e.message || e));
-      toast("Delete failed: " + (e.message || e), false);
+      toast(T("snapshots.toast.deleteFailed", {error: e.message || e}), false);
     } finally {
       setRefreshSpinning(false);
       setBusy(false);
@@ -2129,7 +2134,7 @@ function renderSelected() {
 
   async function onExportSelected() {
     const paths = selectedCapturePaths();
-    if (!paths.length) return toast("Select at least one capture first", false);
+    if (!paths.length) return toast(T("snapshots.selectAtLeastOneFirst"), false);
     setBusy(true);
     try {
       const captures = [];
@@ -2152,18 +2157,18 @@ function renderSelected() {
       a.click();
       a.remove();
       setTimeout(() => URL.revokeObjectURL(url), 1000);
-      toast("Capture export ready", true);
+      toast(T("snapshots.exportReady"), true);
     } catch (e) {
       console.warn("[snapshots] export failed", e);
-      toast(`Export failed: ${e.message || e}`, false);
+      toast(T("snapshots.toast.exportFailed", {error: e.message || e}), false);
     } finally {
       setBusy(false);
     }
   }
 
   async function onCleanupOldCaptures() {
-    if (!(await (window.CW?.MobileUI?.ask || window.confirm)("Cleanup Captures removes all stored captures. Continue?"))) return;
-    setProgress("#ss-tools-progress", true, "Cleaning up captures...", "danger");
+    if (!(await (window.CW?.MobileUI?.ask || window.confirm)(T("snapshots.cleanupConfirm")))) return;
+    setProgress("#ss-tools-progress", true, T("snapshots.cleaning"), "danger");
     setBusy(true);
     try {
       const r = await POST_JSON("/api/snapshots/clear", {});
@@ -2171,17 +2176,17 @@ function renderSelected() {
       const summary = res.summary || {};
       const removedFiles = Number(summary.removed_files ?? res.deleted_count ?? 0);
       const freed = Number(summary.freed_bytes || 0);
-      setToolsOutput(`Cleanup complete: removed ${removedFiles.toLocaleString()} capture file${removedFiles === 1 ? "" : "s"}${freed ? `, freed ${humanBytes(freed)}` : ""}.`, true);
+      setToolsOutput(freed ? T("snapshots.cleanupDoneFreed", {count: removedFiles, size: humanBytes(freed)}) : T("snapshots.cleanupDone", {count: removedFiles}), true);
       state.selectedPath = "";
       state.selectedSnap = null;
       state.diffPick = [];
       state.diffResult = null;
       renderSelected();
       await refresh(true, false);
-      toast("Capture cleanup complete", true);
+      toast(T("snapshots.cleanupComplete"), true);
     } catch (e) {
       console.warn("[snapshots] cleanup failed", e);
-      toast(`Cleanup failed: ${e.message || e}`, false);
+      toast(T("snapshots.toast.cleanupFailed", {error: e.message || e}), false);
     } finally {
       setProgress("#ss-tools-progress", false, "", "danger");
       setBusy(false);
@@ -2200,7 +2205,7 @@ function renderSelected() {
     }
     const paths = selectedCapturePaths();
     const path = state.selectedPath || paths[0] || "";
-    if (!path) return toast("Select or load a capture first", false);
+    if (!path) return toast(T("snapshots.selectOrLoadFirst"), false);
     setBusy(true);
     try {
       const snap = state.selectedPath === path && state.selectedSnap
@@ -2210,7 +2215,7 @@ function renderSelected() {
       out.textContent = JSON.stringify({ path, snapshot: snap }, null, 2);
     } catch (e) {
       console.warn("[snapshots] details failed", e);
-      toast(`Details failed: ${e.message || e}`, false);
+      toast(T("snapshots.toast.detailsFailed", {error: e.message || e}), false);
     } finally {
       setBusy(false);
     }
@@ -2220,7 +2225,7 @@ function renderSelected() {
     const page = document.getElementById("page-snapshots");
     if (!page) return;
 
-    if (!state.selectedPath) return toast("Select a snapshot first", false);
+    if (!state.selectedPath) return toast(T("snapshots.selectFirst"), false);
     const mode = String($("#ss-restore-mode", page)?.value || "merge").toLowerCase();
     const instance = String($("#ss-restore-inst", page)?.value || "default");
 
@@ -2246,7 +2251,7 @@ function renderSelected() {
         done: true,
         operation: "restore",
         stage: direct.ok ? "done" : "error",
-        message: direct.message || "Restore complete.",
+        message: direct.message || T("snapshots.restore.completeDot"),
         percent: 100,
         provider: direct.provider || provider,
         instance: direct.instance || instance,
@@ -2257,29 +2262,29 @@ function renderSelected() {
         restore_result: direct,
       } : await waitForCaptureProgress(progressId);
 
-      if (!progress) throw new Error("Restore progress was interrupted.");
-      if (progress.ok === false) throw new Error(progress.error || progress.message || "Restore failed");
+      if (!progress) throw new Error(T("snapshots.restore.interrupted"));
+      if (progress.ok === false) throw new Error(progress.error || progress.message || T("snapshots.restore.failed"));
       updateCaptureProgressModal(progress);
       const res = progress.restore_result || progress.result || {};
       const out = $("#ss-restore-out", page);
       if (out) {
-        if (res.ok) out.textContent = res.message || `Done. Added ${res.added || 0}, removed ${res.removed || 0}.`;
-        else out.textContent = `Restore finished with errors: ${(res.errors || []).join("; ") || "unknown error"}`;
+        if (res.ok) out.textContent = res.message || T("snapshots.restoreDone", {added: res.added || 0, removed: res.removed || 0});
+        else out.textContent = T("snapshots.restoreErrors", {errors: (res.errors || []).join("; ") || T("snapshots.unknownError")});
       }
 
-      toast(res.ok ? "Restore complete" : "Restore finished with errors", !!res.ok);
+      toast(res.ok ? T("snapshots.restore.complete") : T("snapshots.restore.withErrors"), !!res.ok);
       await refresh(true, false);
     } catch (e) {
       console.warn("[snapshots] restore failed", e);
-      toast(`Restore failed: ${e.message || e}`, false);
+      toast(T("snapshots.toast.restoreFailed", {error: e.message || e}), false);
       const out = $("#ss-restore-out", page);
-      if (out) out.textContent = `Restore failed: ${e.message || e}`;
+      if (out) out.textContent = T("snapshots.toast.restoreFailed", {error: e.message || e});
       updateCaptureProgressModal({
         ok: false,
         done: true,
         operation: "restore",
         stage: "error",
-        message: String(e?.message || e || "Restore failed"),
+        message: String(e?.message || e || T("snapshots.restore.failed")),
         percent: 100,
         provider,
         instance,

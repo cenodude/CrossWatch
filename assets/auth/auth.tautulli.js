@@ -1,5 +1,7 @@
 // assets/auth/auth.tautulli.js
 (function () {
+  const T = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.t?.(key, vars) ?? key;
+  const TH = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.html?.(key, vars) ?? key;
   if (window._tautPatched) return;
   window._tautPatched = true;
 
@@ -14,7 +16,7 @@
     sectionId: "sec-tautulli",
     selectId: "tautulli_instance",
     storageKey: "cw.ui.tautulli.auth.instance.v1",
-    title: "Select which Tautulli server this config applies to.",
+    title: T("connections.auth.gen.selectServer", {provider: "Tautulli"}),
   });
 
   function getTautulliInstance() {
@@ -40,17 +42,17 @@
   function friendlyError(code) {
     const key = String(code || "").trim();
     switch (key) {
-      case "server_url_required": return "Enter Tautulli server URL";
-      case "server_url required": return "Enter Tautulli server URL";
-      case "api_key_required": return "Enter your Tautulli API key";
-      case "api_key required": return "Enter your Tautulli API key";
-      case "invalid_api_key": return "Invalid Tautulli API key";
-      case "validation_timeout": return "Tautulli validation timed out";
-      case "validation_failed": return "Could not connect to Tautulli";
-      case "validation_bad_response": return "Tautulli validation returned an unexpected response";
+      case "server_url_required": return T("connections.validation.serverUrlRequired", {provider: "Tautulli"});
+      case "server_url required": return T("connections.validation.serverUrlRequired", {provider: "Tautulli"});
+      case "api_key_required": return T("connections.validation.apiKeyRequired", {provider: "Tautulli"});
+      case "api_key required": return T("connections.validation.apiKeyRequired", {provider: "Tautulli"});
+      case "invalid_api_key": return T("connections.validation.invalidApiKey", {provider: "Tautulli"});
+      case "validation_timeout": return T("connections.validation.timeout", {provider: "Tautulli"});
+      case "validation_failed": return T("connections.validation.connectFailed", {provider: "Tautulli"});
+      case "validation_bad_response": return T("connections.validation.badResponse", {provider: "Tautulli"});
       default:
-        if (key.startsWith("validation_http_")) return "Tautulli validation failed";
-        return key || "Not connected";
+        if (key.startsWith("validation_http_")) return T("connections.validation.httpFailed", {provider: "Tautulli"});
+        return key || T("connections.auth.notConnected");
     }
   }
 
@@ -79,11 +81,11 @@
     try {
       const r = await fetchJSON(tautApi("/api/tautulli/status?verify=1"), { cache: "no-store" });
       const ok = !!(r.ok && r.data && r.data.connected);
-      setConn(ok, ok ? "Connected" : friendlyError(r.data && r.data.reason));
-      note(ok ? "Tautulli connected" : "Tautulli not connected");
+      setConn(ok, ok ? T("connections.auth.connected") : friendlyError(r.data && r.data.reason));
+      note(ok ? T("connections.auth.gen.connected", {provider: "Tautulli"}) : T("connections.auth.gen.notConnected", {provider: "Tautulli"}));
     } catch {
-      setConn(false, "Could not connect to Tautulli");
-      note("Tautulli validation failed");
+      setConn(false, T("connections.validation.connectFailed", {provider: "Tautulli"}));
+      note(T("connections.validation.httpFailed", {provider: "Tautulli"}));
     }
   }
 
@@ -123,10 +125,10 @@
     const key = txt(keyInput?.value || "");
     const user_id = txt(el("tautulli_user_id")?.value || "");
 
-    if (!server) { note("Enter Tautulli server URL"); return; }
+    if (!server) { note(T("connections.validation.serverUrlRequired", {provider: "Tautulli"})); return; }
 
     if (!key && !(keyInput && keyInput.dataset.hasKey === "1")) {
-      note("Enter your Tautulli API key");
+      note(T("connections.validation.apiKeyRequired", {provider: "Tautulli"}));
       return;
     }
 
@@ -140,10 +142,10 @@
 
       if (key) maskKey(keyInput, true);
       el("tautulli_hint")?.classList.add("hidden");
-      note("Tautulli saved");
+      note(T("connections.auth.gen.saved", {provider: "Tautulli"}));
       await refresh();
     } catch (e) {
-      const msg = e && e.message ? e.message : "Saving Tautulli failed";
+      const msg = e && e.message ? e.message : T("connections.validation.saveFailed", {provider: "Tautulli"});
       setConn(false, msg);
       note(msg);
     }
@@ -158,9 +160,9 @@
       maskKey(el("tautulli_key"), false);
       el("tautulli_hint")?.classList.remove("hidden");
       setConn(false);
-      note("Tautulli disconnected");
+      note(T("connections.auth.gen.disconnected", {provider: "Tautulli"}));
     } catch (e) {
-      note("Tautulli disconnect failed" + (e && e.message ? ": " + e.message : ""));
+      note(T("connections.auth.gen.disconnectFailed", {provider: "Tautulli"}) + (e && e.message ? ": " + e.message : ""));
     }
   }
 

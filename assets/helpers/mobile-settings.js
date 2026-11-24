@@ -2,6 +2,8 @@
 /* CrossWatch - Shared mobile preferences across all pages */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude */
 (function () {
+  const T = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.t?.(key, vars) ?? key;
+  const TH = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.html?.(key, vars) ?? key;
   const $ = selector => document.querySelector(selector);
   let config = {};
   function ensure(options = {}) {
@@ -13,15 +15,15 @@
       picker = document.createElement("details");
       picker.id = "cw-mobile-widgets";
       picker.className = "cw-mobile-widgets";
-      picker.innerHTML = `<summary><span class="material-symbols-rounded" aria-hidden="true">tune</span><span>Mobile settings</span><span class="material-symbols-rounded cw-mobile-settings-chevron" aria-hidden="true">chevron_right</span></summary>
+      picker.innerHTML = `<summary><span class="material-symbols-rounded" aria-hidden="true">tune</span><span>${TH("common.mobileSettings.title")}</span><span class="material-symbols-rounded cw-mobile-settings-chevron" aria-hidden="true">chevron_right</span></summary>
         <div class="cw-mobile-widget-options">
-          <h3>Visibility</h3>
-          <label><input type="checkbox" data-mobile-playing-card><span class="material-symbols-rounded cw-mobile-widget-icon" aria-hidden="true">play_circle</span><span>Playing card</span><small>Show on this device's mobile layout</small></label>
-          <h3>Notifications</h3>
-          <label><input type="checkbox" data-mobile-notification-alerts><span class="material-symbols-rounded cw-mobile-widget-icon" aria-hidden="true">notifications_active</span><span>Notification alerts</span><small>Banner and vibration when supported, while open</small></label>
-          <label><input type="checkbox" data-mobile-push><span class="material-symbols-rounded cw-mobile-widget-icon" aria-hidden="true">smartphone</span><span>Push notifications</span><small>Get new notifications on this device even when CrossWatch is closed</small></label>
-          <h3>Touch feedback</h3>
-          <label><input type="checkbox" data-mobile-haptics><span class="material-symbols-rounded cw-mobile-widget-icon" aria-hidden="true">vibration</span><span>Haptic feedback</span><small>Short vibration on menu taps</small></label>
+          <h3>${TH("common.mobileSettings.visibility")}</h3>
+          <label><input type="checkbox" data-mobile-playing-card><span class="material-symbols-rounded cw-mobile-widget-icon" aria-hidden="true">play_circle</span><span>${TH("common.mobileSettings.playingCard")}</span><small>${TH("common.mobileSettings.showOnDevice")}</small></label>
+          <h3>${TH("common.mobileSettings.notifications")}</h3>
+          <label><input type="checkbox" data-mobile-notification-alerts><span class="material-symbols-rounded cw-mobile-widget-icon" aria-hidden="true">notifications_active</span><span>${TH("common.mobileSettings.alerts")}</span><small>${TH("common.mobileSettings.alertsSub")}</small></label>
+          <label><input type="checkbox" data-mobile-push><span class="material-symbols-rounded cw-mobile-widget-icon" aria-hidden="true">smartphone</span><span>${TH("common.mobileSettings.push")}</span><small>${TH("common.mobileSettings.pushSub")}</small></label>
+          <h3>${TH("common.mobileSettings.touch")}</h3>
+          <label><input type="checkbox" data-mobile-haptics><span class="material-symbols-rounded cw-mobile-widget-icon" aria-hidden="true">vibration</span><span>${TH("common.mobileSettings.haptics")}</span><small>${TH("common.mobileSettings.hapticsSub")}</small></label>
         </div>`;
       menu.appendChild(picker);
       const playingCard = picker.querySelector('[data-mobile-playing-card]');
@@ -74,7 +76,7 @@
       const supportsHaptics = typeof navigator.vibrate === 'function';
       haptics.disabled = !supportsHaptics;
       try { haptics.checked = supportsHaptics && localStorage.getItem('cw.mobile.haptics') !== '0'; } catch {}
-      if (!supportsHaptics) haptics.parentElement.querySelector('small').textContent = 'Not supported by this browser';
+      if (!supportsHaptics) haptics.parentElement.querySelector('small').textContent = T("common.mobileSettings.unsupported");
       haptics.addEventListener('change', () => {
         try { localStorage.setItem('cw.mobile.haptics', haptics.checked ? '1' : '0'); } catch {}
         if (haptics.checked && supportsHaptics) {
@@ -86,12 +88,12 @@
     const cfg = window._cfgCache || config;
     const auth = window.CW?.AuthState?.read?.();
     const prefs = auth?.preferences || auth?.user?.preferences || {};
-    const reason = cfg.ui?.show_playingcard === false ? 'Disabled in main settings' : prefs.playing_card === false ? 'Disabled in your profile settings' : '';
+    const reason = cfg.ui?.show_playingcard === false ? T("common.mobileSettings.disabledMain") : prefs.playing_card === false ? T("common.mobileSettings.disabledProfile") : '';
     let showPlayingCard = true;
     try { showPlayingCard = localStorage.getItem('cw.mobile.playingCard') !== '0'; } catch {}
     playingCard.checked = !reason && showPlayingCard;
     playingCard.disabled = !!reason;
-    playingCard.parentElement.querySelector('small').textContent = reason || "Show on this device's mobile layout";
+    playingCard.parentElement.querySelector('small').textContent = reason || T("common.mobileSettings.showOnDevice");
     document.dispatchEvent(new Event('cw-mobile-settings-ready'));
     return picker;
   }

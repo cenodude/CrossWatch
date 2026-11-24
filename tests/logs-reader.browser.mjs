@@ -2,16 +2,18 @@
 /* CrossWatch - Raw log exports, navigation, live updates and theme regressions */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 
+import './i18n-browser-setup.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFile,mkdir} from 'node:fs/promises';
 import {chromium} from 'playwright';
+import {englishFrontendSource} from './i18n-test-helper.mjs';
 
 async function open(t,theme='original',hash='') {
   const browser=await chromium.launch({headless:true});t.after(()=>browser.close());
   const page=await browser.newPage({viewport:{width:1440,height:1000}});page.setDefaultTimeout(8000);
   const errors=[];page.on('pageerror',error=>errors.push(error.message));t.after(()=>assert.deepEqual(errors,[]));
-  const source=await readFile(new URL('../ui_frontend.py',import.meta.url),'utf8');
+  const source=englishFrontendSource();
   const html=await page.evaluate(({source,theme})=>{
     const begin=source.indexOf('<!doctype html>');
     const doc=new DOMParser().parseFromString(source.slice(begin,source.indexOf('</html>',begin)+7),'text/html');

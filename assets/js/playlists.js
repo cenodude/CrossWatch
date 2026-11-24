@@ -5,6 +5,10 @@
 (function () {
   "use strict";
 
+  const T = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.t?.(key, vars) ?? key;
+  const TH = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.html?.(key, vars) ?? key;
+  const LOCALE = () => (window.CW?.I18n || window.__cwI18n)?.locale;
+
   const BASE = "/api/playlists";
   const RULESET_DEFAULTS = {
     direction: "one_way",
@@ -28,52 +32,52 @@
   const EMPTY_PROVIDER_RETRY_MS = 300;
   const SAFE_NAME_CHARS = " _.'-&()";
   const PLAYLIST_COMPATIBLE_PROVIDERS = new Set(["PLEX", "TRAKT", "MDBLIST", "JELLYFIN", "EMBY", "PUBLICMETADB", "SIMKL", "TMDB", "FLICKLIST", "SILO", "TOFA", "CROSSWATCH"]);
-  const SIMKL_PLAYLIST_WARNING = "SIMKL status buckets are not true playlists. Changes may move or remove items from your SIMKL library. Use with caution. SIMKL custom lists need SIMKL PRO or VIP.";
-  const PRIVACY_LABELS = { public: "Public", private: "Private", unlisted: "Unlisted", friends: "Friends", friends_only: "Friends only", friends_of_friends: "Friends of friends", plex: "Anyone signed into Plex", link: "Anyone with the link" };
-  const CREATE_TYPE_LABELS = { movie: "Movies", show: "Shows", anime: "Anime" };
+  const SIMKL_PLAYLIST_WARNING = T("playlists.simklWarning");
+  const PRIVACY_LABELS = { public: T("playlists.privacy.public"), private: T("playlists.privacy.private"), unlisted: T("playlists.privacy.unlisted"), friends: T("playlists.privacy.friends"), friends_only: T("playlists.privacy.friendsOnly"), friends_of_friends: T("playlists.privacy.friendsOfFriends"), plex: T("playlists.privacy.plex"), link: T("playlists.privacy.link") };
+  const CREATE_TYPE_LABELS = { movie: T("playlists.type.movies"), show: T("playlists.type.shows"), anime: T("playlists.type.anime") };
   const RULESET_PRESETS = {
     direct: {
-      label: "Direct sync",
-      description: "Keep one source playlist synced to one target playlist.",
+      label: T("playlists.presets.direct"),
+      description: T("playlists.presets.directHint"),
       values: { ...RULESET_DEFAULTS, direction: "one_way", read_mode: "direct", write_mode: "direct", membership: "managed_only", order: "ignore", maximum_targets: 1 },
     },
     mirror: {
-      label: "Mirror source",
-      description: "Make the target list match the source list as closely as possible.",
+      label: T("playlists.presets.mirror"),
+      description: T("playlists.presets.mirrorHint"),
       values: { ...RULESET_DEFAULTS, direction: "one_way", read_mode: "direct", write_mode: "direct", membership: "mirror", order: "preserve", maximum_targets: 1 },
     },
     split: {
-      label: "Split large playlists",
-      description: "Split a large source playlist across several target lists when capacity is reached.",
+      label: T("playlists.presets.split"),
+      description: T("playlists.presets.splitHint"),
       values: { ...RULESET_DEFAULTS, direction: "one_way", read_mode: "direct", write_mode: "partition", membership: "managed_only", order: "ignore", per_endpoint_capacity: 100, aggregate_capacity: 1000, maximum_targets: 5, overflow: "block", track_assignments: true },
     },
     merge: {
-      label: "Merge playlists",
-      description: "Read multiple target lists as one combined destination.",
+      label: T("playlists.presets.merge"),
+      description: T("playlists.presets.mergeHint"),
       values: { ...RULESET_DEFAULTS, direction: "one_way", read_mode: "aggregate", write_mode: "direct", membership: "managed_only", order: "ignore", aggregate_capacity: 1000, maximum_targets: 1 },
     },
     limited: {
-      label: "Limited account sharing",
-      description: "Use bidirectional aggregate and split behaviour for providers with list limits.",
+      label: T("playlists.presets.limited"),
+      description: T("playlists.presets.limitedHint"),
       values: { ...RULESET_DEFAULTS, direction: "bidirectional", read_mode: "aggregate", write_mode: "partition", membership: "managed_only", order: "ignore", per_endpoint_capacity: 250, aggregate_capacity: 1000, maximum_targets: 5, overflow: "block", track_assignments: true },
     },
     custom: {
-      label: "Custom",
-      description: "Start from the current settings and adjust the details yourself.",
+      label: T("playlists.presets.custom"),
+      description: T("playlists.presets.customHint"),
       values: { ...RULESET_DEFAULTS },
     },
   };
   const ENUMS = {
-    direction: [["one_way", "One way"], ["bidirectional", "Bidirectional"]],
-    initial_sync: [["source_authoritative", "Source authoritative"]],
-    read_mode: [["direct", "Direct"], ["aggregate", "Aggregate"]],
-    write_mode: [["direct", "Direct"], ["partition", "Partition"]],
-    membership: [["add_only", "Add only"], ["managed_only", "Managed only"], ["mirror", "Mirror"]],
-    order: [["ignore", "Ignore"], ["preserve", "Preserve"]],
-    deduplicate: [["canonical_id", "Canonical ID"]],
-    allocation: [["stable_first_fit", "Stable first fit"]],
-    rebalance: [["never", "Never"]],
-    overflow: [["block", "Block"]],
+    direction: [["one_way", T("playlists.enums.oneWay")], ["bidirectional", T("playlists.enums.bidirectional")]],
+    initial_sync: [["source_authoritative", T("playlists.enums.sourceAuthoritative")]],
+    read_mode: [["direct", T("playlists.enums.direct")], ["aggregate", T("playlists.enums.aggregate")]],
+    write_mode: [["direct", T("playlists.enums.direct")], ["partition", T("playlists.enums.partition")]],
+    membership: [["add_only", T("playlists.enums.addOnly")], ["managed_only", T("playlists.enums.managedOnly")], ["mirror", T("playlists.enums.mirror")]],
+    order: [["ignore", T("playlists.enums.ignore")], ["preserve", T("playlists.enums.preserve")]],
+    deduplicate: [["canonical_id", T("playlists.enums.canonicalId")]],
+    allocation: [["stable_first_fit", T("playlists.enums.stableFirstFit")]],
+    rebalance: [["never", T("playlists.never")]],
+    overflow: [["block", T("playlists.enums.block")]],
   };
 
   async function request(url, opt) {
@@ -135,10 +139,10 @@
     if (found) return found.label || found.provider;
     return PM() ? PM().label(provider) : provider;
   };
-  const ruleLabel = (key) => key === "one_way" ? "One way" : key === "bidirectional" ? "Bidirectional" : titleize(key);
+  const ruleLabel = (key) => key === "one_way" ? T("playlists.enums.oneWay") : key === "bidirectional" ? T("playlists.enums.bidirectional") : titleize(key);
   const titleize = (v) => String(v || "").replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
-  const timeText = (ts) => ts ? new Date(Number(ts) * 1000).toLocaleString() : "Never";
-  const compactTime = (ts) => ts ? new Date(Number(ts) * 1000).toLocaleString() : "-";
+  const timeText = (ts) => ts ? new Date(Number(ts) * 1000).toLocaleString(LOCALE()) : T("playlists.never");
+  const compactTime = (ts) => ts ? new Date(Number(ts) * 1000).toLocaleString(LOCALE()) : "-";
   const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 
@@ -222,7 +226,7 @@
   }
 
   function createTypeLabel(type) {
-    if (type === "cloud_list") return "Cloud list";
+    if (type === "cloud_list") return T("playlists.cloudList");
     return CREATE_TYPE_LABELS[type] || titleize(type);
   }
 
@@ -265,7 +269,7 @@
   function providerLinkExample(provider) {
     const key = String(provider || "").toUpperCase();
     const found = state.providers.find((p) => String(p.provider || "").toUpperCase() === key);
-    return String((found && found.capabilities && found.capabilities.link_example) || "Paste a list link");
+    return String((found && found.capabilities && found.capabilities.link_example) || T("playlists.pasteLink"));
   }
 
   function configuredProviders() {
@@ -291,16 +295,16 @@
     const providerGate = state.loaded && !hasCompatiblePlaylistProvider() ? `
       <div class="pl-banner warn">
         <span class="material-symbols-rounded" aria-hidden="true">warning</span>
-        <span>Playlists need at least one compatible provider (Plex, Trakt, MDBList, Jellyfin, Emby, Silo, PublicMetaDB, SIMKL, TMDb, FlickList, Tofa or CrossWatch). Configure one in Connections to enable playlist endpoints and mappings.</span>
-        <button type="button" class="pl-btn small" data-action="open-connections">Open Connections</button>
+        <span>${TH("playlists.needsProvider")}</span>
+        <button type="button" class="pl-btn small" data-action="open-connections">${TH("playlists.openConnections")}</button>
       </div>
     ` : "";
     const reconnect = state.loaded ? state.providers.filter((p) => p && !p.configured && p.reason === "reconnect_required") : [];
     const reconnectGate = reconnect.length ? `
       <div class="pl-banner warn">
         <span class="material-symbols-rounded" aria-hidden="true">link</span>
-        <span>${esc(reconnect.map((p) => p.label || providerLabel(p.provider)).filter((v, i, a) => a.indexOf(v) === i).join(", "))} lists need a reconnect. Add your API Read Access Token in Connections and click Connect again.</span>
-        <button type="button" class="pl-btn small" data-action="open-connections">Open Connections</button>
+        <span>${TH("playlists.reconnectNeeded", {names: reconnect.map((p) => p.label || providerLabel(p.provider)).filter((v, i, a) => a.indexOf(v) === i).join(", ")})}</span>
+        <button type="button" class="pl-btn small" data-action="open-connections">${TH("playlists.openConnections")}</button>
       </div>
     ` : "";
     if (!errorGate && !providerGate && !reconnectGate) return "";
@@ -335,7 +339,7 @@
 
   function directionFor(mapping) {
     const rs = mapping.ruleset || rulesetById(mapping.ruleset_id || "");
-    return rs ? ruleLabel(rs.direction) : "One way";
+    return rs ? ruleLabel(rs.direction) : T("playlists.enums.oneWay");
   }
 
   function syncSummaryRunning(summary = state.syncSummary) {
@@ -396,21 +400,21 @@
   }
 
   function statusForResult(result) {
-    if (!result) return `<span class="pl-pill off">No runs</span>`;
+    if (!result) return `<span class="pl-pill off">${TH("playlists.status.noRuns")}</span>`;
     const unresolved = Number(result.unresolved_count || result.unresolved || 0);
     const errors = Number(result.errors || result.error_count || 0);
     const warningBits = [];
-    if (unresolved > 0) warningBits.push(`${unresolved} unresolved`);
+    if (unresolved > 0) warningBits.push(T("playlists.count.unresolved", {count: unresolved}));
     const warnings = Array.isArray(result.warnings) ? result.warnings.length : 0;
-    if (warnings) warningBits.push(`${warnings} warning${warnings === 1 ? "" : "s"}`);
-    if (result.capacity_error || errors > 0 || (result.ok === false && !warningBits.length)) return `<span class="pl-pill err" title="${esc(result.error || "")}">Failed</span>`;
+    if (warnings) warningBits.push(T("playlists.count.warning", {count: warnings}));
+    if (result.capacity_error || errors > 0 || (result.ok === false && !warningBits.length)) return `<span class="pl-pill err" title="${esc(result.error || "")}">${TH("playlists.status.failed")}</span>`;
     if (warningBits.length) return `<span class="pl-pill warn" title="${esc(warningBits.join(", "))}"><span class="material-symbols-rounded" aria-hidden="true">warning</span>${esc(warningBits[0])}</span>`;
-    return `<span class="pl-pill ok">Success</span>`;
+    return `<span class="pl-pill ok">${TH("playlists.status.success")}</span>`;
   }
 
   function endpointStatus(endpoint) {
-    if (!endpoint.playlist_id) return `<span class="pl-state warn"><span class="material-symbols-rounded" aria-hidden="true">warning</span>Incomplete</span>`;
-    return `<span class="pl-state ok"><span class="material-symbols-rounded" aria-hidden="true">check_circle</span>Connected</span>`;
+    if (!endpoint.playlist_id) return `<span class="pl-state warn"><span class="material-symbols-rounded" aria-hidden="true">warning</span>${TH("playlists.status.incomplete")}</span>`;
+    return `<span class="pl-state ok"><span class="material-symbols-rounded" aria-hidden="true">check_circle</span>${TH("playlists.status.connected")}</span>`;
   }
 
   function endpointIdentity(endpoint, sub) {
@@ -431,7 +435,7 @@
   function syncPairIndicator(pairId) {
     const id = String(pairId || "").trim();
     if (!id) {
-      return `<span class="pl-icon-status warn" title="No sync pair assigned" aria-label="No sync pair assigned"><span class="material-symbols-rounded" aria-hidden="true">warning</span></span>`;
+      return `<span class="pl-icon-status warn" title="${TH("playlists.noPair")}" aria-label="${TH("playlists.noPair")}"><span class="material-symbols-rounded" aria-hidden="true">warning</span></span>`;
     }
     return `<span class="pl-icon-status ok" title="${esc(id)}" aria-label="Sync pair: ${esc(id)}"><span class="material-symbols-rounded" aria-hidden="true">check_circle</span></span>`;
   }
@@ -448,18 +452,18 @@
   function activityChangeSummary(row) {
     const counts = parseActivityCounts(row);
     const chips = [];
-    if (counts.unresolved) chips.push(activityChangeChip("Unresolved", counts.unresolved, "help", "unresolved"));
-    if (counts.added) chips.push(activityChangeChip("Added", counts.added, "add_circle", "added"));
-    if (counts.updated) chips.push(activityChangeChip("Updated", counts.updated, "sync", "updated"));
-    if (counts.removed) chips.push(activityChangeChip("Removed", counts.removed, "remove_circle", "removed"));
-    if (counts.skipped) chips.push(activityChangeChip("Skipped", counts.skipped, "skip_next", "skipped"));
-    return `<div class="pl-change-set">${chips.length ? chips.join("") : `<span class="pl-muted">No changes</span>`}</div>`;
+    if (counts.unresolved) chips.push(activityChangeChip(T("playlists.changes.unresolved"), counts.unresolved, "help", "unresolved"));
+    if (counts.added) chips.push(activityChangeChip(T("playlists.changes.added"), counts.added, "add_circle", "added"));
+    if (counts.updated) chips.push(activityChangeChip(T("playlists.changes.updated"), counts.updated, "sync", "updated"));
+    if (counts.removed) chips.push(activityChangeChip(T("playlists.changes.removed"), counts.removed, "remove_circle", "removed"));
+    if (counts.skipped) chips.push(activityChangeChip(T("playlists.changes.skipped"), counts.skipped, "skip_next", "skipped"));
+    return `<div class="pl-change-set">${chips.length ? chips.join("") : `<span class="pl-muted">${TH("playlists.changes.none")}</span>`}</div>`;
   }
 
   function activityStatus(row) {
     const status = String(row.status || "").toLowerCase();
     if (status === "error" || status === "failed") return statusPill("err", titleize(status || "error"), "cancel");
-    if (status === "warning" || parseActivityCounts(row).unresolved > 0) return statusPill("warn", "Warning", "warning");
+    if (status === "warning" || parseActivityCounts(row).unresolved > 0) return statusPill("warn", T("playlists.status.warning"), "warning");
     return statusPill("ok", titleize(row.status || "completed"), "check_circle");
   }
 
@@ -467,26 +471,26 @@
     const details = String(row.details || "");
     const rule = row.ruleset || (details.split(",")[0] || "direct");
     const rawTargets = row.target_count != null ? Number(row.target_count) : Number((details.match(/(\d+)\s+target/i) || [])[1] || 0);
-    const targetText = rawTargets === 1 ? "1 target" : `${rawTargets} targets`;
+    const targetText = T("playlists.count.target", {count: rawTargets});
     return `<div class="pl-main-text">${esc(titleize(rule || "direct"))}</div><div class="pl-muted">${esc(targetText)}</div>`;
   }
 
   function listTypeLabel(ep) {
-    if (endpointIsDiscovery(ep)) return "Discovery";
+    if (endpointIsDiscovery(ep)) return T("playlists.listType.discovery");
     const id = String(ep.playlist_id || "").toLowerCase();
     const raw = String(ep.playlist_type || ep.endpoint_type || ep.kind || "").toLowerCase();
-    if (id.includes("watchlist") || raw === "watchlist") return "Watchlist";
-    if (raw === "custom_list") return "Custom list";
-    if (raw === "cloud_list") return "Cloud list";
-    if (raw === "liked_list") return "Liked list";
-    if (raw === "followed_list") return "Followed list";
-    if (raw === "public_list") return "Public list";
-    if (raw === "collaboration") return "Shared list";
-    if (raw === "status_bucket") return "Status";
-    if (raw === "collection") return "Collection";
-    if (raw === "favorites") return "Favorites";
-    if (raw === "smart") return "Smart playlist";
-    return "Playlist";
+    if (id.includes("watchlist") || raw === "watchlist") return T("playlists.listType.watchlist");
+    if (raw === "custom_list") return T("playlists.listType.custom");
+    if (raw === "cloud_list") return T("playlists.cloudList");
+    if (raw === "liked_list") return T("playlists.listType.liked");
+    if (raw === "followed_list") return T("playlists.listType.followed");
+    if (raw === "public_list") return T("playlists.listType.public");
+    if (raw === "collaboration") return T("playlists.listType.shared");
+    if (raw === "status_bucket") return T("playlists.col.status");
+    if (raw === "collection") return T("playlists.listType.collection");
+    if (raw === "favorites") return T("playlists.listType.favorites");
+    if (raw === "smart") return T("playlists.listType.smart");
+    return T("playlists.listType.playlist");
   }
 
   function listRef(ep, fallback) {
@@ -498,19 +502,19 @@
 
   function syncModeLabel(mapping) {
     const rule = mapping.ruleset || rulesetById(mapping.ruleset_id || "");
-    if (rule) return [rule.name, "Uses a ruleset"];
+    if (rule) return [rule.name, T("playlists.usesRuleset")];
     const modes = {
-      add_only: ["Add only", "Adds missing items, never removes"],
-      managed_only: ["Keep in sync", "Adds and removes what CrossWatch added"],
-      mirror: ["Exact copy", "Makes the destination match the source"],
+      add_only: [T("playlists.enums.addOnly"), T("playlists.modes.addOnlyHint")],
+      managed_only: [T("playlists.modes.keepInSync"), T("playlists.modes.keepInSyncHint")],
+      mirror: [T("playlists.modes.exactCopy"), T("playlists.modes.exactCopyHint")],
     };
     return modes[String(mapping.membership || "managed_only")] || modes.managed_only;
   }
 
   function renderListsSimple() {
-    if (state.loading && !state.loaded) return renderSkeleton("Loading lists");
+    if (state.loading && !state.loaded) return renderSkeleton(T("playlists.loadingLists"));
     if (!state.endpoints.length) {
-      return `<div class="pl-empty"><strong>No lists yet</strong><span>Add the provider lists you want to sync. You need two before you can create a sync.</span></div>`;
+      return `<div class="pl-empty"><strong>${TH("playlists.noLists")}</strong><span>${TH("playlists.noListsHint")}</span></div>`;
     }
     const rows = state.endpoints.map((ep) => {
       const usedBy = state.mappings.filter((m) => mappingUsesEndpoint(m, ep.id)).length;
@@ -519,12 +523,12 @@
         <tr>
           <td>${listRef(ep)}</td>
           <td><span class="pl-pill type">${esc(listTypeLabel(ep))}</span>${ep.playlist_id ? "" : ` ${endpointStatus(ep)}`}</td>
-          <td><div class="pl-muted">${ep.item_count != null ? `${esc(ep.item_count)} items<br>` : ""}${refreshing ? "Refreshing..." : ep.last_synced ? `Checked ${esc(timeText(ep.last_synced))}` : "Not checked yet"}</div></td>
+          <td><div class="pl-muted">${ep.item_count != null ? `${esc(ep.item_count)} items<br>` : ""}${refreshing ? T("playlists.refreshing") : ep.last_synced ? TH("playlists.checkedAt", {time: timeText(ep.last_synced)}) : T("playlists.notChecked")}</div></td>
           <td>
             <div class="pl-actions">
-              ${actionButton("endpoint-sync", ep.id, refreshing ? "Refresh running" : "Refresh list", "refresh", "refresh", refreshing ? "running" : "", refreshing)}
-              ${actionButton("endpoint-edit", ep.id, "Change list", "edit", "edit")}
-              ${actionButton("endpoint-delete", ep.id, usedBy ? `Remove list. ${usedBy} sync(s) use it` : "Remove list", "delete", "delete")}
+              ${actionButton("endpoint-sync", ep.id, refreshing ? T("playlists.refreshRunning") : T("playlists.refreshList"), "refresh", "refresh", refreshing ? "running" : "", refreshing)}
+              ${actionButton("endpoint-edit", ep.id, T("playlists.changeList"), "edit", "edit")}
+              ${actionButton("endpoint-delete", ep.id, usedBy ? T("playlists.removeListUsed", {count: usedBy}) : T("playlists.removeList"), "delete", "delete")}
             </div>
           </td>
         </tr>
@@ -533,7 +537,7 @@
     return `
       <div class="pl-table-wrap cw-page-table">
         <table class="pl-lists-table">
-          <thead><tr><th>List</th><th>Type</th><th>Contents</th><th aria-label="Actions">Actions</th></tr></thead>
+          <thead><tr><th>${TH("playlists.col.list")}</th><th>${TH("playlists.col.type")}</th><th>${TH("playlists.col.contents")}</th><th aria-label="${TH("playlists.col.actions")}">${TH("playlists.col.actions")}</th></tr></thead>
           <tbody>${rows}</tbody>
         </table>
       </div>
@@ -541,10 +545,10 @@
   }
 
   function renderSyncsSimple() {
-    if (state.loading && !state.loaded) return renderSkeleton("Loading list syncs");
+    if (state.loading && !state.loaded) return renderSkeleton(T("playlists.loadingSyncs"));
     if (!state.mappings.length) {
       const need = state.endpoints.length < 2;
-      return `<div class="pl-empty"><strong>No list syncs yet</strong><span>Select New sync to keep one list up to date with another.</span></div>`;
+      return `<div class="pl-empty"><strong>${TH("playlists.noSyncs")}</strong><span>${TH("playlists.noSyncsHint")}</span></div>`;
     }
     const rows = state.mappings.map((m) => {
       const src = endpointById(m.source_endpoint) || m.source || {};
@@ -553,20 +557,20 @@
       const busy = sharedSyncBusy();
       const running = mappingIsRunning(m);
       const mode = syncModeLabel(m);
-      const result = running ? statusPill("run", "Running", "sync") : !m.enabled ? statusPill("off", "Paused", "pause_circle") : statusForResult(res);
+      const result = running ? statusPill("run", T("playlists.running"), "sync") : !m.enabled ? statusPill("off", T("playlists.paused"), "pause_circle") : statusForResult(res);
       return `
         <tr class="${running ? "is-running" : ""}">
           <td>${listRef(src, m.source_endpoint)}</td>
-          <td class="pl-sync-arrow"><span class="material-symbols-rounded" aria-hidden="true">${directionFor(m) === "Bidirectional" ? "sync_alt" : "east"}</span></td>
+          <td class="pl-sync-arrow"><span class="material-symbols-rounded" aria-hidden="true">${directionFor(m) === T("playlists.enums.bidirectional") ? "sync_alt" : "east"}</span></td>
           <td>${targets.length ? `<div class="pl-endpoint-stack">${targets.map((t) => listRef(t)).join("")}</div>` : mappingTargetRefs(m)}</td>
           <td><div class="pl-main-text">${esc(mode[0])}</div><div class="pl-muted">${esc(mode[1])}</div></td>
-          <td><div class="pl-result-cell">${result}<div class="pl-muted">${running ? "Running now..." : compactTime(res && res.finished_at)}</div></div></td>
+          <td><div class="pl-result-cell">${result}<div class="pl-muted">${running ? T("playlists.runningNow") : compactTime(res && res.finished_at)}</div></div></td>
           <td>
             <div class="pl-actions">
-              <button class="pl-btn small" data-action="mapping-sync" data-id="${esc(m.id)}" ${busy ? "disabled" : ""} title="${esc(busy ? "Synchronization is already running" : "Check the changes and sync")}"><span class="material-symbols-rounded" aria-hidden="true">fact_check</span>Review and sync</button>
-              ${actionButton("mapping-toggle", m.id, m.enabled ? "Pause this sync" : "Resume this sync", m.enabled ? "pause" : "play_arrow", "toggle", m.enabled ? "on" : "")}
-              ${actionButton("mapping-edit", m.id, "Edit sync", "edit", "edit")}
-              ${actionButton("mapping-delete", m.id, "Delete sync", "delete", "delete")}
+              <button class="pl-btn small" data-action="mapping-sync" data-id="${esc(m.id)}" ${busy ? "disabled" : ""} title="${esc(busy ? T("playlists.alreadyRunning") : T("playlists.reviewSyncHint"))}"><span class="material-symbols-rounded" aria-hidden="true">fact_check</span>${TH("playlists.reviewSync")}</button>
+              ${actionButton("mapping-toggle", m.id, m.enabled ? T("playlists.pauseSync") : T("playlists.resumeSync"), m.enabled ? "pause" : "play_arrow", "toggle", m.enabled ? "on" : "")}
+              ${actionButton("mapping-edit", m.id, T("playlists.editSync"), "edit", "edit")}
+              ${actionButton("mapping-delete", m.id, T("playlists.deleteSync"), "delete", "delete")}
             </div>
           </td>
         </tr>
@@ -575,7 +579,7 @@
     return `
       <div class="pl-table-wrap cw-page-table">
         <table class="pl-syncs-table">
-          <thead><tr><th>From</th><th aria-hidden="true"></th><th>To</th><th>How</th><th>Last result</th><th aria-label="Actions">Actions</th></tr></thead>
+          <thead><tr><th>${TH("playlists.col.from")}</th><th aria-hidden="true"></th><th>${TH("playlists.col.to")}</th><th>${TH("playlists.col.how")}</th><th>${TH("playlists.col.lastResult")}</th><th aria-label="${TH("playlists.col.actions")}">${TH("playlists.col.actions")}</th></tr></thead>
           <tbody>${rows}</tbody>
         </table>
       </div>
@@ -583,14 +587,14 @@
   }
 
   function agoText(ts) {
-    if (!ts) return "never";
+    if (!ts) return T("playlists.neverLower");
     const mins = Math.floor(Math.max(0, Date.now() / 1000 - Number(ts)) / 60);
-    if (mins < 1) return "just now";
-    if (mins < 60) return `${mins} min ago`;
+    if (mins < 1) return T("playlists.ago.justNow");
+    if (mins < 60) return T("playlists.ago.minutes", {count: mins});
     const hours = Math.floor(mins / 60);
-    if (hours < 24) return `${hours}h ago`;
+    if (hours < 24) return T("playlists.ago.hours", {count: hours});
     const days = Math.floor(hours / 24);
-    return `${days} day${days === 1 ? "" : "s"} ago`;
+    return T("playlists.ago.days", {count: days});
   }
 
   function heroSummary() {
@@ -598,12 +602,12 @@
     const last = Math.max(0, ...state.mappings.map((m) => Number((m.last_result && m.last_result.finished_at) || 0)));
     const seg = (value, label, extra = "") => `<div class="cw-editor-hero-seg ${extra}"><strong>${esc(value)}</strong><span>${esc(label)}</span></div>`;
     return `
-      ${seg(state.loaded ? state.mappings.length : "-", state.mappings.length === 1 ? "sync" : "syncs", "cw-editor-hero-count")}
-      ${seg(state.loaded ? state.endpoints.length : "-", state.endpoints.length === 1 ? "list" : "lists", "cw-editor-hero-count")}
-      ${seg(state.loaded ? published : "-", "published", "cw-editor-hero-count")}
-      <div class="cw-editor-hero-seg cw-editor-hero-sync"><span>Synced</span><strong>${esc(agoText(last))}</strong></div>
-      <button class="cw-editor-refresh" id="pl-hero-refresh" type="button" data-action="hero-refresh" title="Refresh playlists" aria-label="Refresh playlists"><span class="material-symbols-rounded" aria-hidden="true">refresh</span></button>
-      <button class="cw-editor-hero-seg pl-hero-toggle" id="pl-advanced-toggle" type="button" data-action="toggle-advanced" title="${state.advanced ? "Back to the simple view" : "Show endpoints, mappings, rulesets and activity"}"><span class="material-symbols-rounded" aria-hidden="true">${state.advanced ? "view_agenda" : "tune"}</span><span>${state.advanced ? "Simple" : "Advanced"}</span></button>
+      ${seg(state.loaded ? state.mappings.length : "-", T("playlists.hero.syncs", {count: state.mappings.length}), "cw-editor-hero-count")}
+      ${seg(state.loaded ? state.endpoints.length : "-", T("playlists.hero.lists", {count: state.endpoints.length}), "cw-editor-hero-count")}
+      ${seg(state.loaded ? published : "-", T("playlists.hero.published"), "cw-editor-hero-count")}
+      <div class="cw-editor-hero-seg cw-editor-hero-sync"><span>${TH("playlists.synced")}</span><strong>${esc(agoText(last))}</strong></div>
+      <button class="cw-editor-refresh" id="pl-hero-refresh" type="button" data-action="hero-refresh" title="${TH("playlists.refreshPlaylists")}" aria-label="${TH("playlists.refreshPlaylists")}"><span class="material-symbols-rounded" aria-hidden="true">refresh</span></button>
+      <button class="cw-editor-hero-seg pl-hero-toggle" id="pl-advanced-toggle" type="button" data-action="toggle-advanced" title="${state.advanced ? T("playlists.backToSimple") : T("playlists.showAdvanced")}"><span class="material-symbols-rounded" aria-hidden="true">${state.advanced ? "view_agenda" : "tune"}</span><span>${state.advanced ? T("playlists.simple") : T("playlists.advanced")}</span></button>
     `;
   }
 
@@ -621,53 +625,53 @@
   function render(root) {
     const simple = !state.advanced;
     const mappingDisabled = !state.loaded || state.endpoints.length < 2;
-    const mappingTitle = !state.loaded ? "Playlist data is still loading." : mappingDisabled ? "Create at least two endpoints before adding a mapping." : "Create playlist mapping";
+    const mappingTitle = !state.loaded ? T("playlists.stillLoading") : mappingDisabled ? T("playlists.needTwoEndpoints") : T("playlists.createMapping");
     root.innerHTML = `
       <div class="pl-page${simple ? " pl-simple" : ""}">
         <div class="pl-header cw-page-hero cw-page-hero-playlists" data-hero-icon="queue_music">
           <div class="cw-page-hero-copy">
-            <div class="cw-page-hero-kicker">PLAYLISTS</div>
-            <h2 class="pl-title cw-page-hero-title">Playlists</h2>
-            <div class="pl-sub cw-page-hero-sub">Sync your playlists between services</div>
+            <div class="cw-page-hero-kicker">${TH("playlists.kicker")}</div>
+            <h2 class="pl-title cw-page-hero-title">${TH("playlists.title")}</h2>
+            <div class="pl-sub cw-page-hero-sub">${TH("playlists.subtitle")}</div>
           </div>
           <div class="pl-header-actions cw-page-hero-actions">
-            <div class="cw-editor-hero-summary" id="pl-hero-summary" aria-label="Playlists summary">${heroSummary()}</div>
+            <div class="cw-editor-hero-summary" id="pl-hero-summary" aria-label="${TH("playlists.summaryLabel")}">${heroSummary()}</div>
           </div>
         </div>
         ${renderBanners()}
         <main class="pl-grid">
           <section class="pl-section cw-page-panel" id="pl-playlist-endpoints">
             <div class="pl-section-head">
-              <div><div class="pl-section-title">${simple ? "Lists" : "Playlist endpoints"}</div><div class="pl-section-sub">${simple ? "The provider lists CrossWatch can sync." : "Connect provider playlists to use in CrossWatch."}</div></div>
-              <button class="pl-btn small${simple ? "" : " accent"}" data-action="endpoint-new"><span class="material-symbols-rounded" aria-hidden="true">add</span>${simple ? "Add list" : "Add endpoint"}</button>
+              <div><div class="pl-section-title">${simple ? T("playlists.lists") : T("playlists.endpoints")}</div><div class="pl-section-sub">${simple ? T("playlists.listsHint") : T("playlists.endpointsHint")}</div></div>
+              <button class="pl-btn small${simple ? "" : " accent"}" data-action="endpoint-new"><span class="material-symbols-rounded" aria-hidden="true">add</span>${simple ? T("playlists.addList") : T("playlists.addEndpoint")}</button>
             </div>
             <div class="pl-section-body">${renderEndpoints()}</div>
           </section>
           <section class="pl-section cw-page-panel" id="pl-mappings-overview">
             <div class="pl-section-head">
-              <div><div class="pl-section-title">${simple ? "List syncs" : "Mappings"}</div><div class="pl-section-sub">${simple ? "Keep one list up to date with another." : "Sync relationships between playlist endpoints."}</div></div>
+              <div><div class="pl-section-title">${simple ? T("playlists.listSyncs") : T("playlists.mappings")}</div><div class="pl-section-sub">${simple ? T("playlists.listSyncsHint") : T("playlists.mappingsHint")}</div></div>
               <div class="pl-section-actions">
-                ${simple ? `<button class="pl-btn small" data-action="activity-all">History</button>` : ""}
+                ${simple ? `<button class="pl-btn small" data-action="activity-all">${TH("playlists.history")}</button>` : ""}
                 ${simple
-                  ? `<button class="pl-btn small accent" data-action="sync-wizard" ${state.loaded ? "" : "disabled"}><span class="material-symbols-rounded" aria-hidden="true">add</span>New sync</button>`
-                  : `<button class="pl-btn small accent" data-action="mapping-new" ${mappingDisabled ? "disabled" : ""} title="${esc(mappingTitle)}"><span class="material-symbols-rounded" aria-hidden="true">add</span>New mapping</button>`}
+                  ? `<button class="pl-btn small accent" data-action="sync-wizard" ${state.loaded ? "" : "disabled"}><span class="material-symbols-rounded" aria-hidden="true">add</span>${TH("playlists.newSync")}</button>`
+                  : `<button class="pl-btn small accent" data-action="mapping-new" ${mappingDisabled ? "disabled" : ""} title="${esc(mappingTitle)}"><span class="material-symbols-rounded" aria-hidden="true">add</span>${TH("playlists.newMapping")}</button>`}
               </div>
             </div>
             <div class="pl-section-body">${renderMappings()}</div>
           </section>
           <section class="pl-section cw-page-panel" id="pl-published-lists">
             <div class="pl-section-head">
-              <div><div class="pl-section-title">Published lists</div><div class="pl-section-sub">Let Kometa, Radarr, Sonarr and MDBList JSON readers such as Kodi TMDBHelper read a CrossWatch list.</div></div>
-              <button class="pl-btn small" data-action="sync-wizard-publish" ${state.loaded ? "" : "disabled"}><span class="material-symbols-rounded" aria-hidden="true">add</span>Publish a list</button>
+              <div><div class="pl-section-title">${TH("playlists.published.title")}</div><div class="pl-section-sub">${TH("playlists.published.hint")}</div></div>
+              <button class="pl-btn small" data-action="sync-wizard-publish" ${state.loaded ? "" : "disabled"}><span class="material-symbols-rounded" aria-hidden="true">add</span>${TH("playlists.published.publish")}</button>
             </div>
             <div class="pl-section-body">${renderPublished()}</div>
           </section>
           <section class="pl-section cw-page-panel" id="pl-activity-overview">
             <div class="pl-section-head">
-              <div><div class="pl-section-title">Activity overview</div></div>
+              <div><div class="pl-section-title">${TH("playlists.activity.title")}</div></div>
               <div class="pl-section-actions">
-                <button class="pl-btn small" data-action="activity-all">View all activity</button>
-                <button class="pl-btn small danger" data-action="activity-clear" title="Clear playlist activity"><span class="material-symbols-rounded" aria-hidden="true">delete_sweep</span>Clear</button>
+                <button class="pl-btn small" data-action="activity-all">${TH("playlists.activity.viewAll")}</button>
+                <button class="pl-btn small danger" data-action="activity-clear" title="${TH("playlists.activity.clearLabel")}"><span class="material-symbols-rounded" aria-hidden="true">delete_sweep</span>${TH("playlists.clear")}</button>
               </div>
             </div>
             <div class="pl-section-body">${renderActivity()}</div>
@@ -690,9 +694,9 @@
 
   function renderEndpoints() {
     if (!state.advanced) return renderListsSimple();
-    if (state.loading && !state.loaded) return renderSkeleton("Loading playlist endpoints");
+    if (state.loading && !state.loaded) return renderSkeleton(T("playlists.loadingEndpoints"));
     if (!state.endpoints.length) {
-      return `<div class="pl-empty"><strong>No playlist endpoints yet</strong><span>Add the first provider playlist before creating mappings.</span></div>`;
+      return `<div class="pl-empty"><strong>${TH("playlists.noEndpoints")}</strong><span>${TH("playlists.noEndpointsHint")}</span></div>`;
     }
     const rows = state.endpoints.map((ep) => {
       const playlistType = endpointIsDiscovery(ep) ? "discovery" : (ep.playlist_type || ep.endpoint_type || ep.kind || ep.media_type || "playlist");
@@ -706,12 +710,12 @@
           <td><div class="pl-main-text">${esc(ep.playlist_name || ep.playlist_id || "-")}</div></td>
           <td><span class="pl-pill ${endpointIsDiscovery(ep) ? "run" : "type"}">${esc(titleize(playlistType))}</span></td>
           <td>${endpointStatus(ep)}</td>
-          <td><div class="pl-muted">${refreshing ? "Refreshing..." : ep.last_synced ? `Refreshed ${esc(timeText(ep.last_synced))}` : "Not refreshed yet"}${ep.item_count != null ? `<br>${esc(ep.item_count)} items` : ""}</div></td>
+          <td><div class="pl-muted">${refreshing ? T("playlists.refreshing") : ep.last_synced ? TH("playlists.refreshedAt", {time: timeText(ep.last_synced)}) : T("playlists.notRefreshed")}${ep.item_count != null ? `<br>${esc(ep.item_count)} items` : ""}</div></td>
           <td>
             <div class="pl-actions">
-              ${actionButton("endpoint-sync", ep.id, refreshing ? "Refresh running" : "Refresh endpoint", "refresh", "refresh", refreshing ? "running" : "", refreshing)}
-              ${actionButton("endpoint-edit", ep.id, "Edit endpoint", "edit", "edit")}
-              ${actionButton("endpoint-delete", ep.id, usedBy ? `Delete endpoint. ${usedBy} mapping(s) use this endpoint` : "Delete endpoint", "delete", "delete")}
+              ${actionButton("endpoint-sync", ep.id, refreshing ? T("playlists.refreshRunning") : T("playlists.refreshEndpoint"), "refresh", "refresh", refreshing ? "running" : "", refreshing)}
+              ${actionButton("endpoint-edit", ep.id, T("playlists.editEndpoint"), "edit", "edit")}
+              ${actionButton("endpoint-delete", ep.id, usedBy ? T("playlists.deleteEndpointUsed", {count: usedBy}) : T("playlists.deleteEndpoint"), "delete", "delete")}
             </div>
           </td>
         </tr>
@@ -720,7 +724,7 @@
     return `
       <div class="pl-table-wrap cw-page-table">
         <table class="pl-endpoints-table">
-          <thead><tr><th>Endpoint</th><th>Provider</th><th>Instance</th><th>Selected playlist</th><th>Type</th><th>Status</th><th>Last refresh</th><th aria-label="Actions">Actions</th></tr></thead>
+          <thead><tr><th>${TH("playlists.col.endpoint")}</th><th>${TH("playlists.col.provider")}</th><th>${TH("playlists.col.instance")}</th><th>${TH("playlists.col.selectedPlaylist")}</th><th>${TH("playlists.col.type")}</th><th>${TH("playlists.col.status")}</th><th>${TH("playlists.col.lastRefresh")}</th><th aria-label="${TH("playlists.col.actions")}">${TH("playlists.col.actions")}</th></tr></thead>
           <tbody>${rows}</tbody>
         </table>
       </div>
@@ -732,28 +736,28 @@
   }
 
   function renderPublished() {
-    if (state.loading && !state.loaded) return renderSkeleton("Loading published lists");
+    if (state.loading && !state.loaded) return renderSkeleton(T("playlists.loadingPublished"));
     const lists = (state.published && state.published.lists) || [];
     if (!lists.length) {
-      return `<div class="pl-empty"><strong>Nothing published yet</strong><span>Select Publish a list to make a list readable by Kometa, Radarr, Sonarr or Kodi TMDBHelper.</span></div>`;
+      return `<div class="pl-empty"><strong>${TH("playlists.published.none")}</strong><span>${TH("playlists.published.noneHint")}</span></div>`;
     }
     const rows = lists.map((row) => {
       const key = `${row.instance}|${row.list_id}`;
       const feed = row.feed;
-      const tool = { "kometa-movies.json": "Kometa (movies)", "kometa-shows.json": "Kometa (shows)", "radarr.json": "Radarr", "sonarr.json": "Sonarr", "mdblist.json": "MDBList JSON" }[feed && feed.last_fetch_format] || "";
-      const read = feed && feed.last_fetch_at ? `${timeText(feed.last_fetch_at)}<br>${esc(tool ? `by ${tool}` : "")}` : feed ? "Not read yet" : "-";
+      const tool = { "kometa-movies.json": T("playlists.published.kometaMovies"), "kometa-shows.json": T("playlists.published.kometaShows"), "radarr.json": "Radarr", "sonarr.json": "Sonarr", "mdblist.json": "MDBList JSON" }[feed && feed.last_fetch_format] || "";
+      const read = feed && feed.last_fetch_at ? `${timeText(feed.last_fetch_at)}<br>${esc(tool ? `by ${tool}` : "")}` : feed ? T("playlists.published.notRead") : "-";
       const used = Number(row.endpoint_count || 0);
-      const deleteLabel = !row.can_delete ? "This list cannot be deleted" : used ? `Delete list. Remove the ${used} endpoint(s) that use this list first` : "Delete list";
+      const deleteLabel = !row.can_delete ? T("playlists.published.cannotDelete") : used ? T("playlists.deleteListUsed", {count: used}) : T("playlists.deleteList");
       return `
         <tr>
           <td><div class="pl-provider">${icon("CROSSWATCH")}<div><div class="pl-main-text">${esc(row.name || row.list_id)}</div><div class="pl-muted">${[row.item_count != null ? `${row.item_count} items` : "", row.instance && row.instance !== "default" ? row.instance : ""].filter(Boolean).map(esc).join(" · ")}</div></div></div></td>
-          <td>${feed ? `<span class="pl-pill ok">Published</span>` : `<span class="pl-pill off">Not published</span>`}</td>
+          <td>${feed ? `<span class="pl-pill ok">${TH("playlists.published.isPublished")}</span>` : `<span class="pl-pill off">${TH("playlists.published.notPublished")}</span>`}</td>
           <td><div class="pl-muted">${read}</div></td>
           <td>
             <div class="pl-actions">
               ${feed
-                ? `<button class="pl-btn small" data-action="publish-show" data-id="${esc(key)}"><span class="material-symbols-rounded" aria-hidden="true">link</span>Addresses</button>${actionButton("publish-key", key, "New access key", "key", "refresh")}${actionButton("publish-off", key, "Stop publishing", "link_off", "delete")}`
-                : `<button class="pl-btn small" data-action="publish-on" data-id="${esc(key)}"><span class="material-symbols-rounded" aria-hidden="true">publish</span>Publish</button>`}
+                ? `<button class="pl-btn small" data-action="publish-show" data-id="${esc(key)}"><span class="material-symbols-rounded" aria-hidden="true">link</span>${TH("playlists.published.addresses")}</button>${actionButton("publish-key", key, T("playlists.ui.newKey"), "key", "refresh")}${actionButton("publish-off", key, T("playlists.ui.stopPublishing"), "link_off", "delete")}`
+                : `<button class="pl-btn small" data-action="publish-on" data-id="${esc(key)}"><span class="material-symbols-rounded" aria-hidden="true">publish</span>${TH("playlists.published.publishBtn")}</button>`}
               ${actionButton("publish-delete", key, deleteLabel, "delete", "delete", "", !row.can_delete || used > 0)}
             </div>
           </td>
@@ -763,7 +767,7 @@
     return `
       <div class="pl-table-wrap cw-page-table">
         <table class="pl-published-table">
-          <thead><tr><th>CrossWatch list</th><th>Status</th><th>Last read</th><th aria-label="Actions">Actions</th></tr></thead>
+          <thead><tr><th>${TH("playlists.published.cwList")}</th><th>${TH("playlists.col.status")}</th><th>${TH("playlists.col.lastRead")}</th><th aria-label="${TH("playlists.col.actions")}">${TH("playlists.col.actions")}</th></tr></thead>
           <tbody>${rows}</tbody>
         </table>
       </div>
@@ -780,7 +784,7 @@
   function openPublishedModal(row, trigger) {
     if (!row || !row.feed) return;
     const urls = row.feed.urls || {};
-    const name = row.name || "CrossWatch list";
+    const name = row.name || T("playlists.published.cwList");
     const kometa = (url) => `collections:\n  ${name}:\n    text_file: ${url}\n    sync_mode: sync`;
     const block = (title, hint, text, area) => `
       <div class="pl-publish-block">
@@ -788,22 +792,22 @@
         <div class="pl-muted">${esc(hint)}</div>
         <div class="pl-publish-line">
           ${area ? `<textarea readonly rows="4" wrap="off" spellcheck="false">${esc(text)}</textarea>` : `<input readonly spellcheck="false" value="${esc(text)}">`}
-          <button class="pl-btn small" type="button" data-copy="${esc(text)}">Copy</button>
+          <button class="pl-btn small" type="button" data-copy="${esc(text)}">${TH("playlists.copy")}</button>
         </div>
       </div>`;
     openModal({
-      title: `Publish ${name}`,
-      description: "These addresses contain an access key. Anyone who has an address can read this list.",
+      title: T("playlists.publishName", {name}),
+      description: T("playlists.published.keyWarning"),
       width: "760px",
-      cancelText: "Close",
+      cancelText: T("playlists.close"),
       trigger,
       body: `
-        ${block("Kometa, movie library", "Paste into a collection file of your movie library. Needs Kometa 2.4.5 or newer.", kometa(urls["kometa-movies.json"] || ""), true)}
-        ${block("Kometa, show library", "Paste into a collection file of your show library.", kometa(urls["kometa-shows.json"] || ""), true)}
-        ${block("Radarr (movies)", "Settings, Import Lists, add a Custom List (StevenLu Custom) and paste this address. Movies without an IMDb ID are left out.", urls["radarr.json"] || "", false)}
-        ${block("Sonarr (shows)", "Settings, Import Lists, add a Custom List and paste this address. Shows without a TVDB ID are left out.", urls["sonarr.json"] || "", false)}
-        ${block("MDBList JSON (movies and shows)", "One mixed list in the MDBList JSON layout, with TMDB IDs. Items without a TMDB ID are left out. Add &sort=title, year, mediatype, id, imdb_id or tvdbid with &order=asc or &order=desc, or &sort=random for a new order on every read. Add &mediatype=movie, show, season or episode to keep only that type, or &limit=60&offset=60 to read only part of the list.", urls["mdblist.json"] || "", false)}
-        ${block("Kodi TMDBHelper", "Use this path in a widget, menu item or button. It loads the MDBList JSON address above.", urls["mdblist.json"] ? `plugin://plugin.video.themoviedb.helper/?info=mdblist_locallist&&${urls["mdblist.json"]}` : "", false)}
+        ${block(T("playlists.published.kometaMovieLib"), T("playlists.published.kometaMovieHint"), kometa(urls["kometa-movies.json"] || ""), true)}
+        ${block(T("playlists.published.kometaShowLib"), T("playlists.published.kometaShowHint"), kometa(urls["kometa-shows.json"] || ""), true)}
+        ${block(T("playlists.published.radarr"), T("playlists.published.radarrHint"), urls["radarr.json"] || "", false)}
+        ${block(T("playlists.published.sonarr"), T("playlists.published.sonarrHint"), urls["sonarr.json"] || "", false)}
+        ${block(T("playlists.published.mdblist"), T("playlists.published.mdblistHint"), urls["mdblist.json"] || "", false)}
+        ${block("Kodi TMDBHelper", T("playlists.published.kodiHint"), urls["mdblist.json"] ? `plugin://plugin.video.themoviedb.helper/?info=mdblist_locallist&&${urls["mdblist.json"]}` : "", false)}
       `,
       onOpen: (ctx) => {
         ctx.modal.addEventListener("click", async (e) => {
@@ -814,8 +818,8 @@
             window.cwSelectCopyField?.(btn.parentElement.querySelector("input,textarea"));
             return;
           }
-          btn.textContent = "Copied";
-          setTimeout(() => { btn.textContent = "Copy"; }, 1500);
+          btn.textContent = T("playlists.copied");
+          setTimeout(() => { btn.textContent = T("playlists.copy"); }, 1500);
         });
       },
     });
@@ -825,9 +829,9 @@
     const row = publishedRow(key);
     if (!row) return;
     if (action === "publish-show") return openPublishedModal(row, btn);
-    if (action === "publish-key" && !(await (window.CW?.MobileUI?.ask || window.confirm)("Create a new access key? Kometa, Radarr, Sonarr and Kodi stop reading this list until you paste the new addresses."))) return;
-    if (action === "publish-off" && !(await (window.CW?.MobileUI?.ask || window.confirm)("Stop publishing this list? The addresses stop working."))) return;
-    if (action === "publish-delete" && !(await (window.CW?.MobileUI?.ask || window.confirm)(`Delete ${row.name || "this list"}? The list and its items are removed from CrossWatch${row.feed ? " and the addresses stop working" : ""}.`))) return;
+    if (action === "publish-key" && !(await (window.CW?.MobileUI?.ask || window.confirm)(T("playlists.published.newKeyConfirm")))) return;
+    if (action === "publish-off" && !(await (window.CW?.MobileUI?.ask || window.confirm)(T("playlists.published.stopConfirm")))) return;
+    if (action === "publish-delete" && !(await (window.CW?.MobileUI?.ask || window.confirm)(T(row.feed ? "playlists.deletePublishedFeed" : "playlists.deletePublished", {name: row.name || T("playlists.thisList")})))) return;
     btn.disabled = true;
     try {
       if (action === "publish-on") await API.publish(row.instance, row.list_id);
@@ -837,17 +841,17 @@
       await reloadPublished();
       if (action === "publish-on" || action === "publish-key") openPublishedModal(publishedRow(key), null);
     } catch (err) {
-      window.cxToast?.(err && err.message ? err.message : "Could not update the published list.");
+      window.cxToast?.(err && err.message ? err.message : T("playlists.published.updateFailed"));
       btn.disabled = false;
     }
   }
 
   function renderMappings() {
     if (!state.advanced) return renderSyncsSimple();
-    if (state.loading && !state.loaded) return renderSkeleton("Loading playlist mappings");
+    if (state.loading && !state.loaded) return renderSkeleton(T("playlists.loadingMappings"));
     if (!state.mappings.length) {
       const need = state.endpoints.length < 2;
-      return `<div class="pl-empty"><strong>No mappings yet</strong><span>${need ? "At least two endpoints are required before a mapping can be created." : "Create a mapping to sync playlists between endpoints."}</span></div>`;
+      return `<div class="pl-empty"><strong>${TH("playlists.noMappings")}</strong><span>${TH(need ? "playlists.ui.needTwo" : "playlists.ui.createMapping")}</span></div>`;
     }
     const rows = state.mappings.map((m) => {
       const src = endpointById(m.source_endpoint) || m.source || {};
@@ -855,23 +859,23 @@
       const res = m.last_result || null;
       const busy = sharedSyncBusy();
       const running = mappingIsRunning(m);
-      const syncTitle = running ? "Sync running" : (busy ? "Synchronization is already running" : "Review and sync");
+      const syncTitle = running ? T("playlists.syncRunning") : (busy ? T("playlists.alreadyRunning") : T("playlists.reviewSync"));
       return `
         <tr class="${running ? "is-running" : ""}">
           <td>${endpointIdentity({ name: m.name || m.id, id: m.id, provider: (src && src.provider) || "" }, m.id)}</td>
           <td>${endpointRef(src, m.source_endpoint)}</td>
           <td><span class="pl-pill dir">${esc(directionFor(m))}<span class="material-symbols-rounded" aria-hidden="true">east</span></span></td>
           <td>${mappingTargetRefs(m)}</td>
-          <td><span class="pl-pill">${esc(rule ? rule.name : "Direct")}</span></td>
+          <td><span class="pl-pill">${esc(rule ? rule.name : T("playlists.enums.direct"))}</span></td>
           <td>${syncPairIndicator(m.assigned_pair)}</td>
-          <td>${m.enabled ? statusPill("ok", "Enabled") : statusPill("off", "Disabled", "radio_button_unchecked")}</td>
-          <td><div class="pl-result-cell">${running ? statusPill("run", "Running", "sync") : statusForResult(res)}<div class="pl-muted">${running ? "Running now..." : compactTime(res && res.finished_at)}</div></div></td>
+          <td>${m.enabled ? statusPill("ok", T("playlists.enabled")) : statusPill("off", T("playlists.disabled"), "radio_button_unchecked")}</td>
+          <td><div class="pl-result-cell">${running ? statusPill("run", T("playlists.running"), "sync") : statusForResult(res)}<div class="pl-muted">${running ? T("playlists.runningNow") : compactTime(res && res.finished_at)}</div></div></td>
           <td>
             <div class="pl-actions">
               ${actionButton("mapping-sync", m.id, syncTitle, "sync", "sync", running ? "running" : "", busy)}
-              ${actionButton("mapping-edit", m.id, "Edit mapping", "edit", "edit")}
-              ${actionButton("mapping-toggle", m.id, m.enabled ? "Disable mapping" : "Enable mapping", m.enabled ? "pause" : "play_arrow", "toggle", m.enabled ? "on" : "")}
-              ${actionButton("mapping-delete", m.id, "Delete mapping", "delete", "delete")}
+              ${actionButton("mapping-edit", m.id, T("playlists.editMapping"), "edit", "edit")}
+              ${actionButton("mapping-toggle", m.id, m.enabled ? T("playlists.disableMapping") : T("playlists.enableMapping"), m.enabled ? "pause" : "play_arrow", "toggle", m.enabled ? "on" : "")}
+              ${actionButton("mapping-delete", m.id, T("playlists.deleteMapping"), "delete", "delete")}
             </div>
           </td>
         </tr>
@@ -880,7 +884,7 @@
     return `
       <div class="pl-table-wrap cw-page-table">
         <table class="pl-mappings-table">
-          <thead><tr><th>Mapping</th><th>Source</th><th>Direction</th><th>Destination</th><th>Ruleset</th><th>Sync pair</th><th>Status</th><th>Result</th><th aria-label="Actions">Actions</th></tr></thead>
+          <thead><tr><th>${TH("playlists.col.mapping")}</th><th>${TH("playlists.col.source")}</th><th>${TH("playlists.col.direction")}</th><th>${TH("playlists.col.destination")}</th><th>${TH("playlists.col.ruleset")}</th><th>${TH("playlists.col.syncPair")}</th><th>${TH("playlists.col.status")}</th><th>${TH("playlists.col.result")}</th><th aria-label="${TH("playlists.col.actions")}">${TH("playlists.col.actions")}</th></tr></thead>
           <tbody>${rows}</tbody>
         </table>
       </div>
@@ -888,29 +892,29 @@
   }
 
   function renderActivity() {
-    if (state.loading && !state.loaded) return renderSkeleton("Loading playlist activity");
+    if (state.loading && !state.loaded) return renderSkeleton(T("playlists.loadingActivity"));
     const entries = state.activity || [];
     const stats = activityStats(entries);
     const latest = entries.filter((row) => String(row.type || "").toLowerCase() === "run").slice(0, 8);
     const table = latest.length ? `
       <div class="pl-table-wrap cw-page-table">
         <table class="pl-activity-table">
-          <thead><tr><th>Time</th><th>Mapping</th><th>Result</th><th>Changes</th><th>Status</th></tr></thead>
+          <thead><tr><th>${TH("playlists.col.time")}</th><th>${TH("playlists.col.mapping")}</th><th>${TH("playlists.col.result")}</th><th>${TH("playlists.col.changes")}</th><th>${TH("playlists.col.status")}</th></tr></thead>
           <tbody>${latest.map((row) => {
             return `<tr><td>${esc(compactTime(row.ts))}</td><td><div class="pl-main-text">${esc(row.label || "-")}</div></td><td>${activityResultSummary(row)}</td><td>${activityChangeSummary(row)}</td><td>${activityStatus(row)}</td></tr>`;
           }).join("")}</tbody>
         </table>
       </div>
-    ` : `<div class="pl-empty"><strong>No playlist runs yet</strong><span>Run a mapping to see sync results here.</span></div>`;
+    ` : `<div class="pl-empty"><strong>${TH("playlists.activity.noRuns")}</strong><span>${TH("playlists.activity.noRunsHint")}</span></div>`;
     return `
       <div class="pl-activity">
         <div class="pl-stats">
-          ${statCard(stats.total, "Total runs", "trending_up", "total")}
-          ${statCard(stats.success, "Successful", "check_circle", "success")}
-          ${statCard(stats.warning, "Warnings", "warning", "warning")}
-          ${statCard(stats.failed, "Failed", "cancel", "failed")}
-          ${statCard(stats.running, "Queued or running", "speed", "running")}
-          ${statCard(stats.skipped, "Skipped", "sync_disabled", "skipped")}
+          ${statCard(stats.total, T("playlists.stats.total"), "trending_up", "total")}
+          ${statCard(stats.success, T("playlists.stats.successful"), "check_circle", "success")}
+          ${statCard(stats.warning, T("playlists.stats.warnings"), "warning", "warning")}
+          ${statCard(stats.failed, T("playlists.status.failed"), "cancel", "failed")}
+          ${statCard(stats.running, T("playlists.stats.queued"), "speed", "running")}
+          ${statCard(stats.skipped, T("playlists.changes.skipped"), "sync_disabled", "skipped")}
         </div>
         ${table}
       </div>
@@ -1004,14 +1008,14 @@
       <div class="pl-dialog" role="dialog" aria-modal="true" aria-labelledby="pl-dialog-title" style="--modal-width:${esc(opts.width || "880px")}">
         <div class="pl-dialog-head">
           <div><div class="pl-dialog-title" id="pl-dialog-title">${esc(opts.title || "")}</div><div class="pl-dialog-sub">${esc(opts.description || "")}</div></div>
-          <button class="pl-btn icon" data-modal-close aria-label="Close"><span class="material-symbols-rounded" aria-hidden="true">close</span></button>
+          <button class="pl-btn icon" data-modal-close aria-label="${TH("playlists.close")}"><span class="material-symbols-rounded" aria-hidden="true">close</span></button>
         </div>
         <div class="pl-dialog-body">
           <div class="pl-dialog-error" data-modal-error></div>
           ${opts.body || ""}
         </div>
         <div class="pl-dialog-foot">
-          <button class="pl-btn" data-modal-cancel>${esc(opts.cancelText || "Cancel")}</button>
+          <button class="pl-btn" data-modal-cancel>${esc(opts.cancelText || T("playlists.cancel"))}</button>
           ${opts.primaryText ? `<button class="pl-btn primary" data-modal-primary>${esc(opts.primaryText)}</button>` : ""}
         </div>
       </div>
@@ -1035,11 +1039,11 @@
         setModalError("");
         ctx.saving = true;
         primary.disabled = true;
-        primary.textContent = opts.savingText || "Saving...";
+        primary.textContent = opts.savingText || T("playlists.saving");
         try {
           await opts.onPrimary(ctx);
         } catch (err) {
-          setModalError(err && err.message ? err.message : String(err || "Save failed"));
+          setModalError(err && err.message ? err.message : String(err || T("playlists.saveFailed")));
           ctx.saving = false;
           primary.textContent = opts.primaryText;
           syncModalPrimary(ctx);
@@ -1071,7 +1075,7 @@
     if (!force && (ctx.saving || ctx.confirming)) return false;
     if (!force && ctx.dirty) {
       ctx.confirming = true;
-      const discard = await (window.CW?.MobileUI?.ask || window.confirm)("Discard unsaved changes?");
+      const discard = await (window.CW?.MobileUI?.ask || window.confirm)(T("playlists.discardChanges"));
       ctx.confirming = false;
       if (!discard || state.modal !== ctx) return false;
     }
@@ -1161,7 +1165,7 @@
   }
 
   function playlistNameError(name) {
-    return safeNameError(name, "New playlist name", PLAYLIST_NAME_MAX);
+    return safeNameError(name, T("playlists.newPlaylistName"), PLAYLIST_NAME_MAX);
   }
 
   function applyFieldError(input, err, okText) {
@@ -1204,9 +1208,9 @@
   }
 
   function generatedEndpointName(value, fallback) {
-    const raw = String(value || fallback || "Endpoint").replace(/\s*\([^)]*\)\s*$/g, "").trim() || "Endpoint";
+    const raw = String(value || fallback || T("playlists.col.endpoint")).replace(/\s*\([^)]*\)\s*$/g, "").trim() || T("playlists.col.endpoint");
     let clean = Array.from(raw).filter(isSafeNameChar).join("").replace(/\s+/g, " ").trim();
-    if (!clean) clean = "Endpoint";
+    if (!clean) clean = T("playlists.col.endpoint");
     if (!/^[\p{L}\p{N}]$/u.test(Array.from(clean)[0] || "")) clean = `List ${clean}`;
     return shortName(clean);
   }
@@ -1258,7 +1262,7 @@
       select.innerHTML = "";
       return;
     }
-    select.innerHTML = selectOptions(opts.values.map((v) => ({ value: v, label: PRIVACY_LABELS[v] || titleize(v) })), current, current ? "" : "Keep current");
+    select.innerHTML = selectOptions(opts.values.map((v) => ({ value: v, label: PRIVACY_LABELS[v] || titleize(v) })), current, current ? "" : T("playlists.keepCurrent"));
     window.CW?.IconSelect?.enhance?.(select, { className: "cw-plain-select" });
   }
 
@@ -1352,26 +1356,26 @@
     const raw = [kind || endpointType, endpointType, ...mediaTypes, resource.discovery || !resource.writable ? "read-only" : "", resource.smart ? "smart" : ""].filter(Boolean);
     const seen = new Set();
     const map = {
-      playlist: ["queue_music", "Playlist"],
-      regular: ["list_alt", "Regular list"],
-      watchlist: ["bookmark", "Watchlist"],
-      discovery: ["travel_explore", "Discovery source"],
-      liked_list: ["favorite", "Liked list"],
-      followed_list: ["bookmark_added", "Followed list"],
-      public_list: ["public", "Public list"],
-      collaboration: ["group", "Shared list"],
-      collection: ["collections_bookmark", "Collection"],
-      cloud_list: ["cloud", "Cloud list"],
-      movie: ["movie", "Movies"],
-      movies: ["movie", "Movies"],
-      show: ["tv", "Shows"],
-      shows: ["tv", "Shows"],
-      season: ["video_library", "Seasons"],
-      seasons: ["video_library", "Seasons"],
-      episode: ["live_tv", "Episodes"],
-      episodes: ["live_tv", "Episodes"],
-      "read-only": ["lock", "Read only"],
-      smart: ["auto_awesome", "Smart list"],
+      playlist: ["queue_music", T("playlists.listType.playlist")],
+      regular: ["list_alt", T("playlists.res.regular")],
+      watchlist: ["bookmark", T("playlists.listType.watchlist")],
+      discovery: ["travel_explore", T("playlists.res.discoverySource")],
+      liked_list: ["favorite", T("playlists.listType.liked")],
+      followed_list: ["bookmark_added", T("playlists.listType.followed")],
+      public_list: ["public", T("playlists.listType.public")],
+      collaboration: ["group", T("playlists.listType.shared")],
+      collection: ["collections_bookmark", T("playlists.listType.collection")],
+      cloud_list: ["cloud", T("playlists.cloudList")],
+      movie: ["movie", T("playlists.type.movies")],
+      movies: ["movie", T("playlists.type.movies")],
+      show: ["tv", T("playlists.type.shows")],
+      shows: ["tv", T("playlists.type.shows")],
+      season: ["video_library", T("playlists.res.seasons")],
+      seasons: ["video_library", T("playlists.res.seasons")],
+      episode: ["live_tv", T("playlists.res.episodes")],
+      episodes: ["live_tv", T("playlists.res.episodes")],
+      "read-only": ["lock", T("playlists.res.readOnly")],
+      smart: ["auto_awesome", T("playlists.res.smart")],
     };
     return raw.map((value) => {
       const key = String(value || "").toLowerCase();
@@ -1402,11 +1406,11 @@
       return !search || text.includes(search);
     });
     if (!resources.length) {
-      list.innerHTML = `<div class="pl-resource-empty">No playlists found.</div>`;
+      list.innerHTML = `<div class="pl-resource-empty">${TH("playlists.noPlaylistsFound")}</div>`;
       return;
     }
     if (!visible.length) {
-      list.innerHTML = `<div class="pl-resource-empty">No playlists match this search.</div>`;
+      list.innerHTML = `<div class="pl-resource-empty">${TH("playlists.noPlaylistsMatch")}</div>`;
       return;
     }
     list.innerHTML = visible.map((r) => {
@@ -1420,7 +1424,7 @@
           <span class="pl-resource-main">
             <span class="pl-resource-name">${esc(r.name || r.id || "-")}${r.extra && r.extra.item_count != null ? ` <span class="pl-muted">· ${esc(r.extra.item_count)} items</span>` : ""}</span>
           </span>
-          <span class="pl-resource-badges" aria-label="Playlist properties">
+          <span class="pl-resource-badges" aria-label="${TH("playlists.playlistProperties")}">
             ${badges.map((badge) => `<span class="pl-resource-badge material-symbols-rounded" title="${esc(badge.title)}" aria-label="${esc(badge.title)}" data-kind="${esc(badge.key)}">${esc(badge.icon)}</span>`).join("")}
           </span>
         </button>
@@ -1444,7 +1448,7 @@
       if (linkInput) linkInput.placeholder = providerLinkExample(provider);
       linkBtn.disabled = creating || (managing && !linking);
       linkBtn.classList.toggle("active", linking);
-      linkBtn.title = linkBtn.disabled ? "Finish or cancel the current provider playlist action first" : "Add a list from a link";
+      linkBtn.title = linkBtn.disabled ? T("playlists.manage.finishFirst") : T("playlists.manage.addFromLink");
     }
     const selected = selectedEndpointResources(root);
     const editOk = !creating && !managing && selected.length === 1 && !!(selected[0].can_rename || selected[0].can_edit_privacy);
@@ -1452,19 +1456,19 @@
     if (createBtn) {
       createBtn.disabled = !canCreate || managing;
       createBtn.classList.toggle("active", creating);
-      createBtn.title = managing ? "Finish or cancel the current provider playlist action first" : (canCreate ? "Create provider playlist" : "Creating provider playlists is not supported for this provider");
+      createBtn.title = managing ? T("playlists.manage.finishFirst") : (canCreate ? T("playlists.manage.create") : T("playlists.manage.createUnsupported"));
     }
     if (editBtn) {
       editBtn.disabled = !editOk;
-      editBtn.title = creating || managing ? "Finish or cancel the current provider playlist action first"
-        : (!selected.length ? "Select one provider playlist to rename"
-          : (selected.length > 1 ? "Select exactly one playlist to rename" : (selected[0].can_rename ? "Rename selected provider playlist" : (selected[0].can_edit_privacy ? "Change the privacy of the selected provider playlist" : "Selected playlist cannot be renamed"))));
+      editBtn.title = creating || managing ? T("playlists.manage.finishFirst")
+        : (!selected.length ? T("playlists.manage.selectOneRename")
+          : (selected.length > 1 ? T("playlists.manage.selectExactlyOne") : (selected[0].can_rename ? T("playlists.manage.rename") : (selected[0].can_edit_privacy ? T("playlists.manage.changePrivacy") : T("playlists.manage.cannotRename")))));
     }
     if (deleteBtn) {
       deleteBtn.disabled = !deleteOk;
-      deleteBtn.title = creating || managing ? "Finish or cancel the current provider playlist action first"
-        : (!selected.length ? "Select one or more provider playlists to delete"
-          : (deleteOk ? "Delete selected provider playlist(s)" : "One or more selected playlists cannot be deleted"));
+      deleteBtn.title = creating || managing ? T("playlists.manage.finishFirst")
+        : (!selected.length ? T("playlists.manage.selectDelete")
+          : (deleteOk ? T("playlists.manage.deleteSelected") : T("playlists.manage.cannotDelete")));
     }
   }
 
@@ -1481,7 +1485,7 @@
     if (!submit) return;
     const err = endpointCreateMode(root) ? playlistNameError(val("#pl-ep-create-name", root)) : "";
     submit.disabled = !!err;
-    submit.title = err || "Create this playlist with the selected provider";
+    submit.title = err || T("playlists.manage.createHint");
   }
 
   function syncEndpointManagePanel(root) {
@@ -1494,12 +1498,12 @@
       const err = mode === "edit" && editNameChanged(root) ? playlistNameError(editValue) : "";
       applyFieldError(editName, err, `${String(editValue || "").trim().length}/${PLAYLIST_NAME_MAX} characters`);
       editSubmit.disabled = !!err;
-      editSubmit.title = err || "Save the changes to this provider playlist";
+      editSubmit.title = err || T("playlists.manage.saveHint");
     }
     if (deleteSubmit) {
       const ids = root.__plDeleteResourceIds || [];
       deleteSubmit.disabled = mode !== "delete" || !ids.length;
-      deleteSubmit.title = ids.length ? "Delete selected provider playlist(s)" : "No playlists selected";
+      deleteSubmit.title = ids.length ? T("playlists.manage.deleteSelected") : T("playlists.manage.noneSelected");
     }
   }
 
@@ -1530,10 +1534,10 @@
       setEndpointCreateMode(root, false);
       await loadEndpointResources(root, resource.id || "", isEdit);
     } catch (error) {
-      setModalError(error && error.message ? error.message : "Could not create provider playlist.");
+      setModalError(error && error.message ? error.message : T("playlists.manage.createFailed"));
     } finally {
       if (submit) {
-        submit.innerHTML = submit.dataset.originalText || `<span class="material-symbols-rounded" aria-hidden="true">add</span>Create playlist`;
+        submit.innerHTML = submit.dataset.originalText || `<span class="material-symbols-rounded" aria-hidden="true">add</span>${TH("playlists.ui.createPlaylist")}`;
         delete submit.dataset.originalText;
       }
       syncEndpointCreatePanel(root);
@@ -1546,7 +1550,7 @@
     const submit = $("#pl-ep-link-submit", root);
     const ref = String(val("#pl-ep-link-ref", root) || "").trim();
     if (!ref) {
-      applyFieldError(input, "Paste a link to the list.", "");
+      applyFieldError(input, T("playlists.pasteLinkError"), "");
       return;
     }
     const provider = val("#pl-ep-provider", root);
@@ -1565,7 +1569,7 @@
       setEndpointManageMode(root, "");
       await loadEndpointResources(root, resource.id || "", isEdit);
     } catch (error) {
-      applyFieldError(input, error && error.message ? error.message : "Could not find that list.", "");
+      applyFieldError(input, error && error.message ? error.message : T("playlists.listNotFound"), "");
     } finally {
       if (submit) submit.disabled = false;
       syncModalPrimary(ctx);
@@ -1612,7 +1616,7 @@
       setEndpointManageMode(root, "");
       await loadEndpointResources(root, resource.id || playlistId, isEdit);
     } catch (error) {
-      setModalError(error && error.message ? error.message : "Could not save the provider playlist changes.");
+      setModalError(error && error.message ? error.message : T("playlists.manage.saveFailed"));
       if (changes.name && changes.privacy) {
         try {
           await loadEndpointResources(root, playlistId, isEdit);
@@ -1622,7 +1626,7 @@
       }
     } finally {
       if (submit) {
-        submit.innerHTML = submit.dataset.originalText || `<span class="material-symbols-rounded" aria-hidden="true">check</span>Save changes`;
+        submit.innerHTML = submit.dataset.originalText || `<span class="material-symbols-rounded" aria-hidden="true">check</span>${TH("playlists.ui.saveChanges")}`;
         delete submit.dataset.originalText;
       }
       syncEndpointManagePanel(root);
@@ -1653,10 +1657,10 @@
       setEndpointManageMode(root, "");
       await loadEndpointResources(root, "", isEdit);
     } catch (error) {
-      setModalError(error && error.message ? error.message : "Could not delete provider playlist.");
+      setModalError(error && error.message ? error.message : T("playlists.manage.deleteFailed"));
     } finally {
       if (submit) {
-        submit.innerHTML = submit.dataset.originalText || `<span class="material-symbols-rounded" aria-hidden="true">delete</span>Delete`;
+        submit.innerHTML = submit.dataset.originalText || `<span class="material-symbols-rounded" aria-hidden="true">delete</span>${TH("playlists.ui.delete")}`;
         delete submit.dataset.originalText;
       }
       syncEndpointManagePanel(root);
@@ -1672,7 +1676,7 @@
     const logo = providerLogo(provider);
     const rawType = String(ep.playlist_type || ep.endpoint_type || ep.kind || ep.source_kind || option?.dataset?.type || "").toLowerCase();
     const isWatchlist = rawType.includes("watchlist") || String(playlist || "").toLowerCase() === "watchlist";
-    const typeBadge = endpointIsDiscovery(ep) ? "Discovery" : isWatchlist ? "Watchlist" : (!["", "regular", "playlist"].includes(rawType) ? titleize(rawType) : "");
+    const typeBadge = endpointIsDiscovery(ep) ? T("playlists.listType.discovery") : isWatchlist ? T("playlists.listType.watchlist") : (!["", "regular", "playlist"].includes(rawType) ? titleize(rawType) : "");
     const note = playlist && playlist !== label && !isWatchlist ? playlist : "";
     return {
       label,
@@ -1686,7 +1690,7 @@
 
   function mappingEndpointName(id) {
     const ep = endpointById(id) || {};
-    return ep.name || ep.playlist_name || ep.playlist_id || id || "Endpoint";
+    return ep.name || ep.playlist_name || ep.playlist_id || id || T("playlists.col.endpoint");
   }
 
   function generatedMappingName(sourceId, targetId) {
@@ -1721,32 +1725,32 @@
     const instances = instancesFor(provider);
     const instance = seed.instance || instances[0] || "default";
     const simple = !state.advanced;
-    const title = simple ? (isEdit ? "Change list" : "Add a list") : isEdit ? "Edit playlist endpoint" : "Create playlist endpoint";
+    const title = simple ? (isEdit ? T("playlists.changeList") : T("playlists.ep.addList")) : isEdit ? T("playlists.ep.editTitle") : T("playlists.ep.createTitle");
     const description = simple
-      ? (isEdit ? "Pick the provider list to use." : "Pick the provider lists you want to sync.")
-      : isEdit ? "Update the provider playlist used by this endpoint." : "Connect one or more provider playlists as reusable endpoints.";
+      ? (isEdit ? T("playlists.ep.pickOne") : T("playlists.ep.pickMany"))
+      : isEdit ? T("playlists.ep.updateHint") : T("playlists.ep.connectHint");
     const endpointName = isEdit ? (seed.name || seed.id || "") : nextEndpointName();
     const body = `
       <div class="pl-endpoint-wizard">
         <section class="pl-endpoint-step">
-          <div class="pl-step-head"><span class="pl-step-index">1</span><div>${simple ? "<b>Provider</b><span>Where the list lives.</span>" : "<b>Endpoint details</b><span>Name uses the next available endpoint number and can be edited.</span>"}</div></div>
+          <div class="pl-step-head"><span class="pl-step-index">1</span><div>${simple ? "<b>" + TH("playlists.col.provider") + "</b><span>" + TH("playlists.ep.whereLives") + "</span>" : "<b>" + TH("playlists.ep.details") + "</b><span>" + TH("playlists.ep.nameHint") + "</span>"}</div></div>
           <div class="pl-form">
             <div class="pl-field full" ${simple ? "hidden" : ""}>
-              <label for="pl-ep-name">Endpoint name <span aria-hidden="true">*</span></label>
-              <input id="pl-ep-name" maxlength="${NAME_MAX}" value="${esc(endpointName)}" placeholder="Enter endpoint name" aria-describedby="pl-ep-name-error">
+              <label for="pl-ep-name">${TH("playlists.ep.name")} <span aria-hidden="true">*</span></label>
+              <input id="pl-ep-name" maxlength="${NAME_MAX}" value="${esc(endpointName)}" placeholder="${TH("playlists.ep.namePlaceholder")}" aria-describedby="pl-ep-name-error">
               <div class="pl-field-error" id="pl-ep-name-error"></div>
             </div>
             <div class="pl-field full">
-              <label for="pl-ep-provider">Provider <span aria-hidden="true">*</span></label>
-              <select id="pl-ep-provider">${selectOptions(providers, provider, providers.length ? "" : "No providers configured")}</select>
+              <label for="pl-ep-provider">${TH("playlists.col.provider")} <span aria-hidden="true">*</span></label>
+              <select id="pl-ep-provider">${selectOptions(providers, provider, providers.length ? "" : T("playlists.ep.noProviders"))}</select>
             </div>
           </div>
         </section>
         <section class="pl-endpoint-step" id="pl-ep-instance-step">
-          <div class="pl-step-head"><span class="pl-step-index">2</span><div>${simple ? "<b>Instance</b><span>The account that owns the list.</span>" : "<b>Provider instance</b><span>Use the instance that owns the provider playlists.</span>"}</div></div>
+          <div class="pl-step-head"><span class="pl-step-index">2</span><div>${simple ? "<b>" + TH("playlists.col.instance") + "</b><span>" + TH("playlists.ep.owner") + "</span>" : "<b>" + TH("playlists.ep.providerInstance") + "</b><span>" + TH("playlists.ep.instanceHint") + "</span>"}</div></div>
           <div class="pl-form">
             <div class="pl-field full">
-              <label for="pl-ep-instance">Provider instance <span aria-hidden="true">*</span></label>
+              <label for="pl-ep-instance">${TH("playlists.ep.providerInstance")} <span aria-hidden="true">*</span></label>
               <select id="pl-ep-instance">${selectOptions(instances.map((x) => ({ value: x, label: x })), instance)}</select>
             </div>
           </div>
@@ -1754,80 +1758,80 @@
         <section class="pl-endpoint-step" id="pl-ep-resource-wrap">
           <div class="pl-step-head with-actions">
             <span class="pl-step-index">3</span>
-            <div>${simple ? `<b>List</b><span>${isEdit ? "Choose the list." : "Choose one or more lists."}</span>` : `<b>Select provider playlists</b><span>${isEdit ? "Choose one playlist for this endpoint." : "Choose one or more playlists to create endpoints."}</span>`}</div>
-            <div class="pl-playlist-tools" aria-label="Provider playlist actions">
-              <button type="button" class="pl-icon-tool hidden" id="pl-ep-list-link" title="Add a list from a link" aria-label="Add a list from a link"><span class="material-symbols-rounded" aria-hidden="true">link</span></button>
-              <button type="button" class="pl-icon-tool" id="pl-ep-list-create" title="Create provider playlist" aria-label="Create provider playlist"><span class="material-symbols-rounded" aria-hidden="true">add</span></button>
-              <button type="button" class="pl-icon-tool" id="pl-ep-list-edit" title="Edit provider playlist" aria-label="Edit provider playlist"><span class="material-symbols-rounded" aria-hidden="true">edit</span></button>
-              <button type="button" class="pl-icon-tool danger" id="pl-ep-list-delete" title="Delete provider playlist" aria-label="Delete provider playlist"><span class="material-symbols-rounded" aria-hidden="true">delete</span></button>
+            <div>${simple ? `<b>${TH("playlists.col.list")}</b><span>${TH(isEdit ? "playlists.ui.chooseList" : "playlists.ui.chooseLists")}</span>` : `<b>${TH("playlists.ep.selectPlaylists")}</b><span>${TH(isEdit ? "playlists.ui.choosePlaylist" : "playlists.ui.choosePlaylists")}</span>`}</div>
+            <div class="pl-playlist-tools" aria-label="${TH("playlists.ep.actions")}">
+              <button type="button" class="pl-icon-tool hidden" id="pl-ep-list-link" title="${TH("playlists.manage.addFromLink")}" aria-label="${TH("playlists.manage.addFromLink")}"><span class="material-symbols-rounded" aria-hidden="true">link</span></button>
+              <button type="button" class="pl-icon-tool" id="pl-ep-list-create" title="${TH("playlists.manage.create")}" aria-label="${TH("playlists.manage.create")}"><span class="material-symbols-rounded" aria-hidden="true">add</span></button>
+              <button type="button" class="pl-icon-tool" id="pl-ep-list-edit" title="${TH("playlists.ep.edit")}" aria-label="${TH("playlists.ep.edit")}"><span class="material-symbols-rounded" aria-hidden="true">edit</span></button>
+              <button type="button" class="pl-icon-tool danger" id="pl-ep-list-delete" title="${TH("playlists.ep.delete")}" aria-label="${TH("playlists.ep.delete")}"><span class="material-symbols-rounded" aria-hidden="true">delete</span></button>
             </div>
           </div>
           <input type="checkbox" id="pl-ep-create" hidden>
           <div class="pl-warning hidden" id="pl-ep-simkl-warning">${esc(SIMKL_PLAYLIST_WARNING)}</div>
           <div class="pl-create-panel hidden" id="pl-ep-create-panel">
             <div class="pl-field">
-              <label for="pl-ep-create-name">New playlist name</label>
-              <input id="pl-ep-create-name" maxlength="${PLAYLIST_NAME_MAX}" value="${esc(seed.playlist_name || seed.name || "")}" placeholder="New playlist name" aria-describedby="pl-ep-create-name-error">
+              <label for="pl-ep-create-name">${TH("playlists.newPlaylistName")}</label>
+              <input id="pl-ep-create-name" maxlength="${PLAYLIST_NAME_MAX}" value="${esc(seed.playlist_name || seed.name || "")}" placeholder="${TH("playlists.newPlaylistName")}" aria-describedby="pl-ep-create-name-error">
               <div class="pl-field-error" id="pl-ep-create-name-error"></div>
             </div>
             <div class="pl-field" id="pl-ep-create-type-wrap">
-              <label for="pl-ep-create-type">New list type</label>
+              <label for="pl-ep-create-type">${TH("playlists.ep.newListType")}</label>
               <select id="pl-ep-create-type"></select>
-              <div class="pl-help" id="pl-ep-create-type-help">Collections group titles in the library, playlists keep their own order.</div>
+              <div class="pl-help" id="pl-ep-create-type-help">${TH("playlists.ep.collectionsHint")}</div>
             </div>
             <div class="pl-field hidden" id="pl-ep-create-privacy-wrap">
-              <label for="pl-ep-create-privacy">Privacy</label>
+              <label for="pl-ep-create-privacy">${TH("playlists.ep.privacy")}</label>
               <select id="pl-ep-create-privacy"></select>
             </div>
             <div class="pl-create-actions">
-              <button type="button" class="pl-btn small" id="pl-ep-create-cancel">Cancel</button>
-              <button type="button" class="pl-btn small primary" id="pl-ep-create-submit"><span class="material-symbols-rounded" aria-hidden="true">add</span>Create playlist</button>
+              <button type="button" class="pl-btn small" id="pl-ep-create-cancel">${TH("playlists.cancel")}</button>
+              <button type="button" class="pl-btn small primary" id="pl-ep-create-submit"><span class="material-symbols-rounded" aria-hidden="true">add</span>${TH("playlists.ep.createPlaylist")}</button>
             </div>
           </div>
           <div class="pl-create-panel pl-resource-manage-panel hidden" id="pl-ep-edit-panel">
             <div class="pl-field full" id="pl-ep-edit-name-wrap">
-              <label for="pl-ep-edit-name">Playlist name</label>
-              <input id="pl-ep-edit-name" maxlength="${PLAYLIST_NAME_MAX}" value="" placeholder="Playlist name" aria-describedby="pl-ep-edit-name-error">
+              <label for="pl-ep-edit-name">${TH("playlists.ep.playlistName")}</label>
+              <input id="pl-ep-edit-name" maxlength="${PLAYLIST_NAME_MAX}" value="" placeholder="${TH("playlists.ep.playlistName")}" aria-describedby="pl-ep-edit-name-error">
               <div class="pl-field-error" id="pl-ep-edit-name-error"></div>
             </div>
             <div class="pl-field full hidden" id="pl-ep-edit-privacy-wrap">
-              <label for="pl-ep-edit-privacy">Privacy</label>
+              <label for="pl-ep-edit-privacy">${TH("playlists.ep.privacy")}</label>
               <select id="pl-ep-edit-privacy"></select>
             </div>
             <div class="pl-create-actions">
-              <button type="button" class="pl-btn small" id="pl-ep-edit-cancel">Cancel</button>
-              <button type="button" class="pl-btn small primary" id="pl-ep-edit-submit"><span class="material-symbols-rounded" aria-hidden="true">check</span>Save changes</button>
+              <button type="button" class="pl-btn small" id="pl-ep-edit-cancel">${TH("playlists.cancel")}</button>
+              <button type="button" class="pl-btn small primary" id="pl-ep-edit-submit"><span class="material-symbols-rounded" aria-hidden="true">check</span>${TH("playlists.ep.saveChanges")}</button>
             </div>
           </div>
           <div class="pl-create-panel pl-resource-manage-panel hidden" id="pl-ep-link-panel">
             <div class="pl-field full">
-              <label for="pl-ep-link-ref">List link</label>
-              <input id="pl-ep-link-ref" placeholder="Paste a list link" autocomplete="off" aria-describedby="pl-ep-link-ref-error">
+              <label for="pl-ep-link-ref">${TH("playlists.ep.listLink")}</label>
+              <input id="pl-ep-link-ref" placeholder="${TH("playlists.pasteLink")}" autocomplete="off" aria-describedby="pl-ep-link-ref-error">
               <div class="pl-field-error" id="pl-ep-link-ref-error"></div>
             </div>
             <div class="pl-create-actions">
-              <button type="button" class="pl-btn small" id="pl-ep-link-cancel">Cancel</button>
-              <button type="button" class="pl-btn small primary" id="pl-ep-link-submit"><span class="material-symbols-rounded" aria-hidden="true">add_link</span>Add list</button>
+              <button type="button" class="pl-btn small" id="pl-ep-link-cancel">${TH("playlists.cancel")}</button>
+              <button type="button" class="pl-btn small primary" id="pl-ep-link-submit"><span class="material-symbols-rounded" aria-hidden="true">add_link</span>${TH("playlists.addList")}</button>
             </div>
           </div>
           <div class="pl-create-panel pl-resource-manage-panel danger hidden" id="pl-ep-delete-panel">
             <div class="pl-resource-delete-copy">
-              <b>Delete provider playlist?</b>
-              <span>This removes the playlist from the provider account. CrossWatch endpoints are not deleted.</span>
+              <b>${TH("playlists.ep.deleteConfirm")}</b>
+              <span>${TH("playlists.ep.deleteHint")}</span>
               <div class="pl-resource-delete-list" id="pl-ep-delete-list"></div>
             </div>
             <div class="pl-create-actions">
-              <button type="button" class="pl-btn small" id="pl-ep-delete-cancel">Cancel</button>
-              <button type="button" class="pl-btn small danger" id="pl-ep-delete-submit"><span class="material-symbols-rounded" aria-hidden="true">delete</span>Delete</button>
+              <button type="button" class="pl-btn small" id="pl-ep-delete-cancel">${TH("playlists.cancel")}</button>
+              <button type="button" class="pl-btn small danger" id="pl-ep-delete-submit"><span class="material-symbols-rounded" aria-hidden="true">delete</span>${TH("playlists.ui.delete")}</button>
             </div>
           </div>
           <div class="pl-playlist-search">
             <span class="material-symbols-rounded" aria-hidden="true">search</span>
-            <input id="pl-ep-playlist-search" type="search" placeholder="Search playlists..." autocomplete="off">
+            <input id="pl-ep-playlist-search" type="search" placeholder="${TH("playlists.ep.search")}" autocomplete="off">
           </div>
-          <select id="pl-ep-playlist" class="pl-native-playlist-select" ${isEdit ? "" : "multiple"} hidden><option value="">Loading...</option></select>
-          <div class="pl-resource-list" id="pl-ep-resource-list" role="listbox" aria-multiselectable="${isEdit ? "false" : "true"}"><div class="pl-resource-empty">Loading playlists...</div></div>
-          <div class="pl-help" id="pl-ep-playlist-help">${isEdit ? "Select one provider playlist." : "Select one or more provider playlists to create endpoints."}</div>
+          <select id="pl-ep-playlist" class="pl-native-playlist-select" ${isEdit ? "" : "multiple"} hidden><option value="">${TH("playlists.loading")}</option></select>
+          <div class="pl-resource-list" id="pl-ep-resource-list" role="listbox" aria-multiselectable="${isEdit ? "false" : "true"}"><div class="pl-resource-empty">${TH("playlists.ep.loadingPlaylists")}</div></div>
+          <div class="pl-help" id="pl-ep-playlist-help">${isEdit ? T("playlists.ep.selectOne") : T("playlists.ep.selectMany")}</div>
           <div class="pl-field-error" id="pl-ep-playlist-error"></div>
         </section>
       </div>
@@ -1838,8 +1842,8 @@
       body,
       trigger,
       width: "760px",
-      primaryText: simple ? (isEdit ? "Save" : "Add list") : isEdit ? "Save endpoint" : "Create endpoint",
-      savingText: "Saving endpoint...",
+      primaryText: simple ? (isEdit ? T("playlists.save") : T("playlists.addList")) : isEdit ? T("playlists.ep.save") : T("playlists.ep.create"),
+      savingText: T("playlists.ep.saving"),
       onOpen: (ctx) => hydrateEndpointModal(ctx, seed, isEdit, provider, instance),
       onPrimary: async (ctx) => saveEndpointFromModal(ctx, seed, isEdit),
     });
@@ -1851,7 +1855,7 @@
     root.dataset.epEditId = isEdit ? (seed.id || "") : "";
     root.dataset.epSingleSelect = isEdit ? "1" : "";
     root.dataset.epNameDirty = isEdit ? "1" : "";
-    bindNameValidation(ctx, "#pl-ep-name", "Endpoint name");
+    bindNameValidation(ctx, "#pl-ep-name", T("playlists.ep.name"));
     const providerSelect = $("#pl-ep-provider", root);
     const instanceSelect = $("#pl-ep-instance", root);
     const createCheck = $("#pl-ep-create", root);
@@ -1865,15 +1869,15 @@
     };
     addModalValidator(ctx, validateCreateName);
     addModalValidator(ctx, () => {
-      const err = endpointCreateMode(root) || selectedValues("#pl-ep-playlist", root).length ? "" : "Select at least one provider playlist.";
+      const err = endpointCreateMode(root) || selectedValues("#pl-ep-playlist", root).length ? "" : T("playlists.ep.selectAtLeastOne");
       const list = $("#pl-ep-resource-list", root);
       const feedback = $("#pl-ep-playlist-error", root);
       if (list) list.classList.toggle("invalid", !!err);
       if (feedback) feedback.textContent = err;
       return err;
     });
-    addModalValidator(ctx, () => endpointCreateMode(root) ? "Create or cancel the provider playlist before creating the endpoint." : "");
-    addModalValidator(ctx, () => endpointManageMode(root) ? "Save or cancel the provider playlist action before creating the endpoint." : "");
+    addModalValidator(ctx, () => endpointCreateMode(root) ? T("playlists.ep.createOrCancel") : "");
+    addModalValidator(ctx, () => endpointManageMode(root) ? T("playlists.ep.saveOrCancel") : "");
     const updateInstances = () => {
       const list = instancesFor(providerSelect.value);
       instanceSelect.innerHTML = selectOptions(list.map((x) => ({ value: x, label: x })), list.includes(instanceSelect.value) ? instanceSelect.value : (list[0] || "default"));
@@ -1896,7 +1900,7 @@
       select.innerHTML = selectOptions(types.map((t) => ({ value: t, label: createTypeLabel(t) })), types.includes(current) ? current : types[0]);
       wrap.classList.toggle("hidden", types.length <= 1);
       const help = $("#pl-ep-create-type-help", root);
-      if (help) help.textContent = types.includes("cloud_list") ? "Cloud lists can include titles outside your server and have their own privacy settings. Playlists use your server's media." : (types.every((t) => CREATE_TYPE_LABELS[t]) ? "A list holds one kind of title. This cannot be changed later." : "Collections group titles in the library, playlists keep their own order.");
+      if (help) help.textContent = types.includes("cloud_list") ? T("playlists.ep.cloudHint") : (types.every((t) => CREATE_TYPE_LABELS[t]) ? T("playlists.ep.oneKind") : T("playlists.ep.collectionsHint"));
       window.CW?.IconSelect?.enhance?.(select, { className: "cw-plain-select" });
       updateCreatePrivacy();
     };
@@ -1990,7 +1994,7 @@
   async function loadEndpointResources(root, selected, isEdit) {
     const select = $("#pl-ep-playlist", root);
     const help = $("#pl-ep-playlist-help", root);
-    select.innerHTML = `<option value="">Loading...</option>`;
+    select.innerHTML = `<option value="">${TH("playlists.loading")}</option>`;
     root.__plEndpointResources = [];
     renderEndpointResourceList(root);
     const provider = val("#pl-ep-provider", root);
@@ -2008,14 +2012,14 @@
           const found = await API.resourceResolve(provider, instance, selected);
           if (found.resource && !has(found.resource.id)) resources.push(found.resource);
         } catch (err) {
-          resolveError = err && err.message ? err.message : "The saved list could not be found.";
+          resolveError = err && err.message ? err.message : T("playlists.ep.savedNotFound");
         }
       }
       if (stale()) return;
       root.__plEndpointResources = resources;
       if (!resources.length) {
-        select.innerHTML = `<option value="">No playlists found</option>`;
-        help.textContent = "No readable provider playlists were returned for this instance.";
+        select.innerHTML = `<option value="">${TH("playlists.ep.noneFound")}</option>`;
+        help.textContent = T("playlists.ep.noneReadable");
         refreshEndpointResourceSelection(root, root.__plEndpointCtx);
         return;
       }
@@ -2025,11 +2029,11 @@
         const shouldSelect = selected ? r.id === selected : (!isEdit && resources[0] && r.id === resources[0].id);
         return `<option value="${esc(r.id)}" data-name="${esc(r.name || r.id)}" data-type="${esc(endpointType || "playlist")}" data-media-types="${esc((r.media_types || []).join(","))}" data-kind="${esc(r.kind || "regular")}" ${shouldSelect ? "selected" : ""}>${esc(r.name || r.id)}${caps.length ? ` (${esc(caps.join("/"))})` : ""}</option>`;
       }).join("");
-      help.textContent = resolveError || (isEdit ? "Select one provider playlist." : "Select one or more provider playlists to create endpoints.");
+      help.textContent = resolveError || (isEdit ? T("playlists.ep.selectOne") : T("playlists.ep.selectMany"));
     } catch (err) {
       if (stale()) return;
-      select.innerHTML = `<option value="">Could not load playlists</option>`;
-      help.textContent = err && err.message ? err.message : "Provider playlist loading failed.";
+      select.innerHTML = `<option value="">${TH("playlists.ep.loadFailed")}</option>`;
+      help.textContent = err && err.message ? err.message : T("playlists.ep.loadFailedDetail");
       root.__plEndpointResources = [];
     }
     root.__plEndpointCtx = root.__plEndpointCtx || state.modal;
@@ -2042,9 +2046,9 @@
     const provider = val("#pl-ep-provider", root);
     const instance = val("#pl-ep-instance", root) || "default";
     const name = val("#pl-ep-name", root);
-    const nameErr = nameFieldError(name, "Endpoint name");
+    const nameErr = nameFieldError(name, T("playlists.ep.name"));
     if (nameErr) throw new Error(nameErr);
-    if (!provider) throw new Error("Provider is required.");
+    if (!provider) throw new Error(T("playlists.ep.providerRequired"));
     if (create) {
       const createName = val("#pl-ep-create-name", root);
       const createNameErr = playlistNameError(createName);
@@ -2054,8 +2058,8 @@
       await API.epUpsert({ id: isEdit ? seed.id : "", name: name || nextEndpointName(0, isEdit ? seed.id : ""), provider, instance, create: true, create_name: createName, media_type: createType, ...privacy });
     } else {
       const ids = selectedValues("#pl-ep-playlist", root);
-      if (!ids.length) throw new Error("Select at least one playlist.");
-      if (isEdit && ids.length !== 1) throw new Error("Edit mode can only save one selected playlist.");
+      if (!ids.length) throw new Error(T("playlists.ep.selectAtLeastOnePlaylist"));
+      if (isEdit && ids.length !== 1) throw new Error(T("playlists.ep.editOnlyOne"));
       for (const [index, playlistId] of ids.entries()) {
         const opt = Array.from($("#pl-ep-playlist", root).options || []).find((o) => o.value === playlistId);
         const playlistName = opt ? opt.dataset.name || opt.textContent : playlistId;
@@ -2079,7 +2083,7 @@
       await API.epSync(id);
       await refreshOverview(["endpoints", "activity"]);
     } catch (err) {
-      openNotice("Refresh failed", err && err.message ? err.message : "Could not refresh this endpoint.", btn);
+      openNotice(T("playlists.ep.refreshFailed"), err && err.message ? err.message : T("playlists.ep.refreshFailedDetail"), btn);
     } finally {
       state.runningEndpoints.delete(id);
       const freshRoot = $("#page-playlists");
@@ -2092,20 +2096,20 @@
     const used = state.mappings.filter((m) => mappingUsesEndpoint(m, endpoint.id));
     const body = `
       <div class="pl-confirm-lines">
-        <div><b>Endpoint:</b> ${esc(endpoint.name || endpoint.id)}</div>
-        <div><b>Provider:</b> ${esc(endpoint.provider_label || providerLabel(endpoint.provider))}</div>
-        <div><b>Selected playlist:</b> ${esc(endpoint.playlist_name || endpoint.playlist_id || "-")}</div>
-        <div><b>Mappings using endpoint:</b> ${esc(used.length)}</div>
-        ${used.length ? `<div class="pl-warning">This endpoint is used by ${esc(used.map((m) => m.name || m.id).join(", "))}. The backend will block deletion until those mappings are changed or removed.</div>` : `<div>Deleting the endpoint does not delete the provider playlist.</div>`}
+        <div><b>${TH("playlists.del.endpoint")}</b> ${esc(endpoint.name || endpoint.id)}</div>
+        <div><b>${TH("playlists.del.provider")}</b> ${esc(endpoint.provider_label || providerLabel(endpoint.provider))}</div>
+        <div><b>${TH("playlists.del.selectedPlaylist")}</b> ${esc(endpoint.playlist_name || endpoint.playlist_id || "-")}</div>
+        <div><b>${TH("playlists.del.mappingsUsing")}</b> ${esc(used.length)}</div>
+        ${used.length ? `<div class="pl-warning">${TH("playlists.ui.usedBy", {names: used.map((m) => m.name || m.id).join(", ")})}</div>` : `<div>${TH("playlists.del.endpointNote")}</div>`}
       </div>
     `;
     openModal({
-      title: "Delete playlist endpoint",
-      description: "Confirm removal of this CrossWatch endpoint.",
+      title: T("playlists.del.endpointTitle"),
+      description: T("playlists.del.endpointConfirm"),
       body,
       trigger,
-      primaryText: "Delete endpoint",
-      savingText: "Deleting...",
+      primaryText: T("playlists.deleteEndpoint"),
+      savingText: T("playlists.deleting"),
       onPrimary: async () => {
         await API.epDelete(endpoint.id);
         closeModal(true);
@@ -2116,7 +2120,7 @@
 
   function openMappingModal({ mapping = null, clone = false, draft = null, trigger = null, onDone = null } = {}) {
     if (state.endpoints.length < 2) {
-      openNotice("Create playlist mapping", "At least two endpoints are required before you can create a mapping.", trigger);
+      openNotice(T("playlists.createMapping"), T("playlists.map.needTwo"), trigger);
       return;
     }
     const seed = draft || mapping || {};
@@ -2124,71 +2128,71 @@
     const source = seed.source_endpoint || (state.endpoints[0] && state.endpoints[0].id) || "";
     const targets = seed.target_endpoints || (state.endpoints.find((e) => e.id !== source) ? [state.endpoints.find((e) => e.id !== source).id] : []);
     const target = targets.find((id) => id !== source) || targets[0] || "";
-    const title = isEdit ? "Edit playlist mapping" : "Create playlist mapping";
-    const endpointOpts = state.endpoints.map((ep) => ({ value: ep.id, label: `${ep.name || ep.id} (${ep.provider}${endpointIsDiscovery(ep) ? " discovery" : ""})` }));
-    const rulesetOpts = [{ value: "", label: "Direct one way" }].concat(state.rulesets.map((rs) => ({ value: rs.id, label: `${rs.name}${rs.built_in ? " (built in)" : ""}` })));
+    const title = isEdit ? T("playlists.map.editTitle") : T("playlists.createMapping");
+    const endpointOpts = state.endpoints.map((ep) => ({ value: ep.id, label: `${ep.name || ep.id} (${ep.provider}${endpointIsDiscovery(ep) ? ` ${T("playlists.discoveryLower")}` : ""})` }));
+    const rulesetOpts = [{ value: "", label: T("playlists.map.directOneWay") }].concat(state.rulesets.map((rs) => ({ value: rs.id, label: `${rs.name}${rs.built_in ? ` ${T("playlists.builtInParen")}` : ""}` })));
     const keepSeedName = isEdit || !!draft;
     const mappingName = keepSeedName ? (seed.name || seed.id || "") : nextMappingName();
     const body = `
       <div class="pl-mapping-wizard">
         <section class="pl-mapping-step">
-          <div class="pl-step-head"><span class="pl-step-index">1</span><div><b>Mapping details</b><span>Name uses the next available mapping number and can be edited.</span></div></div>
+          <div class="pl-step-head"><span class="pl-step-index">1</span><div><b>${TH("playlists.map.details")}</b><span>${TH("playlists.map.nameHint")}</span></div></div>
           <div class="pl-form">
             <div class="pl-field full">
-              <label for="pl-map-name">Mapping name <span aria-hidden="true">*</span></label>
-              <input id="pl-map-name" maxlength="${NAME_MAX}" value="${esc(mappingName)}" placeholder="Enter mapping name" aria-describedby="pl-map-name-error">
+              <label for="pl-map-name">${TH("playlists.map.name")} <span aria-hidden="true">*</span></label>
+              <input id="pl-map-name" maxlength="${NAME_MAX}" value="${esc(mappingName)}" placeholder="${TH("playlists.map.namePlaceholder")}" aria-describedby="pl-map-name-error">
               <div class="pl-field-error" id="pl-map-name-error"></div>
             </div>
           </div>
         </section>
         <section class="pl-mapping-step">
-          <div class="pl-step-head"><span class="pl-step-index">2</span><div><b>Mapping configuration</b><span>Choose a source endpoint and the destination that should receive updates.</span></div></div>
+          <div class="pl-step-head"><span class="pl-step-index">2</span><div><b>${TH("playlists.map.config")}</b><span>${TH("playlists.map.configHint")}</span></div></div>
           <div class="pl-map-grid">
             <div class="pl-field">
-              <label for="pl-map-source">Source endpoint <span aria-hidden="true">*</span></label>
+              <label for="pl-map-source">${TH("playlists.map.source")} <span aria-hidden="true">*</span></label>
               <select id="pl-map-source">${selectOptions(endpointOpts, source)}</select>
             </div>
             <div class="pl-field">
-              <label for="pl-map-targets">Destination endpoint <span aria-hidden="true">*</span></label>
+              <label for="pl-map-targets">${TH("playlists.map.destination")} <span aria-hidden="true">*</span></label>
               <select id="pl-map-targets">${selectOptions(endpointOpts, target)}</select>
             </div>
             <div class="pl-field pl-map-advanced" id="pl-map-direction-field">
-              <label for="pl-map-direction">Direction</label>
+              <label for="pl-map-direction">${TH("playlists.col.direction")}</label>
               <select id="pl-map-direction">${selectOptions(ENUMS.direction.map(([value, label]) => ({ value, label })), (rulesetById(seed.ruleset_id || "") || {}).direction || "one_way")}</select>
             </div>
             <div class="pl-field pl-map-advanced" id="pl-map-ruleset-field">
-              <label for="pl-map-ruleset">Ruleset</label>
+              <label for="pl-map-ruleset">${TH("playlists.col.ruleset")}</label>
               <select id="pl-map-ruleset">${selectOptions(rulesetOpts, seed.ruleset_id || "")}</select>
             </div>
             <div class="pl-field pl-map-advanced" id="pl-map-membership-field">
-              <label for="pl-map-membership">Sync mode</label>
+              <label for="pl-map-membership">${TH("playlists.map.syncMode")}</label>
               <select id="pl-map-membership">${selectOptions(ENUMS.membership.map(([value, label]) => ({ value, label })), seed.membership || "managed_only")}</select>
             </div>
             <div class="pl-field pl-map-advanced" id="pl-map-order-field">
-              <label for="pl-map-order">Ordering</label>
+              <label for="pl-map-order">${TH("playlists.map.ordering")}</label>
               <select id="pl-map-order">${selectOptions(ENUMS.order.map(([value, label]) => ({ value, label })), seed.order || "ignore")}</select>
             </div>
           </div>
-          <label class="pl-map-toggle"><input type="checkbox" id="pl-map-enabled" ${seed.enabled === false ? "" : "checked"}><span class="pl-map-toggle-box"><span class="material-symbols-rounded" aria-hidden="true">check</span></span><span><b>Enabled</b><small>This mapping is active and will be synchronized.</small></span></label>
+          <label class="pl-map-toggle"><input type="checkbox" id="pl-map-enabled" ${seed.enabled === false ? "" : "checked"}><span class="pl-map-toggle-box"><span class="material-symbols-rounded" aria-hidden="true">check</span></span><span><b>${TH("playlists.enabled")}</b><small>${TH("playlists.map.enabledHint")}</small></span></label>
           <div class="pl-warning hidden" id="pl-map-simkl-warning">${esc(SIMKL_PLAYLIST_WARNING)}</div>
           <div class="pl-map-ruleset-card pl-map-advanced" id="pl-map-ruleset-actions">
             <span class="material-symbols-rounded" aria-hidden="true">shield</span>
-            <div><b>Rulesets</b><span>Rulesets define how items are matched and synchronized.</span></div>
-            <button type="button" class="pl-btn small" id="pl-map-manage-rulesets">Manage rulesets <span class="material-symbols-rounded" aria-hidden="true">chevron_right</span></button>
+            <div><b>${TH("playlists.map.rulesets")}</b><span>${TH("playlists.map.rulesetsHint")}</span></div>
+            <button type="button" class="pl-btn small" id="pl-map-manage-rulesets">${TH("playlists.map.manageRulesets")} <span class="material-symbols-rounded" aria-hidden="true">chevron_right</span></button>
           </div>
           <div class="pl-map-info"><span class="material-symbols-rounded" aria-hidden="true">info</span><div class="pl-help" id="pl-map-rule-help"></div></div>
-          <div class="pl-map-info hidden" id="pl-map-discovery-help"><span class="material-symbols-rounded" aria-hidden="true">travel_explore</span><div class="pl-help">Discovery sources use direct mirror mappings so the destination matches the feed after each successful sync.</div></div>
+          <div class="pl-map-info hidden" id="pl-map-discovery-help"><span class="material-symbols-rounded" aria-hidden="true">travel_explore</span><div class="pl-help">${TH("playlists.map.discoveryHint")}</div></div>
         </section>
       </div>
     `;
     openModal({
       title,
-      description: isEdit ? "Update the endpoints, ruleset and sync behavior for this mapping." : "Connect a source playlist endpoint to one or more destination endpoints.",
+      description: isEdit ? T("playlists.map.updateHint") : T("playlists.map.connectHint"),
       body,
       trigger,
       width: "760px",
-      primaryText: isEdit ? "Save mapping" : "Create mapping",
-      savingText: "Saving mapping...",
+      primaryText: isEdit ? T("playlists.map.save") : T("playlists.map.create"),
+      savingText: T("playlists.map.saving"),
       onCancel: () => { if (typeof onDone === "function") onDone("cancel"); },
       onOpen: (ctx) => hydrateMappingModal(ctx, seed, isEdit, keepSeedName),
       onPrimary: async (ctx) => {
@@ -2202,7 +2206,7 @@
     const root = ctx.modal;
     root.dataset.mapEditId = isEdit ? (seed.id || "") : "";
     root.dataset.mapNameDirty = keepSeedName && seed.name ? "1" : "";
-    bindNameValidation(ctx, "#pl-map-name", "Mapping name");
+    bindNameValidation(ctx, "#pl-map-name", T("playlists.map.name"));
     const refresh = () => {
       const source = val("#pl-map-source", root);
       $$("#pl-map-targets option", root).forEach((opt) => { opt.disabled = opt.value === source; });
@@ -2251,11 +2255,11 @@
           rule = null;
         }
       }
-      if (!rule) help.textContent = "Direct mappings run one way and require exactly one destination endpoint.";
-      else help.textContent = `${rule.name} supports ${ruleLabel(rule.direction)} mappings, ${rule.write_mode} writes, and up to ${rule.maximum_targets} destination endpoint(s).`;
-      if (targetEp && !endpointWritable(targetEp)) help.textContent = "Choose a writable destination endpoint.";
-      if (rule && rule.direction !== direction) help.textContent += " Change the direction or choose another ruleset before saving.";
-      if (sourceReadOnly) help.textContent += " This source is read only, so the mapping runs one way.";
+      if (!rule) help.textContent = T("playlists.map.directHelp");
+      else help.textContent = T("playlists.mapping.ruleHelp", {name: rule.name, direction: ruleLabel(rule.direction), mode: rule.write_mode, count: Number(rule.maximum_targets) || 0});
+      if (targetEp && !endpointWritable(targetEp)) help.textContent = T("playlists.map.chooseWritable");
+      if (rule && rule.direction !== direction) help.textContent += ` ${T("playlists.mapping.changeDirection")}`;
+      if (sourceReadOnly) help.textContent += ` ${T("playlists.mapping.sourceReadOnly")}`;
       enhanceMappingSelects(root);
       syncModalPrimary(ctx);
     };
@@ -2290,15 +2294,15 @@
     if (!draft.name) draft.name = nextMappingName(0, id);
     const direction = val("#pl-map-direction", root);
     const rule = rulesetById(draft.ruleset_id);
-    const nameErr = nameFieldError(draft.name, "Mapping name");
+    const nameErr = nameFieldError(draft.name, T("playlists.map.name"));
     if (nameErr) throw new Error(nameErr);
-    if (!draft.source_endpoint || !draft.target_endpoints.length) throw new Error("Source and destination endpoints are required.");
-    if (draft.target_endpoints.includes(draft.source_endpoint)) throw new Error("Source and destination endpoints must be different.");
-    if (!draft.ruleset_id && draft.target_endpoints.length !== 1) throw new Error("Direct mappings require exactly one destination endpoint.");
-    if (rule && rule.direction !== direction) throw new Error(`The selected ruleset supports ${ruleLabel(rule.direction)}, not ${ruleLabel(direction)}.`);
-    if (rule && draft.target_endpoints.length > Number(rule.maximum_targets || 1)) throw new Error("Too many destination endpoints for the selected ruleset.");
-    if (endpointIsDiscovery(endpointById(draft.source_endpoint)) && (draft.ruleset_id || draft.membership !== "mirror")) throw new Error("Discovery sources use direct mirror mappings.");
-    if (draft.target_endpoints.some((id) => !endpointWritable(endpointById(id)))) throw new Error("Destination endpoint must be writable.");
+    if (!draft.source_endpoint || !draft.target_endpoints.length) throw new Error(T("playlists.map.endpointsRequired"));
+    if (draft.target_endpoints.includes(draft.source_endpoint)) throw new Error(T("playlists.map.mustDiffer"));
+    if (!draft.ruleset_id && draft.target_endpoints.length !== 1) throw new Error(T("playlists.map.directExactlyOne"));
+    if (rule && rule.direction !== direction) throw new Error(T("playlists.mapping.rulesetSupports", {supported: ruleLabel(rule.direction), chosen: ruleLabel(direction)}));
+    if (rule && draft.target_endpoints.length > Number(rule.maximum_targets || 1)) throw new Error(T("playlists.map.tooMany"));
+    if (endpointIsDiscovery(endpointById(draft.source_endpoint)) && (draft.ruleset_id || draft.membership !== "mirror")) throw new Error(T("playlists.map.discoveryMirror"));
+    if (draft.target_endpoints.some((id) => !endpointWritable(endpointById(id)))) throw new Error(T("playlists.map.mustBeWritable"));
     const res = await API.mapUpsert({ id, ...draft });
     notifyPairsChanged({ source: "playlists", mapping_id: (res.mapping && res.mapping.id) || id, pair_id: res.pair_id || (res.mapping && res.mapping.assigned_pair) || "" });
     closeModal(true);
@@ -2321,20 +2325,20 @@
     if (!mapping) return;
     await refreshSyncSummary(false).catch(() => null);
     if (sharedSyncBusy()) {
-      openNotice("Sync already running", "A synchronization is already running. Wait for it to finish before starting another mapping.", btn);
+      openNotice(T("playlists.run.alreadyRunning"), T("playlists.run.alreadyRunningHint"), btn);
       return;
     }
     if (!mapping.assigned_pair) {
-      openNotice("Sync pair missing", "Save the mapping once so CrossWatch can create its playlist sync pair.", btn);
+      openNotice(T("playlists.run.pairMissing"), T("playlists.run.pairMissingHint"), btn);
       return;
     }
     location.hash = `interactive_sync?pair=${encodeURIComponent(mapping.assigned_pair)}&from=playlists`;
   }
 
   const SYNC_MODES = [
-    ["add_only", "Add only", "Adds missing items. Never removes anything from the destination."],
-    ["managed_only", "Keep in sync", "Adds missing items and removes the ones CrossWatch added earlier."],
-    ["mirror", "Exact copy", "Makes the destination match the source. Can remove items you added there yourself."],
+    ["add_only", T("playlists.enums.addOnly"), T("playlists.modes.addOnlyLong")],
+    ["managed_only", T("playlists.modes.keepInSync"), T("playlists.modes.keepInSyncLong")],
+    ["mirror", T("playlists.modes.exactCopy"), T("playlists.modes.exactCopyLong")],
   ];
 
   function wizardAccounts() {
@@ -2374,7 +2378,7 @@
   function openSyncWizard({ trigger = null, publish = false } = {}) {
     const accounts = wizardAccounts();
     if (!accounts.length) {
-      openNotice("No provider connected", "Connect a provider that supports playlists first.", trigger);
+      openNotice(T("playlists.wizard.noProvider"), T("playlists.wizard.noProviderHint"), trigger);
       return;
     }
     const key = (a) => `${a.provider}|${a.instance}`;
@@ -2386,39 +2390,39 @@
     const body = `
       <div class="pl-form pl-wizard">
         <section class="pl-endpoint-step">
-          <div class="pl-step-head"><span class="pl-step-index">1</span><div><b>From</b><span>The list to read.</span></div></div>
+          <div class="pl-step-head"><span class="pl-step-index">1</span><div><b>${TH("playlists.col.from")}</b><span>${TH("playlists.wizard.listToRead")}</span></div></div>
           <div class="pl-wizard-row">
-            <div class="pl-field"><label for="pl-wz-src-account">Provider</label><select id="pl-wz-src-account"><option value="">Choose a provider</option>${accountOptions(accounts)}</select></div>
-            <div class="pl-field"><label for="pl-wz-src-list">List</label><select id="pl-wz-src-list"></select></div>
+            <div class="pl-field"><label for="pl-wz-src-account">${TH("playlists.col.provider")}</label><select id="pl-wz-src-account"><option value="">${TH("playlists.wizard.chooseProvider")}</option>${accountOptions(accounts)}</select></div>
+            <div class="pl-field"><label for="pl-wz-src-list">${TH("playlists.col.list")}</label><select id="pl-wz-src-list"></select></div>
           </div>
-          <div id="pl-wz-src-link-toggle-row" hidden><button type="button" class="pl-link" id="pl-wz-src-link-toggle">+ Use a list from a link</button></div>
+          <div id="pl-wz-src-link-toggle-row" hidden><button type="button" class="pl-link" id="pl-wz-src-link-toggle">${TH("playlists.wizard.useLink")}</button></div>
           <div class="pl-wizard-row" id="pl-wz-src-link-row" hidden>
-            <div class="pl-field"><label for="pl-wz-src-link">List link</label><input id="pl-wz-src-link" placeholder="Paste a list link" autocomplete="off" aria-describedby="pl-wz-src-link-error"><div class="pl-field-error" id="pl-wz-src-link-error"></div></div>
-            <div class="pl-field"><label for="pl-wz-src-link-add">Add it as the source</label><button type="button" class="pl-btn small primary" id="pl-wz-src-link-add">Add list</button></div>
+            <div class="pl-field"><label for="pl-wz-src-link">${TH("playlists.ep.listLink")}</label><input id="pl-wz-src-link" placeholder="${TH("playlists.pasteLink")}" autocomplete="off" aria-describedby="pl-wz-src-link-error"><div class="pl-field-error" id="pl-wz-src-link-error"></div></div>
+            <div class="pl-field"><label for="pl-wz-src-link-add">${TH("playlists.wizard.addAsSource")}</label><button type="button" class="pl-btn small primary" id="pl-wz-src-link-add">${TH("playlists.addList")}</button></div>
           </div>
         </section>
         <section class="pl-endpoint-step">
-          <div class="pl-step-head"><span class="pl-step-index">2</span><div><b>To</b><span>Where the items should go.</span></div></div>
-          <div class="pl-wizard-choice" role="radiogroup" aria-label="Destination">
-            <label><input type="radio" name="pl-wz-dest" value="list" ${wizard.publish ? "" : "checked"}><span><b>A list on a provider</b><small>Plex, Trakt, MDBList and others.</small></span></label>
-            <label class="${cwAccounts.length ? "" : "is-disabled"}"><input type="radio" name="pl-wz-dest" value="publish" ${wizard.publish ? "checked" : ""} ${cwAccounts.length ? "" : "disabled"}><span><b>Kometa, Radarr, Sonarr or Kodi</b><small>${cwAccounts.length ? "Publish the list so these tools can read it." : "Needs the CrossWatch provider to be connected."}</small></span></label>
+          <div class="pl-step-head"><span class="pl-step-index">2</span><div><b>${TH("playlists.col.to")}</b><span>${TH("playlists.wizard.whereItems")}</span></div></div>
+          <div class="pl-wizard-choice" role="radiogroup" aria-label="${TH("playlists.col.destination")}">
+            <label><input type="radio" name="pl-wz-dest" value="list" ${wizard.publish ? "" : "checked"}><span><b>${TH("playlists.wizard.onProvider")}</b><small>${TH("playlists.wizard.onProviderHint")}</small></span></label>
+            <label class="${cwAccounts.length ? "" : "is-disabled"}"><input type="radio" name="pl-wz-dest" value="publish" ${wizard.publish ? "checked" : ""} ${cwAccounts.length ? "" : "disabled"}><span><b>${TH("playlists.wizard.tools")}</b><small>${cwAccounts.length ? T("playlists.wizard.toolsHint") : T("playlists.wizard.needsCw")}</small></span></label>
           </div>
           <div class="pl-wizard-row" id="pl-wz-dst-list-row">
-            <div class="pl-field"><label for="pl-wz-dst-account">Provider</label><select id="pl-wz-dst-account"><option value="">Choose a provider</option>${accountOptions(accounts)}</select></div>
-            <div class="pl-field"><label for="pl-wz-dst-list">List</label><select id="pl-wz-dst-list"></select></div>
+            <div class="pl-field"><label for="pl-wz-dst-account">${TH("playlists.col.provider")}</label><select id="pl-wz-dst-account"><option value="">${TH("playlists.wizard.chooseProvider")}</option>${accountOptions(accounts)}</select></div>
+            <div class="pl-field"><label for="pl-wz-dst-list">${TH("playlists.col.list")}</label><select id="pl-wz-dst-list"></select></div>
           </div>
-          <div id="pl-wz-new-toggle-row"><button type="button" class="pl-link" id="pl-wz-new-toggle">+ Create a new list</button><span class="pl-muted" id="pl-wz-new-none"></span></div>
+          <div id="pl-wz-new-toggle-row"><button type="button" class="pl-link" id="pl-wz-new-toggle">${TH("playlists.wizard.createNew")}</button><span class="pl-muted" id="pl-wz-new-none"></span></div>
           <div class="pl-warning" id="pl-wz-simkl-warning" hidden>${esc(SIMKL_PLAYLIST_WARNING)}</div>
           <div class="pl-wizard-row" id="pl-wz-new-row">
-            ${cwAccounts.length > 1 ? `<div class="pl-field" id="pl-wz-cw-wrap"><label for="pl-wz-cw-account">CrossWatch instance</label><select id="pl-wz-cw-account">${accountOptions(cwAccounts)}</select></div>` : ""}
-            <div class="pl-field"><label for="pl-wz-new-name">Name of the new list</label><input id="pl-wz-new-name" maxlength="${PLAYLIST_NAME_MAX}" autocomplete="off"><div class="pl-field-error"></div></div>
-            <div class="pl-field" id="pl-wz-new-type-wrap" hidden><label for="pl-wz-new-type">List type</label><select id="pl-wz-new-type"></select></div>
-            <div class="pl-field" id="pl-wz-new-privacy-wrap" hidden><label for="pl-wz-new-privacy">Privacy</label><select id="pl-wz-new-privacy"></select></div>
+            ${cwAccounts.length > 1 ? `<div class="pl-field" id="pl-wz-cw-wrap"><label for="pl-wz-cw-account">${TH("playlists.wizard.cwInstance")}</label><select id="pl-wz-cw-account">${accountOptions(cwAccounts)}</select></div>` : ""}
+            <div class="pl-field"><label for="pl-wz-new-name">${TH("playlists.wizard.newName")}</label><input id="pl-wz-new-name" maxlength="${PLAYLIST_NAME_MAX}" autocomplete="off"><div class="pl-field-error"></div></div>
+            <div class="pl-field" id="pl-wz-new-type-wrap" hidden><label for="pl-wz-new-type">${TH("playlists.wizard.listType")}</label><select id="pl-wz-new-type"></select></div>
+            <div class="pl-field" id="pl-wz-new-privacy-wrap" hidden><label for="pl-wz-new-privacy">${TH("playlists.ep.privacy")}</label><select id="pl-wz-new-privacy"></select></div>
           </div>
         </section>
         <section class="pl-endpoint-step">
-          <div class="pl-step-head"><span class="pl-step-index">3</span><div><b>How</b><span>What CrossWatch may change in the destination.</span></div></div>
-          <div class="pl-wizard-choice" role="radiogroup" aria-label="Sync mode">
+          <div class="pl-step-head"><span class="pl-step-index">3</span><div><b>${TH("playlists.col.how")}</b><span>${TH("playlists.wizard.whatMayChange")}</span></div></div>
+          <div class="pl-wizard-choice" role="radiogroup" aria-label="${TH("playlists.map.syncMode")}">
             ${SYNC_MODES.map(([value, label, hint]) => `<label><input type="radio" name="pl-wz-mode" value="${value}" ${value === "managed_only" ? "checked" : ""}><span><b>${esc(label)}</b><small>${esc(hint)}</small></span></label>`).join("")}
           </div>
           <div class="pl-muted" id="pl-wz-note"></div>
@@ -2426,12 +2430,12 @@
       </div>
     `;
     const ctx = openModal({
-      title: "Sync a list",
-      description: "Pick a list, pick where it should go, and choose how.",
+      title: T("playlists.wizard.title"),
+      description: T("playlists.wizard.intro"),
       width: "720px",
       body,
-      primaryText: "Create sync",
-      savingText: "Creating...",
+      primaryText: T("playlists.wizard.create"),
+      savingText: T("playlists.wizard.creating"),
       trigger,
       onPrimary: (modalCtx) => saveSyncWizard(modalCtx, lists),
     });
@@ -2445,14 +2449,14 @@
       const account = accountOf(accountId);
       if (!select) return;
       if (!account) {
-        select.innerHTML = `<option value="">Choose a provider first</option>`;
+        select.innerHTML = `<option value="">${TH("playlists.wizard.chooseProviderFirst")}</option>`;
         select.disabled = true;
         if (writable) select.dataset.canCreate = "";
         sync();
         return;
       }
       const cacheKey = key(account);
-      select.innerHTML = `<option value="">Loading...</option>`;
+      select.innerHTML = `<option value="">${TH("playlists.loading")}</option>`;
       select.disabled = true;
       if (!lists.has(cacheKey)) {
         try {
@@ -2465,18 +2469,18 @@
       }
       if (val(accountId, root) !== cacheKey) return;
       const broken = [val("#pl-wz-src-account", root), val("#pl-wz-dst-account", root)].filter((id) => failed.has(id)).map((id) => (accounts.find((a) => key(a) === id) || {}).label || id);
-      setModalError(broken.length ? `Could not load the lists of ${[...new Set(broken)].join(" and ")}. Check that provider in Connections, or pick another one.` : "");
+      setModalError(broken.length ? T("playlists.wizard.loadListsFailed", {names: [...new Set(broken)].join(` ${T("playlists.and")} `)}) : "");
       if (failed.has(cacheKey)) {
-        select.innerHTML = `<option value="">Could not load lists</option>`;
+        select.innerHTML = `<option value="">${TH("playlists.wizard.loadFailed")}</option>`;
         select.disabled = true;
         sync();
         return;
       }
       const rows = (lists.get(cacheKey) || []).filter((r) => !writable || wizardResourceWritable(r));
       const canCreate = writable && creatableEndpointTypes(account.provider).length > 0;
-      select.innerHTML = (canCreate ? `<option value="__new__">+ Create a new list</option>` : "")
+      select.innerHTML = (canCreate ? `<option value="__new__">${TH("playlists.wizard.createNew")}</option>` : "")
         + [...rows].sort((a, b) => String(a.name || a.id).localeCompare(String(b.name || b.id), undefined, { sensitivity: "base", numeric: true })).map((r) => `<option value="${esc(r.id)}">${esc(r.name || r.id)}${wizardResourceType(r) === "watchlist" || String(r.id).toLowerCase().includes("watchlist") ? "" : ` (${esc(titleize(wizardResourceType(r) || "list"))})`}</option>`).join("")
-        || `<option value="">No lists found</option>`;
+        || `<option value="">${TH("playlists.wizard.noneFound")}</option>`;
       if (rows.length) select.value = String(rows[0].id);
       if (writable) select.dataset.canCreate = canCreate ? "1" : "";
       select.disabled = false;
@@ -2509,8 +2513,8 @@
       const canCreate = !!$("#pl-wz-dst-list", root).dataset.canCreate;
       $("#pl-wz-new-toggle-row", root).hidden = publishing || !dstAccount;
       toggle.hidden = !canCreate;
-      toggle.textContent = creating ? "Use an existing list" : "+ Create a new list";
-      $("#pl-wz-new-none", root).textContent = canCreate || !dstAccount ? "" : `New lists cannot be created on ${dstAccount.label} from CrossWatch. Pick an existing one.`;
+      toggle.textContent = creating ? T("playlists.wizard.useExisting") : T("playlists.wizard.createNew");
+      $("#pl-wz-new-none", root).textContent = canCreate || !dstAccount ? "" : T("playlists.wizard.cannotCreateOn", {name: dstAccount.label});
       $("#pl-wz-simkl-warning", root).hidden = publishing || !dstAccount || dstAccount.provider !== "SIMKL";
       const srcAccount = accountOf("#pl-wz-src-account");
       const canLink = !!srcAccount && providerCanResolve(srcAccount.provider);
@@ -2529,18 +2533,18 @@
         if (discovery && input.value === "mirror") input.checked = true;
       });
       $("#pl-wz-note", root).textContent = discovery
-        ? "This source is a discovery list, so the destination is always an exact copy."
-        : publishing ? "After creating, run Review and sync once to fill the list, then paste the address into your tool." : "";
+        ? T("playlists.wizard.discoveryExact")
+        : publishing ? T("playlists.wizard.afterCreate") : "";
       syncModalPrimary(ctx);
     }
 
     ctx.validators = [() => {
-      if (!val("#pl-wz-src-list", root)) return "Choose the list to read.";
+      if (!val("#pl-wz-src-list", root)) return T("playlists.wizard.chooseSource");
       const publishing = destination() === "publish";
       const target = val("#pl-wz-dst-list", root);
-      if (!publishing && !target) return "Choose the destination list.";
+      if (!publishing && !target) return T("playlists.wizard.chooseDestination");
       if (publishing || target === "__new__") return playlistNameError(val("#pl-wz-new-name", root));
-      if (val("#pl-wz-src-account", root) === val("#pl-wz-dst-account", root) && val("#pl-wz-src-list", root) === target) return "Source and destination must be different lists.";
+      if (val("#pl-wz-src-account", root) === val("#pl-wz-dst-account", root) && val("#pl-wz-src-list", root) === target) return T("playlists.wizard.mustDiffer");
       return "";
     }];
     root.addEventListener("change", (e) => {
@@ -2567,7 +2571,7 @@
       const ref = String(val("#pl-wz-src-link", root) || "").trim();
       if (!account) return;
       if (!ref) {
-        applyFieldError(input, "Paste a link to the list.", "");
+        applyFieldError(input, T("playlists.pasteLinkError"), "");
         return;
       }
       button.disabled = true;
@@ -2586,7 +2590,7 @@
         $("#pl-wz-src-link-row", root).hidden = true;
         sync();
       } catch (error) {
-        applyFieldError(input, error && error.message ? error.message : "Could not find that list.", "");
+        applyFieldError(input, error && error.message ? error.message : T("playlists.listNotFound"), "");
       } finally {
         button.disabled = false;
       }
@@ -2618,20 +2622,20 @@
     const discovery = endpointIsDiscovery(src);
     const current = discovery ? "mirror" : String(mapping.membership || "managed_only");
     const ctx = openModal({
-      title: "Edit sync",
-      description: "Change how this list is kept up to date.",
+      title: T("playlists.editSync"),
+      description: T("playlists.wizard.editIntro"),
       width: "640px",
-      primaryText: "Save",
+      primaryText: T("playlists.save"),
       trigger,
       body: `
         <div class="pl-form pl-wizard">
           <div class="pl-wizard-pair">${listRef(src, mapping.source_endpoint)}<span class="material-symbols-rounded" aria-hidden="true">east</span>${targets.map((t) => listRef(t)).join("") || mappingTargetRefs(mapping)}</div>
-          <div class="pl-wizard-choice" role="radiogroup" aria-label="Sync mode">
+          <div class="pl-wizard-choice" role="radiogroup" aria-label="${TH("playlists.map.syncMode")}">
             ${SYNC_MODES.map(([value, label, hint]) => `<label><input type="radio" id="pl-se-mode-${value}" name="pl-se-mode" value="${value}" ${value === current ? "checked" : ""} ${discovery && value !== "mirror" ? "disabled" : ""}><span><b>${esc(label)}</b><small>${esc(hint)}</small></span></label>`).join("")}
           </div>
-          ${discovery ? `<div class="pl-muted">This source is a discovery list, so the destination is always an exact copy.</div>` : ""}
-          <label class="pl-wizard-check"><input type="checkbox" id="pl-se-enabled" ${mapping.enabled ? "checked" : ""}><span>Active. A paused sync is skipped.</span></label>
-          <div><button type="button" class="pl-link" data-sync-advanced>More settings</button></div>
+          ${discovery ? `<div class="pl-muted">${TH("playlists.wizard.discoveryExact")}</div>` : ""}
+          <label class="pl-wizard-check"><input type="checkbox" id="pl-se-enabled" ${mapping.enabled ? "checked" : ""}><span>${TH("playlists.wizard.activeHint")}</span></label>
+          <div><button type="button" class="pl-link" data-sync-advanced>${TH("playlists.wizard.moreSettings")}</button></div>
         </div>
       `,
       onPrimary: async (modalCtx) => {
@@ -2658,7 +2662,7 @@
     const byKey = (value) => accounts.find((a) => `${a.provider}|${a.instance}` === value);
     const srcAccount = byKey(val("#pl-wz-src-account", root));
     const srcResource = (lists.get(val("#pl-wz-src-account", root)) || []).find((r) => String(r.id) === val("#pl-wz-src-list", root));
-    if (!srcAccount || !srcResource) throw new Error("Choose the list to read.");
+    if (!srcAccount || !srcResource) throw new Error(T("playlists.wizard.chooseSource"));
     const publishing = ((root.querySelector('input[name="pl-wz-dest"]:checked') || {}).value || "list") === "publish";
     const mode = (root.querySelector('input[name="pl-wz-mode"]:checked') || {}).value || "managed_only";
     const newName = val("#pl-wz-new-name", root);
@@ -2668,7 +2672,7 @@
       const account = publishing
         ? (byKey(val("#pl-wz-cw-account", root)) || accounts.find((a) => a.provider === "CROSSWATCH"))
         : byKey(val("#pl-wz-dst-account", root));
-      if (!account) throw new Error("Choose where the new list should be created.");
+      if (!account) throw new Error(T("playlists.wizard.chooseWhereNew"));
       const typeWrap = $("#pl-wz-new-type-wrap", root);
       const mediaType = !publishing && typeWrap && !typeWrap.hidden && val("#pl-wz-new-type", root) ? val("#pl-wz-new-type", root) : wizardCreateType(srcResource, account.provider);
       const privacy = publishing ? {} : privacyPayload($("#pl-wz-new-privacy", root), $("#pl-wz-new-privacy-wrap", root)?.hidden);
@@ -2677,10 +2681,10 @@
     } else {
       const account = byKey(val("#pl-wz-dst-account", root));
       const resource = (lists.get(val("#pl-wz-dst-account", root)) || []).find((r) => String(r.id) === val("#pl-wz-dst-list", root));
-      if (!account || !resource) throw new Error("Choose the destination list.");
+      if (!account || !resource) throw new Error(T("playlists.wizard.chooseDestination"));
       target = await wizardEnsureEndpoint(account, resource, 1);
     }
-    if (!source || !target || !source.id || !target.id) throw new Error("Could not prepare the lists for this sync.");
+    if (!source || !target || !source.id || !target.id) throw new Error(T("playlists.wizard.prepareFailed"));
     const res = await API.mapUpsert({ id: "", name: nextMappingName(0), source_endpoint: source.id, target_endpoints: [target.id], ruleset_id: "", membership: mode, order: "ignore", enabled: true });
     notifyPairsChanged({ source: "playlists", mapping_id: (res.mapping && res.mapping.id) || "", pair_id: res.pair_id || (res.mapping && res.mapping.assigned_pair) || "" });
     if (publishing && target.playlist_id) await API.publish(target.instance || "default", target.playlist_id).catch(() => null);
@@ -2695,21 +2699,21 @@
     const rule = mapping.ruleset || rulesetById(mapping.ruleset_id || "");
     const body = `
       <div class="pl-confirm-lines">
-        <div><b>Mapping:</b> ${esc(mapping.name || mapping.id)}</div>
-        <div><b>Source endpoint:</b> ${esc(source ? source.name : mapping.source_endpoint)}</div>
-        <div><b>Destination endpoint:</b> ${esc(targetNames(mapping) || "-")}</div>
-        <div><b>Direction:</b> ${esc(directionFor(mapping))}</div>
-        <div><b>Assigned ruleset:</b> ${esc(rule ? rule.name : "Direct")}</div>
-        <div>Deleting the mapping does not delete endpoints or provider playlists.</div>
+        <div><b>${TH("playlists.del.mapping")}</b> ${esc(mapping.name || mapping.id)}</div>
+        <div><b>${TH("playlists.del.source")}</b> ${esc(source ? source.name : mapping.source_endpoint)}</div>
+        <div><b>${TH("playlists.del.destination")}</b> ${esc(targetNames(mapping) || "-")}</div>
+        <div><b>${TH("playlists.del.direction")}</b> ${esc(directionFor(mapping))}</div>
+        <div><b>${TH("playlists.del.ruleset")}</b> ${esc(rule ? rule.name : T("playlists.enums.direct"))}</div>
+        <div>${TH("playlists.del.mappingNote")}</div>
       </div>
     `;
     openModal({
-      title: "Delete playlist mapping",
-      description: "Confirm removal of this sync relationship.",
+      title: T("playlists.del.mappingTitle"),
+      description: T("playlists.del.mappingConfirm"),
       body,
       trigger,
-      primaryText: "Delete mapping",
-      savingText: "Deleting...",
+      primaryText: T("playlists.deleteMapping"),
+      savingText: T("playlists.deleting"),
       onPrimary: async () => {
         await API.mapDelete(mapping.id);
         notifyPairsChanged({ source: "playlists", mapping_id: mapping.id, pair_id: mapping.assigned_pair || "" });
@@ -2725,17 +2729,17 @@
       return `
         <tr>
           <td><div class="pl-main-text">${esc(rs.name)}</div><div class="pl-muted">${esc(rs.id)}</div></td>
-          <td><span class="pl-pill ${rs.built_in ? "warn" : "ok"}">${rs.built_in ? "Built in" : "Custom"}</span></td>
+          <td><span class="pl-pill ${rs.built_in ? "warn" : "ok"}">${rs.built_in ? T("playlists.rules.builtIn") : T("playlists.presets.custom")}</span></td>
           <td>${esc(ruleLabel(rs.direction))}</td>
-          <td>${esc(titleize(rs.read_mode))} read, ${esc(titleize(rs.write_mode))} write</td>
-          <td>${esc(rs.per_endpoint_capacity)} per list, ${esc(rs.maximum_targets)} target(s)</td>
+          <td>${TH("playlists.rules.readWrite", {read: titleize(rs.read_mode), write: titleize(rs.write_mode)})}</td>
+          <td>${TH("playlists.rules.capacityCell", {capacity: String(rs.per_endpoint_capacity), count: Number(rs.maximum_targets) || 0})}</td>
           <td>${esc(used.length)}</td>
           <td>
             <div class="pl-actions">
-              ${rulesetActionButton("view", rs.id, "View ruleset", "visibility")}
-              ${rulesetActionButton("clone", rs.id, "Clone ruleset", "content_copy", "sync")}
-              ${rulesetActionButton("edit", rs.id, rs.built_in ? "Built in rulesets cannot be edited." : "Edit ruleset", "edit", "edit", !!rs.built_in)}
-              ${rulesetActionButton("delete", rs.id, rs.built_in ? "Built in rulesets cannot be deleted." : "Delete ruleset", "delete", "delete", !!rs.built_in)}
+              ${rulesetActionButton("view", rs.id, T("playlists.rules.view"), "visibility")}
+              ${rulesetActionButton("clone", rs.id, T("playlists.rules.clone"), "content_copy", "sync")}
+              ${rulesetActionButton("edit", rs.id, rs.built_in ? T("playlists.rules.cannotEdit") : T("playlists.rules.edit"), "edit", "edit", !!rs.built_in)}
+              ${rulesetActionButton("delete", rs.id, rs.built_in ? T("playlists.rules.cannotDelete") : T("playlists.rules.delete"), "delete", "delete", !!rs.built_in)}
             </div>
           </td>
         </tr>
@@ -2744,18 +2748,18 @@
     const body = `
       <div class="pl-table-wrap cw-page-table">
         <table class="pl-ruleset-table">
-          <thead><tr><th>Ruleset name</th><th>Type</th><th>Direction</th><th>Strategy</th><th>Capacity behaviour</th><th>Mappings</th><th>Actions</th></tr></thead>
-          <tbody>${rows || `<tr><td colspan="7"><div class="pl-empty"><strong>No rulesets</strong><span>Create a custom ruleset for advanced mapping behavior.</span></div></td></tr>`}</tbody>
+          <thead><tr><th>${TH("playlists.rules.name")}</th><th>${TH("playlists.col.type")}</th><th>${TH("playlists.col.direction")}</th><th>${TH("playlists.rules.strategy")}</th><th>${TH("playlists.rules.capacity")}</th><th>${TH("playlists.mappings")}</th><th>${TH("playlists.col.actions")}</th></tr></thead>
+          <tbody>${rows || `<tr><td colspan="7"><div class="pl-empty"><strong>${TH("playlists.rules.none")}</strong><span>${TH("playlists.rules.noneHint")}</span></div></td></tr>`}</tbody>
         </table>
       </div>
     `;
     openModal({
-      title: "Manage rulesets",
-      description: "View built in rulesets and manage custom playlist sync rules.",
+      title: T("playlists.map.manageRulesets"),
+      description: T("playlists.rules.manageHint"),
       body,
       trigger,
       width: "980px",
-      primaryText: "Create new ruleset",
+      primaryText: T("playlists.rules.createNew"),
       onCancel: () => { if (fromMapping && mappingDraft) openMappingModal({ draft: mappingDraft, trigger, onDone: mappingDone }); },
       onOpen: (ctx) => {
         ctx.modal.addEventListener("click", (e) => {
@@ -2783,16 +2787,16 @@
       seed.name = clone ? "" : "";
     }
     const preset = mode === "create" && !clone ? "direct" : detectRulesetPreset(seed);
-    const title = mode === "view" ? "View ruleset" : isEdit ? "Edit ruleset" : clone ? "Clone ruleset" : "Create new ruleset";
+    const title = mode === "view" ? T("playlists.rules.view") : isEdit ? T("playlists.rules.edit") : clone ? T("playlists.rules.clone") : T("playlists.rules.createNew");
     const body = rulesetBuilderHtml(seed, preset, readonly, clone);
     openModal({
       title,
-      description: readonly ? "Review this ruleset as readable behaviour. Built in rulesets can be cloned, but not edited." : "Choose a preset, adjust the rule behaviour, then review the generated ruleset before saving.",
+      description: readonly ? T("playlists.rules.viewHint") : T("playlists.rules.editHint"),
       body,
       trigger,
       width: "920px",
-      primaryText: readonly && ruleset && ruleset.built_in ? "Clone ruleset" : readonly ? "" : (isEdit ? "Save changes" : "Create ruleset"),
-      savingText: "Saving ruleset...",
+      primaryText: readonly && ruleset && ruleset.built_in ? T("playlists.rules.clone") : readonly ? "" : (isEdit ? T("playlists.ep.saveChanges") : T("playlists.rules.create")),
+      savingText: T("playlists.rules.saving"),
       onCancel: () => openRulesetManager({ trigger, fromMapping, mappingDraft, mappingDone }),
       onOpen: (ctx) => hydrateRulesetBuilder(ctx, seed, preset, readonly),
       onPrimary: async (ctx) => {
@@ -2801,7 +2805,7 @@
           return;
         }
         const payload = readRulesetForm(ctx.modal, isEdit ? seed.id : "");
-        const nameErr = nameFieldError(payload.name, "Ruleset name");
+        const nameErr = nameFieldError(payload.name, T("playlists.rules.name"));
         if (nameErr) throw new Error(nameErr);
         const error = validateRulesetBuilder(payload);
         if (error) throw new Error(error);
@@ -2830,23 +2834,23 @@
     return `
       <div class="pl-builder">
         <section class="pl-builder-section" data-builder-section="basics">
-          <div class="pl-builder-title"><div><b>Basics</b><span>Name the ruleset and choose a starting point.</span></div></div>
+          <div class="pl-builder-title"><div><b>${TH("playlists.rules.basics")}</b><span>${TH("playlists.rules.basicsHint")}</span></div></div>
           <div class="pl-builder-grid">
             <div class="pl-field">
-              <label for="pl-rs-name">Ruleset name</label>
-              <input id="pl-rs-name" maxlength="${NAME_MAX}" value="${esc(current.name || "")}" placeholder="${clone ? "Custom" : "Ruleset"}" aria-describedby="pl-rs-name-error" ${readonly ? "disabled" : ""}>
+              <label for="pl-rs-name">${TH("playlists.rules.name")}</label>
+              <input id="pl-rs-name" maxlength="${NAME_MAX}" value="${esc(current.name || "")}" placeholder="${clone ? T("playlists.presets.custom") : T("playlists.col.ruleset")}" aria-describedby="pl-rs-name-error" ${readonly ? "disabled" : ""}>
               <div class="pl-field-error" id="pl-rs-name-error"></div>
             </div>
             <div class="pl-field">
-              <label for="pl-rs-direction">Supported direction</label>
+              <label for="pl-rs-direction">${TH("playlists.rules.supportedDirection")}</label>
               <select id="pl-rs-direction" data-rs-field="direction" ${readonly ? "disabled" : ""}>${selectOptions(ENUMS.direction.map(([value, label]) => ({ value, label })), current.direction)}</select>
             </div>
             <div class="pl-field">
-              <label for="pl-rs-description">Description</label>
-              <input id="pl-rs-description" value="${esc(current.description || "")}" placeholder="Optional note for this ruleset" ${readonly ? "disabled" : ""}>
+              <label for="pl-rs-description">${TH("playlists.rules.description")}</label>
+              <input id="pl-rs-description" value="${esc(current.description || "")}" placeholder="${TH("playlists.rules.descriptionPlaceholder")}" ${readonly ? "disabled" : ""}>
             </div>
             <div class="pl-field">
-              <label for="pl-rs-preset">Preset</label>
+              <label for="pl-rs-preset">${TH("playlists.rules.preset")}</label>
               <select id="pl-rs-preset" ${readonly ? "disabled" : ""}>${selectOptions(Object.entries(RULESET_PRESETS).map(([value, item]) => ({ value, label: item.label })), preset)}</select>
             </div>
           </div>
@@ -2855,60 +2859,60 @@
         </section>
 
         <section class="pl-builder-section" data-builder-section="rules">
-          <div class="pl-builder-title"><div><b>Rules</b><span>Describe the conditional behaviour using controlled sentence rows.</span></div></div>
+          <div class="pl-builder-title"><div><b>${TH("playlists.rules.rules")}</b><span>${TH("playlists.rules.rulesHint")}</span></div></div>
           <div class="pl-field" id="pl-rs-combine-wrap">
-            <label for="pl-rs-condition-mode">Combine conditions</label>
-            <select id="pl-rs-condition-mode" ${readonly ? "disabled" : ""}><option value="all">ALL conditions must match</option><option value="any">ANY condition can match</option></select>
+            <label for="pl-rs-condition-mode">${TH("playlists.rules.combine")}</label>
+            <select id="pl-rs-condition-mode" ${readonly ? "disabled" : ""}><option value="all">${TH("playlists.rules.all")}</option><option value="any">${TH("playlists.rules.any")}</option></select>
           </div>
           <div id="pl-rs-condition-rows"></div>
           <div id="pl-rs-action-rows"></div>
           <div class="pl-inline-actions">
-            <button type="button" class="pl-btn small" id="pl-rs-add-condition" ${readonly ? "disabled" : ""}>Add condition</button>
-            <button type="button" class="pl-btn small" id="pl-rs-add-action" ${readonly ? "disabled" : ""}>Add action</button>
-            <button type="button" class="pl-btn small" id="pl-rs-add-else" ${readonly ? "disabled" : ""}>Add else action</button>
+            <button type="button" class="pl-btn small" id="pl-rs-add-condition" ${readonly ? "disabled" : ""}>${TH("playlists.rules.addCondition")}</button>
+            <button type="button" class="pl-btn small" id="pl-rs-add-action" ${readonly ? "disabled" : ""}>${TH("playlists.rules.addAction")}</button>
+            <button type="button" class="pl-btn small" id="pl-rs-add-else" ${readonly ? "disabled" : ""}>${TH("playlists.rules.addElse")}</button>
           </div>
         </section>
 
         <section class="pl-builder-section" data-builder-section="policies">
-          <div class="pl-builder-title"><div><b>Policies</b><span>Common nonconditional behaviour.</span></div></div>
+          <div class="pl-builder-title"><div><b>${TH("playlists.rules.policies")}</b><span>${TH("playlists.rules.policiesHint")}</span></div></div>
           <div class="pl-builder-grid">
-            ${builderSelectField("initial_sync", "Initial sync", "Source is authoritative", current, readonly)}
-            ${builderSelectField("membership", "Membership behaviour", "How CrossWatch handles additions and removals.", current, readonly)}
-            ${builderSelectField("deduplicate", "Deduplication", "Match items using canonical IDs.", current, readonly)}
-            ${builderSelectField("order", "Ordering", "Choose whether source order should be preserved.", current, readonly)}
-            ${builderSelectField("allocation", "Allocation", "How items are assigned when splitting.", current, readonly)}
+            ${builderSelectField("initial_sync", T("playlists.rules.initialSync"), T("playlists.rules.sourceIsAuth"), current, readonly)}
+            ${builderSelectField("membership", T("playlists.rules.membership"), T("playlists.rules.membershipHint"), current, readonly)}
+            ${builderSelectField("deduplicate", T("playlists.rules.dedup"), T("playlists.rules.dedupHint"), current, readonly)}
+            ${builderSelectField("order", T("playlists.map.ordering"), T("playlists.rules.orderingHint"), current, readonly)}
+            ${builderSelectField("allocation", T("playlists.rules.allocation"), T("playlists.rules.allocationHint"), current, readonly)}
           </div>
           <details class="pl-advanced">
-            <summary>Advanced policies</summary>
+            <summary>${TH("playlists.rules.advanced")}</summary>
             <div class="pl-advanced-body pl-builder-grid">
-              ${builderSelectField("read_mode", "Aggregate behaviour", "Read one list directly or aggregate lists.", current, readonly)}
-              ${builderSelectField("write_mode", "Partition behaviour", "Write directly or split across target lists.", current, readonly)}
-              ${builderSelectField("rebalance", "Rebalancing", "Whether existing item assignments move between lists.", current, readonly)}
-              <label class="pl-check"><input type="checkbox" id="pl-rs-track_assignments" data-rs-field="track_assignments" ${current.track_assignments ? "checked" : ""} ${readonly ? "disabled" : ""}> Track assignments</label>
+              ${builderSelectField("read_mode", T("playlists.rules.aggregateBehaviour"), T("playlists.rules.aggregateHint"), current, readonly)}
+              ${builderSelectField("write_mode", T("playlists.rules.partitionBehaviour"), T("playlists.rules.partitionHint"), current, readonly)}
+              ${builderSelectField("rebalance", T("playlists.rules.rebalancing"), T("playlists.rules.rebalancingHint"), current, readonly)}
+              <label class="pl-check"><input type="checkbox" id="pl-rs-track_assignments" data-rs-field="track_assignments" ${current.track_assignments ? "checked" : ""} ${readonly ? "disabled" : ""}> ${TH("playlists.rules.trackAssignments")}</label>
             </div>
           </details>
         </section>
 
         <section class="pl-builder-section" data-builder-section="limits">
-          <div class="pl-builder-title"><div><b>Limits and overflow</b><span>Capacity controls appear when the chosen behaviour needs them.</span></div></div>
+          <div class="pl-builder-title"><div><b>${TH("playlists.rules.limits")}</b><span>${TH("playlists.rules.limitsHint")}</span></div></div>
           <div class="pl-builder-grid">
-            ${builderNumberField("per_endpoint_capacity", "Capacity per target list", current.per_endpoint_capacity, readonly, "pl-limit-partition")}
-            ${builderNumberField("aggregate_capacity", "Aggregate capacity", current.aggregate_capacity, readonly, "pl-limit-aggregate")}
-            ${builderNumberField("maximum_targets", "Maximum generated lists", current.maximum_targets, readonly, "pl-limit-partition")}
-            ${builderSelectField("overflow", "Overflow behaviour", "What happens when capacity is exceeded.", current, readonly, "pl-limit-capacity")}
+            ${builderNumberField("per_endpoint_capacity", T("playlists.rules.perTarget"), current.per_endpoint_capacity, readonly, "pl-limit-partition")}
+            ${builderNumberField("aggregate_capacity", T("playlists.rules.aggregateCapacity"), current.aggregate_capacity, readonly, "pl-limit-aggregate")}
+            ${builderNumberField("maximum_targets", T("playlists.rules.maxLists"), current.maximum_targets, readonly, "pl-limit-partition")}
+            ${builderSelectField("overflow", T("playlists.rules.overflow"), T("playlists.rules.overflowHint"), current, readonly, "pl-limit-capacity")}
           </div>
         </section>
 
         <section class="pl-builder-section" data-builder-section="summary">
-          <div class="pl-builder-title"><div><b>Readable summary</b><span>Generated from the structured ruleset state.</span></div></div>
+          <div class="pl-builder-title"><div><b>${TH("playlists.rules.readable")}</b><span>${TH("playlists.rules.readableHint")}</span></div></div>
           <div class="pl-summary-box" id="pl-rs-summary"></div>
         </section>
 
         <section class="pl-builder-section" data-builder-section="preview">
-          <div class="pl-builder-title"><div><b>Preview</b><span>Local capacity simulation; no backend call is made while editing.</span></div></div>
+          <div class="pl-builder-title"><div><b>${TH("playlists.rules.preview")}</b><span>${TH("playlists.rules.previewHint")}</span></div></div>
           <div class="pl-preview-box">
             <div class="pl-field">
-              <label for="pl-rs-preview-items">Source items</label>
+              <label for="pl-rs-preview-items">${TH("playlists.rules.sourceItems")}</label>
               <input id="pl-rs-preview-items" type="number" min="0" value="284" ${readonly ? "disabled" : ""}>
             </div>
             <div class="pl-preview-result" id="pl-rs-preview"></div>
@@ -2929,7 +2933,7 @@
   function hydrateRulesetBuilder(ctx, seed, originalPreset, readonly) {
     const root = ctx.modal;
     root.dataset.rulesetReadonly = readonly ? "1" : "0";
-    if (!readonly) bindNameValidation(ctx, "#pl-rs-name", "Ruleset name");
+    if (!readonly) bindNameValidation(ctx, "#pl-rs-name", T("playlists.rules.name"));
     const presetSelect = $("#pl-rs-preset", root);
     const applyPreset = (key) => {
       const preset = RULESET_PRESETS[key] || RULESET_PRESETS.custom;
@@ -3010,26 +3014,26 @@
     if (rs.write_mode === "partition") {
       conditions.innerHTML = `
         <div class="pl-rule-row">
-          <span class="pl-rule-word">When</span>
-          <select disabled><option>Source item count</option></select>
-          <select disabled><option>is greater than</option></select>
+          <span class="pl-rule-word">${TH("playlists.rules.when")}</span>
+          <select disabled><option>${TH("playlists.rules.sourceCount")}</option></select>
+          <select disabled><option>${TH("playlists.rules.greater")}</option></select>
           <input type="number" min="1" value="${esc(rs.per_endpoint_capacity)}" data-rule-capacity ${readonly ? "disabled" : ""}>
-          <button type="button" class="pl-btn small" data-remove-rule ${readonly ? "disabled" : ""}>Remove</button>
+          <button type="button" class="pl-btn small" data-remove-rule ${readonly ? "disabled" : ""}>${TH("playlists.rules.remove")}</button>
         </div>
       `;
       actions.innerHTML = `
         <div class="pl-rule-row then">
-          <span class="pl-rule-word">Then</span>
-          <select disabled><option>Split into target lists</option></select>
+          <span class="pl-rule-word">${TH("playlists.rules.then")}</span>
+          <select disabled><option>${TH("playlists.rules.splitInto")}</option></select>
           <input type="number" min="1" value="${esc(rs.per_endpoint_capacity)}" data-rule-action-capacity ${readonly ? "disabled" : ""}>
-          <span class="pl-help">items per list</span>
-          <button type="button" class="pl-btn small" data-remove-rule ${readonly ? "disabled" : ""}>Remove</button>
+          <span class="pl-help">${TH("playlists.rules.perList")}</span>
+          <button type="button" class="pl-btn small" data-remove-rule ${readonly ? "disabled" : ""}>${TH("playlists.rules.remove")}</button>
         </div>
         <div class="pl-rule-row then">
-          <span class="pl-rule-word">Else</span>
-          <select disabled><option>Sync directly</option></select>
+          <span class="pl-rule-word">${TH("playlists.rules.else")}</span>
+          <select disabled><option>${TH("playlists.rules.syncDirectly")}</option></select>
           <span></span>
-          <span class="pl-help">one target list is enough</span>
+          <span class="pl-help">${TH("playlists.rules.oneEnough")}</span>
           <span></span>
         </div>
       `;
@@ -3038,13 +3042,13 @@
         updateRulesetBuilder(root);
       }));
     } else {
-      conditions.innerHTML = `<div class="pl-empty"><strong>No condition</strong><span>This ruleset syncs directly unless you add a split condition.</span></div>`;
+      conditions.innerHTML = `<div class="pl-empty"><strong>${TH("playlists.rules.noCondition")}</strong><span>${TH("playlists.rules.noConditionHint")}</span></div>`;
       actions.innerHTML = `
         <div class="pl-rule-row then">
-          <span class="pl-rule-word">Then</span>
-          <select disabled><option>${rs.read_mode === "aggregate" ? "Merge source lists" : "Sync directly"}</option></select>
+          <span class="pl-rule-word">${TH("playlists.rules.then")}</span>
+          <select disabled><option>${rs.read_mode === "aggregate" ? T("playlists.rules.mergeSources") : T("playlists.rules.syncDirectly")}</option></select>
           <span></span>
-          <span class="pl-help">${rs.read_mode === "aggregate" ? "read targets as one combined list" : "write to one target list"}</span>
+          <span class="pl-help">${rs.read_mode === "aggregate" ? T("playlists.rules.readCombined") : T("playlists.rules.writeOne")}</span>
           <span></span>
         </div>
       `;
@@ -3093,17 +3097,17 @@
 
   function rulesetSummary(rs) {
     const lines = [];
-    lines.push(`This ruleset performs a ${ruleLabel(rs.direction).toLowerCase()} sync.`);
+    lines.push(T("playlists.summary.direction", {direction: ruleLabel(rs.direction).toLowerCase()}));
     if (rs.write_mode === "partition") {
-      lines.push(`When the source contains more than ${rs.per_endpoint_capacity} items, CrossWatch splits the content into target lists containing up to ${rs.per_endpoint_capacity} items each.`);
-      lines.push(`CrossWatch may create up to ${rs.maximum_targets} target lists. Additional items are ${rs.overflow === "block" ? "blocked" : titleize(rs.overflow).toLowerCase()}.`);
+      lines.push(T("playlists.summary.split", {capacity: String(rs.per_endpoint_capacity)}));
+      lines.push(T("playlists.summary.maxTargets", {count: String(rs.maximum_targets), overflow: rs.overflow === "block" ? T("playlists.summary.blocked") : titleize(rs.overflow).toLowerCase()}));
     } else if (rs.read_mode === "aggregate") {
-      lines.push(`CrossWatch reads multiple lists as one combined list with an aggregate capacity of ${rs.aggregate_capacity} items.`);
+      lines.push(T("playlists.summary.aggregate", {capacity: String(rs.aggregate_capacity)}));
     } else {
-      lines.push("CrossWatch syncs directly between the selected source and destination playlist.");
+      lines.push(T("playlists.summary.directSync"));
     }
-    lines.push(`Initial sync treats the source as authoritative, membership uses ${titleize(rs.membership).toLowerCase()}, and items are deduplicated using canonical IDs.`);
-    lines.push(rs.order === "preserve" ? "Items remain in source order where the target provider supports ordering." : "Source ordering is not enforced.");
+    lines.push(T("playlists.summary.initial", {membership: titleize(rs.membership).toLowerCase()}));
+    lines.push(rs.order === "preserve" ? T("playlists.summary.ordered") : T("playlists.summary.unordered"));
     return lines;
   }
 
@@ -3129,14 +3133,14 @@
   }
 
   function validateRulesetBuilder(payload) {
-    const nameErr = nameFieldError(payload.name, "Ruleset name");
+    const nameErr = nameFieldError(payload.name, T("playlists.rules.name"));
     if (nameErr) return nameErr;
     if (payload.write_mode === "partition") {
-      if (payload.per_endpoint_capacity < 1) return "Capacity per target list must be at least 1.";
-      if (payload.maximum_targets < 2) return "Splitting requires at least two generated lists.";
-      if (payload.overflow !== "block") return "The current backend only supports blocking overflow.";
+      if (payload.per_endpoint_capacity < 1) return T("playlists.rules.capacityMin");
+      if (payload.maximum_targets < 2) return T("playlists.rules.splitMin");
+      if (payload.overflow !== "block") return T("playlists.rules.blockOnly");
     }
-    if (payload.read_mode === "aggregate" && payload.aggregate_capacity < 1) return "Aggregate capacity must be at least 1.";
+    if (payload.read_mode === "aggregate" && payload.aggregate_capacity < 1) return T("playlists.rules.aggregateMin");
     return "";
   }
 
@@ -3144,21 +3148,21 @@
     const used = mappingsForRuleset(ruleset.id);
     const body = `
       <div class="pl-confirm-lines">
-        <div><b>Ruleset:</b> ${esc(ruleset.name)}</div>
-        <div><b>Mappings:</b> ${esc(used.length)}</div>
-        ${used.length ? `<div class="pl-warning">Deletion is blocked while mappings reference this ruleset: ${esc(used.map((m) => m.name || m.id).join(", "))}. Change those mappings first.</div>` : `<div>Deleting this custom ruleset will not delete endpoints or mappings.</div>`}
+        <div><b>${TH("playlists.del.rulesetLabel")}</b> ${esc(ruleset.name)}</div>
+        <div><b>${TH("playlists.del.mappingsLabel")}</b> ${esc(used.length)}</div>
+        ${used.length ? `<div class="pl-warning">Deletion is blocked while mappings reference this ruleset: ${esc(used.map((m) => m.name || m.id).join(", "))}. Change those mappings first.</div>` : `<div>${TH("playlists.del.rulesetNote")}</div>`}
       </div>
     `;
     openModal({
-      title: "Delete ruleset",
-      description: "Confirm removal of this custom ruleset.",
+      title: T("playlists.rules.delete"),
+      description: T("playlists.del.rulesetConfirm"),
       body,
       trigger,
-      primaryText: "Delete ruleset",
-      savingText: "Deleting...",
+      primaryText: T("playlists.rules.delete"),
+      savingText: T("playlists.deleting"),
       onCancel: () => openRulesetManager({ trigger: context.trigger, fromMapping: context.fromMapping, mappingDraft: context.mappingDraft, mappingDone: context.mappingDone }),
       onPrimary: async () => {
-        if (used.length) throw new Error("Ruleset is still used by mappings. Change those mappings first.");
+        if (used.length) throw new Error(T("playlists.del.rulesetInUse"));
         await API.rulesetDelete(ruleset.id);
         closeModal(true);
         await reloadData();
@@ -3172,17 +3176,17 @@
     const runCount = activityStats(state.activity || []).total;
     const body = `
       <div class="pl-confirm-lines">
-        <div><b>Playlist runs:</b> ${esc(runCount)}</div>
-        <div>This clears playlist activity timestamps and mapping results. Endpoints, mappings and provider playlists are not deleted.</div>
+        <div><b>${TH("playlists.activity.runs")}</b> ${esc(runCount)}</div>
+        <div>${TH("playlists.activity.clearNote")}</div>
       </div>
     `;
     openModal({
-      title: "Clear playlist activity",
-      description: "Reset the playlist activity overview and counters.",
+      title: T("playlists.activity.clearLabel"),
+      description: T("playlists.activity.clearHint"),
       body,
       trigger,
-      primaryText: "Clear activity",
-      savingText: "Clearing...",
+      primaryText: T("playlists.activity.clear"),
+      savingText: T("playlists.activity.clearing"),
       onPrimary: async () => {
         const cleared = await API.activityClear();
         state.activity = Array.isArray(cleared.activity) ? cleared.activity : [];
@@ -3197,12 +3201,12 @@
     const body = state.activity.length ? `
       <div class="pl-table-wrap cw-page-table">
         <table>
-          <thead><tr><th>Time</th><th>Type</th><th>Mapping</th><th>Details</th><th>Status</th></tr></thead>
+          <thead><tr><th>${TH("playlists.col.time")}</th><th>${TH("playlists.col.type")}</th><th>${TH("playlists.col.mapping")}</th><th>${TH("playlists.col.details")}</th><th>${TH("playlists.col.status")}</th></tr></thead>
           <tbody>${state.activity.map((row) => `<tr><td>${esc(compactTime(row.ts))}</td><td>${esc(row.type || "-")}</td><td>${esc(row.label || "-")}</td><td>${esc(row.details || "-")}</td><td><span class="pl-pill ${row.status === "error" ? "err" : "ok"}">${esc(titleize(row.status || "completed"))}</span></td></tr>`).join("")}</tbody>
         </table>
       </div>
-    ` : `<div class="pl-empty"><strong>No activity yet</strong><span>Playlist activity will appear after refreshes or sync runs.</span></div>`;
-    openModal({ title: "Playlist activity", description: "Full recent activity returned by the playlist API.", body, trigger, width: "980px" });
+    ` : `<div class="pl-empty"><strong>${TH("playlists.activity.none")}</strong><span>${TH("playlists.activity.noneHint")}</span></div>`;
+    openModal({ title: T("playlists.activity.full"), description: T("playlists.activity.fullHint"), body, trigger, width: "980px" });
   }
 
   function openNotice(title, message, trigger) {
@@ -3252,7 +3256,7 @@
     const disabled = !state.loaded || state.endpoints.length < 2;
     $$("[data-action='mapping-new']", root).forEach((btn) => {
       btn.disabled = disabled;
-      btn.title = !state.loaded ? "Playlist data is still loading." : disabled ? "Create at least two endpoints before adding a mapping." : "Create playlist mapping";
+      btn.title = !state.loaded ? T("playlists.stillLoading") : disabled ? T("playlists.needTwoEndpoints") : T("playlists.createMapping");
     });
   }
 
@@ -3279,7 +3283,7 @@
     try {
       await reloadData();
     } catch (err) {
-      state.error = err && err.message ? err.message : "Could not refresh playlists.";
+      state.error = err && err.message ? err.message : T("playlists.loadFailed");
     }
     if (!root) return;
     if (!root.querySelector(".pl-page")) {
@@ -3303,7 +3307,7 @@
     try {
       await reloadData();
     } catch (err) {
-      state.error = err && err.message ? err.message : String(err || "Could not load playlists.");
+      state.error = err && err.message ? err.message : String(err || T("playlists.loadFailedInitial"));
     } finally {
       state.loading = false;
       render(root);
@@ -3330,7 +3334,7 @@
       if (Array.isArray(data.mappings)) mappings = data.mappings;
     } catch {}
     if (!mappings.length) {
-      openNotice("Playlist mapping missing", "This sync pair does not have a managed playlist mapping assigned.", trigger);
+      openNotice(T("playlists.run.noMapping"), T("playlists.run.noMappingHint"), trigger);
       return;
     }
     const mapping = state.mappings.find((m) => m.id === mappings[0].id) || mappings[0];

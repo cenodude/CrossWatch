@@ -2,6 +2,8 @@
 /* Shared Playing Card renderer: one card, per-variant regions */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 (function () {
+  const T = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.t?.(key, vars) ?? key;
+  const TH = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.html?.(key, vars) ?? key;
   const PLACEHOLDER_POSTER = "/assets/img/placeholder_poster.svg?v=2";
   const TEMPLATE = `
     <div class="pc-inner">
@@ -10,19 +12,19 @@
       </a>
       <div class="pc-body">
         <div class="pc-title-row">
-          <div class="pc-title">Now Playing</div>
+          <div class="pc-title">${TH("library.card.nowPlaying")}</div>
           <div class="pc-title-actions">
             <div class="pc-nav" hidden>
-              <button class="pc-nav-btn pc-prev" type="button" aria-label="Previous stream"><span class="material-symbols-rounded">chevron_left</span></button>
+              <button class="pc-nav-btn pc-prev" type="button" aria-label="${TH("library.card.prev")}"><span class="material-symbols-rounded">chevron_left</span></button>
               <span class="pc-nav-count">1 / 1</span>
-              <button class="pc-nav-btn pc-next" type="button" aria-label="Next stream"><span class="material-symbols-rounded">chevron_right</span></button>
+              <button class="pc-nav-btn pc-next" type="button" aria-label="${TH("library.card.next")}"><span class="material-symbols-rounded">chevron_right</span></button>
             </div>
           </div>
         </div>
         <div class="pc-meta"></div>
         <div class="pc-overview-wrap">
           <div class="pc-overview"></div>
-          <button class="pc-overview-more" type="button" aria-expanded="false" hidden>More</button>
+          <button class="pc-overview-more" type="button" aria-expanded="false" hidden>${TH("library.card.more")}</button>
         </div>
       </div>
       <div class="pc-stats">
@@ -31,29 +33,29 @@
             <span class="pc-progress-pct"></span>
             <span class="pc-progress-end">
               <span class="pc-progress-time"></span>
-              <button class="pc-close" type="button" title="Minimize" aria-label="Minimize card"><span class="material-symbols-rounded" aria-hidden="true">minimize</span></button>
+              <button class="pc-close" type="button" title="${TH("library.card.minimize")}" aria-label="${TH("library.card.minimizeCard")}"><span class="material-symbols-rounded" aria-hidden="true">minimize</span></button>
             </span>
           </div>
           <div class="pc-progress-bg"><div class="pc-progress"></div></div>
         </div>
         <div class="pc-stats-bottom">
           <div class="pc-info-block pc-information-block">
-            <div class="pc-info-label">Information</div>
+            <div class="pc-info-label">${TH("library.card.information")}</div>
             <div class="pc-information-rows"></div>
           </div>
           <div class="pc-rating-stack">
             <div class="pc-info-block pc-rating-block">
-              <div class="pc-info-label">TMDB Rating</div>
+              <div class="pc-info-label">${TH("library.card.tmdbRating")}</div>
               <div class="pc-info-value"><span class="material-symbols-rounded pc-info-icon" aria-hidden="true">star</span><span class="pc-rating">--</span></div>
-              <div class="pc-rating-votes pc-info-note">Rating unavailable</div>
+              <div class="pc-rating-votes pc-info-note">${TH("library.card.ratingUnavailable")}</div>
             </div>
-            <div class="pc-status-head"><span class="material-symbols-rounded pc-status-icon" aria-hidden="true">play_arrow</span><div class="pc-status">Now Playing</div></div>
+            <div class="pc-status-head"><span class="material-symbols-rounded pc-status-icon" aria-hidden="true">play_arrow</span><div class="pc-status">${TH("library.card.nowPlaying")}</div></div>
             <div class="pc-sources"></div>
           </div>
         </div>
         <div class="pc-actions">
           <div class="pc-links"></div>
-          <button class="pc-trailer" type="button">Watch trailer</button>
+          <button class="pc-trailer" type="button">${TH("library.card.trailer")}</button>
         </div>
       </div>
     </div>
@@ -63,35 +65,35 @@
     <div class="pc-inner">
       <a class="pc-poster-link" target="_blank" rel="noopener noreferrer">
         <img class="pc-poster" src="${PLACEHOLDER_POSTER}" alt="">
-        <div class="pc-title">Now Playing</div>
+        <div class="pc-title">${TH("library.card.nowPlaying")}</div>
       </a>
       <div class="pc-body">
         <div class="pc-head">
           <div class="pc-state"><div class="pc-status"></div><span class="pc-mobile-route"></span></div>
           <div class="pc-title-actions">
             <div class="pc-nav" hidden>
-              <button class="pc-nav-btn pc-prev" type="button" aria-label="Previous stream"><span class="material-symbols-rounded" aria-hidden="true">chevron_left</span></button>
+              <button class="pc-nav-btn pc-prev" type="button" aria-label="${TH("library.card.prev")}"><span class="material-symbols-rounded" aria-hidden="true">chevron_left</span></button>
               <span class="pc-nav-count">1 / 1</span><span class="pc-nav-label">streams</span>
-              <button class="pc-nav-btn pc-next" type="button" aria-label="Next stream"><span class="material-symbols-rounded" aria-hidden="true">chevron_right</span></button>
+              <button class="pc-nav-btn pc-next" type="button" aria-label="${TH("library.card.next")}"><span class="material-symbols-rounded" aria-hidden="true">chevron_right</span></button>
             </div>
-            <button class="pc-close" type="button" aria-label="Minimize card"><span class="material-symbols-rounded" aria-hidden="true">remove</span></button>
+            <button class="pc-close" type="button" aria-label="${TH("library.card.minimizeCard")}"><span class="material-symbols-rounded" aria-hidden="true">remove</span></button>
           </div>
         </div>
         <div class="pc-routes"><div class="pc-route-list"></div><button class="pc-route-toggle" type="button" aria-expanded="false" aria-haspopup="dialog"></button></div>
         <button class="pc-mobile-toggle" type="button" aria-expanded="false"><span class="pc-mobile-title"></span></button>
         <div class="pc-summary"><div class="pc-heading"></div><div class="pc-meta"></div><div class="pc-mobile-rating"><span class="material-symbols-rounded" aria-hidden="true">star</span><span class="pc-mobile-score"></span></div></div>
         <div class="pc-genres"></div>
-        <div class="pc-overview-wrap"><div class="pc-overview"></div><button class="pc-overview-more" type="button" aria-expanded="false" hidden>More</button></div>
+        <div class="pc-overview-wrap"><div class="pc-overview"></div><button class="pc-overview-more" type="button" aria-expanded="false" hidden>${TH("library.card.more")}</button></div>
         <div class="pc-stats-bottom">
           <div class="pc-info-block pc-rating-block"><div class="pc-info-label">TMDB rating</div><div class="pc-info-value"><span class="material-symbols-rounded pc-info-icon" aria-hidden="true">star</span><span class="pc-rating">--</span><span class="pc-rating-scale">/ 10</span></div><div class="pc-rating-votes pc-info-note"></div></div>
           <div class="pc-info-block pc-information-block"><div class="pc-information-rows"></div></div>
         </div>
-        <div class="pc-transport"><div class="pc-status-ring"><span class="material-symbols-rounded pc-status-icon" aria-hidden="true">play_arrow</span></div><div class="pc-progress-wrap"><div class="pc-progress-labels"><span class="pc-progress-pct"></span><span class="pc-progress-time"></span><span class="pc-mobile-time"></span></div><div class="pc-progress-bg" role="progressbar" aria-label="Playback progress" aria-valuemin="0" aria-valuemax="100"><div class="pc-progress"></div></div></div></div>
-        <button class="pc-mobile-collapse" type="button">Show less<span class="material-symbols-rounded" aria-hidden="true">expand_less</span></button>
-        <div class="pc-actions" hidden><div class="pc-sources"></div><div class="pc-links"></div><button class="pc-trailer" type="button">Watch trailer</button></div>
+        <div class="pc-transport"><div class="pc-status-ring"><span class="material-symbols-rounded pc-status-icon" aria-hidden="true">play_arrow</span></div><div class="pc-progress-wrap"><div class="pc-progress-labels"><span class="pc-progress-pct"></span><span class="pc-progress-time"></span><span class="pc-mobile-time"></span></div><div class="pc-progress-bg" role="progressbar" aria-label="${TH("library.card.progress")}" aria-valuemin="0" aria-valuemax="100"><div class="pc-progress"></div></div></div></div>
+        <button class="pc-mobile-collapse" type="button">${TH("library.card.showLess")}<span class="material-symbols-rounded" aria-hidden="true">expand_less</span></button>
+        <div class="pc-actions" hidden><div class="pc-sources"></div><div class="pc-links"></div><button class="pc-trailer" type="button">${TH("library.card.trailer")}</button></div>
       </div>
     </div>
-    <div class="pc-route-menu" role="dialog" aria-label="Active playback routes" hidden><div class="pc-route-menu-head"><span>Active playback routes</span><button class="pc-route-menu-close" type="button" aria-label="Close routes"><span class="material-symbols-rounded" aria-hidden="true">close</span></button></div><div class="pc-route-options"></div></div>
+    <div class="pc-route-menu" role="dialog" aria-label="${TH("library.card.routesMenu")}" hidden><div class="pc-route-menu-head"><span>${TH("library.card.routesMenu")}</span><button class="pc-route-menu-close" type="button" aria-label="${TH("library.card.closeRoutes")}"><span class="material-symbols-rounded" aria-hidden="true">close</span></button></div><div class="pc-route-options"></div></div>
   `;
 
 
@@ -118,7 +120,7 @@
     const match = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
     if (!match) return value;
     const date = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])));
-    return date.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
+    return date.toLocaleDateString((window.CW?.I18n || window.__cwI18n)?.locale, { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
   };
 
   const genreLabel = (meta, det) => {
@@ -127,16 +129,16 @@
       .map((genre) => (typeof genre === "string" ? genre : genre?.name))
       .map((genre) => String(genre || "").trim())
       .filter(Boolean)
-      .join(", ") || "Genres unavailable";
+      .join(", ") || T("library.card.genres");
   };
 
   const nextEpisodeLabels = (nextEpisode) => {
-    if (!nextEpisode || typeof nextEpisode !== "object") return ["No upcoming episode", ""];
+    if (!nextEpisode || typeof nextEpisode !== "object") return [T("library.card.noUpcoming"), ""];
     const season = Number(nextEpisode.season_number);
     const episode = Number(nextEpisode.episode_number);
     const code = Number.isInteger(season) && Number.isInteger(episode)
       ? `S${String(season).padStart(2, "0")}E${String(episode).padStart(2, "0")}`
-      : "Next episode";
+      : T("library.card.nextEpisode");
     const airDate = String(nextEpisode.air_date || "").trim();
     let timing = "";
     const match = airDate.match(/^(\d{4})-(\d{2})-(\d{2})$/);
@@ -145,7 +147,7 @@
       const now = new Date();
       const today = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
       const days = Math.round((target - today) / 86400000);
-      timing = days === 0 ? "Airs today" : days === 1 ? "Airs tomorrow" : days > 1 ? `Airs in ${days} days` : "Previously aired";
+      timing = days === 0 ? T("library.card.airsToday") : days === 1 ? T("library.card.airsTomorrow") : days > 1 ? T("library.card.airsIn", {count: days}) : T("library.card.previouslyAired");
     }
     return [[code, timing].filter(Boolean).join(" · "), formatDateLabel(airDate)];
   };
@@ -156,17 +158,17 @@
     if (isMovie) {
       const releaseRaw = meta?.release?.date || det.release_date || "";
       const runtime = meta?.runtime_minutes ?? det.runtime_minutes ?? meta?.runtime ?? det.runtime;
-      rows.push({ icon: "calendar_month", main: formatDateLabel(releaseRaw) || "Release date unavailable" });
-      rows.push({ icon: "schedule", main: runtimeLabel(runtime) || "Runtime unavailable" });
+      rows.push({ icon: "calendar_month", main: formatDateLabel(releaseRaw) || T("library.card.release") });
+      rows.push({ icon: "schedule", main: runtimeLabel(runtime) || T("library.card.runtime") });
       return rows;
     }
-    rows.push({ icon: "tv", main: String(det.status || "Status unavailable") });
+    rows.push({ icon: "tv", main: String(det.status || T("library.card.status")) });
     const seasons = Number(det.number_of_seasons);
     const episodes = Number(det.number_of_episodes);
     const totals = [
-      Number.isFinite(seasons) && seasons > 0 ? `${seasons} Season${seasons === 1 ? "" : "s"}` : "",
-      Number.isFinite(episodes) && episodes > 0 ? `${episodes} Episode${episodes === 1 ? "" : "s"}` : "",
-    ].filter(Boolean).join(" · ") || "Series totals unavailable";
+      Number.isFinite(seasons) && seasons > 0 ? T("library.card.seasons", {count: seasons}) : "",
+      Number.isFinite(episodes) && episodes > 0 ? T("library.card.episodes", {count: episodes}) : "",
+    ].filter(Boolean).join(" · ") || T("library.card.totals");
     rows.push({ icon: "layers", main: totals });
     const [nextMain, nextSub] = nextEpisodeLabels(det.next_episode_to_air);
     rows.push({ icon: "arrow_forward", main: nextMain, sub: nextSub });
@@ -287,7 +289,7 @@
       node.className = "pc-route";
       node.dataset.kind = route.kind;
       node.classList.toggle("is-selected", route.id === selectedRoute);
-      const label = route.kind === "webhook" ? "Webhook" : "Watcher";
+      const label = route.kind === "webhook" ? T("library.card.webhook") : T("library.card.watcher");
       const symbol = document.createElement("span");
       symbol.className = "material-symbols-rounded pc-route-symbol";
       symbol.setAttribute("aria-hidden", "true");
@@ -338,11 +340,11 @@
         const span = document.createElement("span");
         const extra = Math.max(0, routeItems.length - visible);
         span.className = cls;
-        span.textContent = `+${extra} ${extra === 1 ? "route" : "routes"}`;
+        span.textContent = `+${T("library.card.routes", {count: extra})}`;
         return span;
       };
       routeToggle.replaceChildren(count(1, "pc-route-count-mobile"), count(2, "pc-route-count-desktop"));
-      routeToggle.setAttribute("aria-label", `Show all ${routeItems.length} active playback routes`);
+      routeToggle.setAttribute("aria-label", T("library.card.showAllRoutes", {count: routeItems.length}));
       routeToggle.hidden = routeItems.length <= 1;
       el.classList.toggle("pc-many-routes", routeItems.length > 2);
     };
@@ -419,7 +421,7 @@
     els.overviewMore.addEventListener("click", () => {
       const expanded = els.overviewWrap.classList.toggle("is-expanded");
       els.overview.scrollTop = 0;
-      els.overviewMore.textContent = expanded ? "Less" : "More";
+      els.overviewMore.textContent = expanded ? T("library.card.less") : T("library.card.more");
       els.overviewMore.setAttribute("aria-expanded", expanded ? "true" : "false");
       if (!expanded) updateOverviewMore();
     });
@@ -435,7 +437,7 @@
       els.overviewWrap.classList.remove("is-expanded");
       els.overview.scrollTop = 0;
       els.overview.textContent = String(value || "");
-      els.overviewMore.textContent = "More";
+      els.overviewMore.textContent = T("library.card.more");
       els.overviewMore.setAttribute("aria-expanded", "false");
       els.overviewMore.hidden = true;
       updateOverviewMore();
@@ -463,13 +465,13 @@
       els.rating.textContent = available ? rating.toFixed(1) : "--";
       if (cinematic) {
         q(".pc-mobile-score").textContent = els.rating.textContent;
-        q(".pc-mobile-rating").setAttribute("aria-label", available ? `TMDB rating ${rating.toFixed(1)} out of 10` : "TMDB rating unavailable");
+        q(".pc-mobile-rating").setAttribute("aria-label", available ? T("library.card.ratingOf", {rating: rating.toFixed(1)}) : T("library.card.ratingUnavailableLabel"));
       }
       const votes = Number(rawVotes);
       els.ratingVotes.textContent = !available
-        ? "Rating unavailable"
+        ? T("library.card.ratingUnavailable")
         : Number.isFinite(votes) && votes > 0
-          ? `${votes.toLocaleString(undefined, { notation: "compact", maximumFractionDigits: 1 })} votes`
+          ? T("library.card.votes", {count: votes, n: votes.toLocaleString((window.CW?.I18n || window.__cwI18n)?.locale, { notation: "compact", maximumFractionDigits: 1 })})
           : "0 votes";
     };
 
@@ -482,8 +484,8 @@
           target.setAttribute("role", "button");
           target.tabIndex = openMedia ? 0 : -1;
           target.setAttribute("aria-disabled", String(!openMedia));
-          target.setAttribute("aria-label", `Open media card for ${title || "title"}`);
-          target.title = `Open media card for ${title || "title"}`;
+          target.setAttribute("aria-label", T("library.card.openCard", {title: title || T("library.card.titleWord")}));
+          target.title = T("library.card.openCard", {title: title || T("library.card.titleWord")});
         }
         return;
       }
@@ -495,8 +497,8 @@
         return;
       }
       els.posterLink.href = href;
-      els.posterLink.setAttribute("aria-label", `Open ${title || "title"} on TMDb`);
-      els.posterLink.title = `Open ${title || "title"} on TMDb`;
+      els.posterLink.setAttribute("aria-label", T("library.card.openTmdb", {title: title || T("library.card.titleWord")}));
+      els.posterLink.title = T("library.card.openTmdb", {title: title || T("library.card.titleWord")});
       els.posterLink.removeAttribute("aria-disabled");
     };
 
@@ -510,7 +512,7 @@
         return;
       }
       if (rows === "loading") {
-        els.informationRows.replaceChildren(informationRow("hourglass_empty", "Loading information..."));
+        els.informationRows.replaceChildren(informationRow("hourglass_empty", T("library.card.loadingInfo")));
         return;
       }
       els.informationRows.replaceChildren(
@@ -527,7 +529,7 @@
         if (source?.logo) {
           const img = document.createElement("img");
           img.src = source.logo;
-          img.alt = `${source.label || ""} logo`;
+          img.alt = T("editor.sendModal.logo", {name: source.label || ""});
           span.appendChild(img);
         } else {
           const text = document.createElement("span");
@@ -548,7 +550,7 @@
         a.href = link.href;
         a.target = "_blank";
         a.rel = "noopener noreferrer";
-        a.textContent = link.text || "Open";
+        a.textContent = link.text || T("library.card.open");
         els.links.appendChild(a);
       }
     };
@@ -578,14 +580,14 @@
       openMedia = typeof model.onOpen === "function" ? model.onOpen : null;
       els.title.textContent = !cinematic && model.year ? `${model.title} ${model.year}` : (model.title || "");
       if (cinematic) {
-        q(".pc-mobile-title").textContent = model.title || "Now Playing";
+        q(".pc-mobile-title").textContent = model.title || T("library.card.nowPlaying");
         q(".pc-heading").textContent = model.heading || "";
         setRoutes(model.routes, model.key || model.title, model.selectedRouteId);
       }
       setChips(model.chips);
       setOverview(model.overview || "");
       setPosterSrc(model.poster || PLACEHOLDER_POSTER);
-      els.poster.alt = model.title || "Poster";
+      els.poster.alt = model.title || T("library.card.poster");
       setPosterLink(model.posterHref || "", model.title);
       setBackdrop(model.backdrop);
       setInformation(model.information, model.isMovie);
@@ -603,7 +605,7 @@
           el.dataset.playbackState = model.status.icon === "pause" ? "paused" : "playing";
         }
       }
-      if (els.trailer) els.trailer.textContent = model.trailerLabel || "Watch trailer";
+      if (els.trailer) els.trailer.textContent = model.trailerLabel || T("library.card.trailer");
     }
 
     return {

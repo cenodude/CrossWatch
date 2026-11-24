@@ -2,11 +2,13 @@
 /* CrossWatch - Cross-device page layouts and flat-dark contrast */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 
+import './i18n-browser-setup.mjs';
 import test from "node:test";
 import assert from "node:assert/strict";
 import {execFileSync} from "node:child_process";
 import {readFile, mkdir} from "node:fs/promises";
 import {chromium, webkit} from "playwright";
+import {englishFrontendSource} from './i18n-test-helper.mjs';
 
 const viewports = [[320, 740], [390, 844], [740, 360], [844, 390], [932, 430], [768, 1024], [820, 1180], [1024, 768], [1194, 834], [1366, 1024], [1920, 1080]];
 const item = {key: "movie:tmdb:1", type: "movie", title: "A long movie title to check wrapping and available space", year: 2026, ids: {tmdb: "1"}};
@@ -34,7 +36,7 @@ async function open(t, kind, empty, theme = "flat-dark") {
   const errors = [];
   page.on("pageerror", error => errors.push(error.message));
   t.after(() => assert.deepEqual(errors, []));
-  const source = await readFile(new URL("../ui_frontend.py", import.meta.url), "utf8");
+  const source = englishFrontendSource();
   const html = await page.evaluate(({source, kind, theme}) => {
     const doc = new DOMParser().parseFromString(source.slice(source.indexOf("<!doctype html>"), source.indexOf("</html>", source.indexOf("<!doctype html>")) + 7), "text/html");
     doc.querySelectorAll("script").forEach(el => el.remove());

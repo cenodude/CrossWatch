@@ -6,6 +6,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import {readFileSync} from 'node:fs';
+import './i18n-vm-setup.mjs';
 
 const source = readFileSync(new URL('../assets/js/insights.js', import.meta.url), 'utf8');
 test('history renders markup in feature labels and results as text', () => {

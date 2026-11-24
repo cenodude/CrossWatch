@@ -1,6 +1,7 @@
 /* tests/events-stats.browser.mjs */
 /* CrossWatch - Activity statistics categories, charts and responsive rendering */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
+import './i18n-browser-setup.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFile, mkdir} from 'node:fs/promises';

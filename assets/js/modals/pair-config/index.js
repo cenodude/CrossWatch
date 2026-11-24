@@ -12,8 +12,10 @@ import { hasStatusMapping, mountStatusMapping, statusMappingPayload } from "./st
 import { createIdentityMap } from "../core/identity-map.js";
 import { collectionDisabledForPair, collectionTypesForPair, commonFeaturesForPair, featureAllowedForPair, hasCumulativeAnimeHistory, historyRemoveAllowed, ratingsDisabledForPair, sanitizeFeaturesForPair, sourceWatchStatusAllowed, undatedAsTodayAllowed } from "./custom-rules.js";
 
+const T = (key, vars) => (globalThis.window?.CW?.I18n || globalThis.window?.__cwI18n)?.t?.(key, vars) ?? key;
+const TH = (key, vars) => (globalThis.window?.CW?.I18n || globalThis.window?.__cwI18n)?.html?.(key, vars) ?? key;
 const TWO_WAY_WARNING =
-  "Two-way sync means both sides can write to each other. It keeps both providers aligned, but it also heavily increases the risk of conflicts, duplicates, overwrites, and deletions. Use with extreme caution.";
+  T("pairs.cfg.twoWayWarning");
 
 // Helpers
 const ID=(x,r=document)=>(r.getElementById?r.getElementById(x):r.querySelector("#"+x));
@@ -40,7 +42,7 @@ function mountMatchUsersCard(state){
   createIdentityMap(host,{
     source:state.src,sourceInstance:state.src_instance,target:state.dst,targetInstance:state.dst_instance,
     exclude:state.editing_pair_id?`pair:${state.editing_pair_id}`:"",
-    intro:"Sync several people of these servers, each with their own history.",
+    intro:T("pairs.cfg.identityIntro"),
     enabled:!!state.match_users,mapping:state.user_matches||{},
     onChange:(v)=>{state.match_users=v.enabled;state.user_matches=v.mapping;},
   });
@@ -165,7 +167,7 @@ function syncCollectionModeLock(state){
   const two=ID("cx-mode-two");
   if(two){
     two.disabled=locked;
-    two.title=locked?"Collections are one-way only. Disable Collections to use two-way sync.":TWO_WAY_WARNING;
+    two.title=locked?T("pairs.cfg.collectionsOneWay"):TWO_WAY_WARNING;
     two.closest?.("label")?.classList.toggle("muted",locked);
   }
 }
@@ -177,8 +179,8 @@ function defaultAnimeMappingOptions(state, pair){
   }
 }
 function animeHistoryBlockReason(state){
-  if(!tmdbMetadataReady(state)) return "Requires a TMDB metadata key. Add one under Settings &rsaquo; Metadata first.";
-  if(!globalAnimeMappingEnabled(state)) return "Enable global Anime ID Mapping first.";
+  if(!tmdbMetadataReady(state)) return T("pairs.cfg.needsTmdb");
+  if(!globalAnimeMappingEnabled(state)) return T("pairs.cfg.enableAnime");
   return "";
 }
 function normalizeAnimeHistoryOptions(state){
@@ -226,8 +228,8 @@ function normalizeAnimeFeatureOptions(state, feature){
 function renderAnimeOnlyOption(state, feature){
   if(![state?.src,state?.dst].some(provider=>same(provider,"myanimelist")||same(provider,"kitsu")||same(provider,"anilist"))) return "";
   const id=feature==="ratings"?"cx-rt-anime-only":"cx-wl-anime-only";
-  return `<div class="opt-row muted" title="This provider only holds anime, so this is always on.">
-    <label for="${id}">Anime-only sync</label>
+  return `<div class="opt-row muted" title="${TH("pairs.cfg.animeOnlyTitle")}">
+    <label for="${id}">${TH("pairs.cfg.animeOnly")}</label>
     <label class="switch"><input id="${id}" type="checkbox" data-anime-only="1" checked disabled><span class="slider"></span></label>
   </div>`;
 }
@@ -299,18 +301,18 @@ function renderManagedPlaylistPairModal(hostEl,pair){
       <div class="cx-head">
         <div class="title-wrap">
           <span class="material-symbols-rounded app-logo" aria-hidden="true">queue_music</span>
-          <div><div class="app-name">Managed by Playlists</div><div class="app-sub">Edit this pair from the Playlists page.</div></div>
+          <div><div class="app-name">${TH("pairs.cfg.managed")}</div><div class="app-sub">${TH("pairs.cfg.managedHint")}</div></div>
         </div>
       </div>
       <div class="cx-body">
         <div class="panel">
-          <div class="panel-title">Playlist mapping</div>
-          <div class="muted">This sync pair is owned by ${escHTML(label)}. Normal pair editing is disabled so the playlist mapping stays connected.</div>
+          <div class="panel-title">${TH("pairs.cfg.playlistMapping")}</div>
+          <div class="muted">${TH("pairs.cfg.ownedBy", {name: label})}</div>
         </div>
       </div>
       <div class="cx-actions">
-        <button type="button" class="cx-btn" id="cx-managed-close">Cancel</button>
-        <button type="button" class="cx-btn primary" id="cx-managed-open"><span class="material-symbols-rounded" aria-hidden="true">queue_music</span> Open playlist mapping</button>
+        <button type="button" class="cx-btn" id="cx-managed-close">${TH("pairs.cfg.cancel")}</button>
+        <button type="button" class="cx-btn primary" id="cx-managed-open"><span class="material-symbols-rounded" aria-hidden="true">queue_music</span> ${TH("pairs.cfg.openMapping")}</button>
       </div>
     </div>`;
   ID("cx-managed-close",hostEl)?.addEventListener("click",(e)=>{e.preventDefault();closePairConfigModal(hostEl)});
@@ -323,15 +325,15 @@ function renderManagedPlaylistPairModal(hostEl,pair){
     }catch(err){console.warn("[pair-config] playlist mapping open failed",err)}
   });
 }
-function ensureInlineFoot(modal){if(!modal)return;const card=Q(".cx-card",modal)||modal;let bar=card.querySelector(":scope > .cx-actions");if(!bar){bar=document.createElement("div");bar.className="cx-actions";const cancel=document.createElement("button");cancel.type="button";cancel.className="cx-btn";cancel.textContent="Cancel";cancel.addEventListener("click",(e)=>{e.preventDefault();closePairConfigModal(modal)});const save=document.createElement("button");save.type="button";save.className="cx-btn primary";save.id="cx-inline-save";save.textContent="Save";save.addEventListener("click",async(e)=>{e.preventDefault();const run=modal.__doSave;if(typeof run!=="function")return;const b=ID("cx-inline-save");if(!b)return;const old=b.textContent;b.disabled=true;b.textContent="Saving...";try{await run()}finally{b.disabled=false;b.textContent=old}});bar.append(cancel,save);card.appendChild(bar)}}
+function ensureInlineFoot(modal){if(!modal)return;const card=Q(".cx-card",modal)||modal;let bar=card.querySelector(":scope > .cx-actions");if(!bar){bar=document.createElement("div");bar.className="cx-actions";const cancel=document.createElement("button");cancel.type="button";cancel.className="cx-btn";cancel.textContent=T("pairs.cfg.cancel");cancel.addEventListener("click",(e)=>{e.preventDefault();closePairConfigModal(modal)});const save=document.createElement("button");save.type="button";save.className="cx-btn primary";save.id="cx-inline-save";save.textContent=T("pairs.cfg.save");save.addEventListener("click",async(e)=>{e.preventDefault();const run=modal.__doSave;if(typeof run!=="function")return;const b=ID("cx-inline-save");if(!b)return;const old=b.textContent;b.disabled=true;b.textContent=T("pairs.cfg.saving");try{await run()}finally{b.disabled=false;b.textContent=old}});bar.append(cancel,save);card.appendChild(bar)}}
 
 // Ratings summary
 function updateRtSummary(){
   const m=ID("cx-modal"),st=m?.__state,rt=st?.options?.ratings||{},det=ID("cx-rt-adv"),sum=det?.querySelector("summary");
   if(!sum)return;
   const types=Array.isArray(rt.types)&&rt.types.length?rt.types.join(", "):"movies, shows, seasons, episodes";
-  const mode=String(rt.mode||"all")==="from_date"?(rt.from_date?`From ${rt.from_date}`:"From a date"):"All";
-  sum.innerHTML=`<span class="pill">Scope: ${types}</span><span class="summary-gap">•</span><span class="pill">Mode: ${mode}</span>`;
+  const mode=String(rt.mode||"all")==="from_date"?(rt.from_date?T("pairs.cfg.fromDateValue",{date:rt.from_date}):T("pairs.cfg.fromDate")):T("pairs.cfg.all");
+  sum.innerHTML=`<span class="pill">${TH("pairs.cfg.scopeValue",{value:types})}</span><span class="summary-gap">•</span><span class="pill">${TH("pairs.cfg.modeValue",{value:mode})}</span>`;
   sum.setAttribute("aria-expanded",det.open?"true":"false");
 }
 
@@ -341,11 +343,11 @@ const tpl=()=>`
     <div class="cx-head">
       <div class="title-wrap">
         <span class="material-symbols-rounded app-logo" aria-hidden="true">sync_alt</span>
-        <div><div class="app-name">Configure Connection</div><div class="app-sub">Choose source → target and what to sync</div></div>
+        <div><div class="app-name">${TH("pairs.cfg.configure")}</div><div class="app-sub">${TH("pairs.cfg.configureHint")}</div></div>
       </div>
-      <label class="switch big head-toggle" title="Enable/Disable connection">
+      <label class="switch big head-toggle" title="${TH("pairs.cfg.toggle")}">
         <input type="checkbox" id="cx-enabled" checked><span class="slider" aria-hidden="true"></span>
-        <span class="lab on" aria-hidden="true">Enabled</span><span class="lab off" aria-hidden="true">Disabled</span>
+        <span class="lab on" aria-hidden="true">${TH("pairs.cfg.enabled")}</span><span class="lab off" aria-hidden="true">${TH("pairs.cfg.disabled")}</span>
       </label>
     </div>
     <div class="cx-body">
@@ -354,15 +356,15 @@ const tpl=()=>`
           <div class="cx-row cx-st-row">
             <div class="field endpoint-field endpoint-source">
               <div class="endpoint-card" id="cx-src-card">
-                <div class="endpoint-top" id="cx-src-trigger" role="button" tabindex="0" aria-label="Choose source provider">
+                <div class="endpoint-top" id="cx-src-trigger" role="button" tabindex="0" aria-label="${TH("pairs.cfg.chooseSource")}">
                   <div class="endpoint-identity">
                     <span class="endpoint-logo" id="cx-src-logo"></span>
                     <div class="endpoint-copy">
-                      <div class="endpoint-name" id="cx-src-name">Select source</div>
-                      <div class="endpoint-meta" id="cx-src-meta">Choose the system CrossWatch reads from.</div>
+                      <div class="endpoint-name" id="cx-src-name">${TH("pairs.cfg.selectSource")}</div>
+                      <div class="endpoint-meta" id="cx-src-meta">${TH("pairs.cfg.readsFrom")}</div>
                     </div>
                   </div>
-                  <div class="endpoint-role">From</div>
+                  <div class="endpoint-role">${TH("pairs.cfg.from")}</div>
                 </div>
                 <select id="cx-src-inst" name="cx-src-inst" class="input endpoint-profile-select"></select>
               </div>
@@ -370,15 +372,15 @@ const tpl=()=>`
             </div>
             <div class="field endpoint-field endpoint-target">
               <div class="endpoint-card" id="cx-dst-card">
-                <div class="endpoint-top" id="cx-dst-trigger" role="button" tabindex="0" aria-label="Choose target provider">
+                <div class="endpoint-top" id="cx-dst-trigger" role="button" tabindex="0" aria-label="${TH("pairs.cfg.chooseTarget")}">
                   <div class="endpoint-identity">
                     <span class="endpoint-logo" id="cx-dst-logo"></span>
                     <div class="endpoint-copy">
-                      <div class="endpoint-name" id="cx-dst-name">Select target</div>
-                      <div class="endpoint-meta" id="cx-dst-meta">Choose the system CrossWatch writes to.</div>
+                      <div class="endpoint-name" id="cx-dst-name">${TH("pairs.cfg.selectTarget")}</div>
+                      <div class="endpoint-meta" id="cx-dst-meta">${TH("pairs.cfg.writesTo")}</div>
                     </div>
                   </div>
-                  <div class="endpoint-role">To</div>
+                  <div class="endpoint-role">${TH("pairs.cfg.to")}</div>
                 </div>
                 <select id="cx-dst-inst" name="cx-dst-inst" class="input endpoint-profile-select"></select>
               </div>
@@ -390,15 +392,15 @@ const tpl=()=>`
           <div class="flow-card">
             <div class="flow-head">
               <div class="flow-copy">
-                <div class="flow-title">Sync flow: <span id="cx-flow-title">One-way</span></div>
-                <div id="cx-flow-features" class="flow-feature-dots" aria-label="Enabled connection features"></div>
+                <div class="flow-title">${TH("pairs.cfg.syncFlow")} <span id="cx-flow-title">${TH("pairs.cfg.oneWay")}</span></div>
+                <div id="cx-flow-features" class="flow-feature-dots" aria-label="${TH("pairs.cfg.enabledFeatures")}"></div>
               </div>
               <div class="flow-control-row">
                 <div id="cx-user-profile-slot" class="cx-user-profile-slot"></div>
                 <div class="flow-mode-inline">
                   <div class="seg">
-                    <input type="radio" name="cx-mode" id="cx-mode-one" value="one"/><label for="cx-mode-one">One-way</label>
-                    <input type="radio" name="cx-mode" id="cx-mode-two" value="two"/><label for="cx-mode-two" title="${TWO_WAY_WARNING}">Two-way</label>
+                    <input type="radio" name="cx-mode" id="cx-mode-one" value="one"/><label for="cx-mode-one">${TH("pairs.cfg.oneWay")}</label>
+                    <input type="radio" name="cx-mode" id="cx-mode-two" value="two"/><label for="cx-mode-two" title="${TWO_WAY_WARNING}">${TH("pairs.cfg.twoWay")}</label>
                   </div>
                 </div>
               </div>
@@ -413,8 +415,8 @@ const tpl=()=>`
         </div>
       </div>
       <div class="cx-tabsrow grid2">
-        <label class="cx-mobile-section" for="cx-mobile-section"><span>Section</span><select id="cx-mobile-section" aria-controls="cx-feat-panel"></select></label>
-        <div id="cx-feat-tabs" class="feature-tabs" role="tablist" aria-label="Connection sections"></div>
+        <label class="cx-mobile-section" for="cx-mobile-section"><span>${TH("pairs.cfg.section")}</span><select id="cx-mobile-section" aria-controls="cx-feat-panel"></select></label>
+        <div id="cx-feat-tabs" class="feature-tabs" role="tablist" aria-label="${TH("pairs.cfg.sections")}"></div>
       </div>
       <div class="cx-main grid2">
         <div class="left"><div class="panel" id="cx-feat-panel" role="tabpanel" aria-live="polite"></div></div>
@@ -567,7 +569,7 @@ async function loadUserProfiles(state){
 
 async function loadProviders(state){
   const list=await getJSON("/api/sync/providers?cb="+Date.now());
-  if(!Array.isArray(list)) throw new Error("Invalid sync providers response");
+  if(!Array.isArray(list)) throw new Error(T("pairs.cfg.invalidProviders"));
   state.providers=[...list].sort((a,b)=>String(a.label||a.name).localeCompare(String(b.label||b.name),undefined,{sensitivity:"base",numeric:true}))
 }
 
@@ -681,7 +683,7 @@ function progressRecommendationText(state){
   if(!isTwoWayMode(state)) return "";
   const entries = progressRecommendationEntries(state);
   if(entries.length < 2) return "";
-  return "Recommended targets: " + entries.map(entry => `${entry.label} ${formatProgressPercent(entry.percent)}%`).join(" / ");
+  return T("pairs.cfg.recommendedTargets") + " " + entries.map(entry => `${entry.label} ${formatProgressPercent(entry.percent)}%`).join(" / ");
 }
 function applyProgressMaxRecommendation(state, progress){
   const pr = progress || {};
@@ -740,7 +742,7 @@ function initPairLibraryUI(state){
   if(hasPL){
     const btn=ID("plx-libs-load");
     const load=()=>{
-      if(btn){btn.disabled=true;btn.textContent="Loading…";}
+      if(btn){btn.disabled=true;btn.textContent=T("pairs.cfg.loading");}
       Promise.all([
         fetchPairLibraries("PLEX","history").then(libs=>{
           renderPairLibChips(state,"PLEX","history",libs);
@@ -749,7 +751,7 @@ function initPairLibraryUI(state){
           renderPairLibChips(state,"PLEX","ratings",libs);
         })
       ]).finally(()=>{
-        if(btn){btn.disabled=false;btn.textContent="Load libraries";}
+        if(btn){btn.disabled=false;btn.textContent=T("pairs.cfg.loadLibraries");}
       });
     };
     
@@ -766,7 +768,7 @@ function initPairLibraryUI(state){
   if(hasJF){
     const btn=ID("jf-libs-load");
     const load=()=>{
-      if(btn){btn.disabled=true;btn.textContent="Loading…";}
+      if(btn){btn.disabled=true;btn.textContent=T("pairs.cfg.loading");}
       Promise.all([
         fetchPairLibraries("JELLYFIN","history").then(libs=>{
           renderPairLibChips(state,"JELLYFIN","history",libs);
@@ -775,7 +777,7 @@ function initPairLibraryUI(state){
           renderPairLibChips(state,"JELLYFIN","ratings",libs);
         })
       ]).finally(()=>{
-        if(btn){btn.disabled=false;btn.textContent="Load libraries";}
+        if(btn){btn.disabled=false;btn.textContent=T("pairs.cfg.loadLibraries");}
       });
     };
 
@@ -792,7 +794,7 @@ function initPairLibraryUI(state){
   if(hasEM){
     const btn=ID("em-libs-load");
     const load=()=>{
-      if(btn){btn.disabled=true;btn.textContent="Loading…";}
+      if(btn){btn.disabled=true;btn.textContent=T("pairs.cfg.loading");}
       Promise.all([
         fetchPairLibraries("EMBY","history").then(libs=>{
           renderPairLibChips(state,"EMBY","history",libs);
@@ -801,7 +803,7 @@ function initPairLibraryUI(state){
           renderPairLibChips(state,"EMBY","ratings",libs);
         })
       ]).finally(()=>{
-        if(btn){btn.disabled=false;btn.textContent="Load libraries";}
+        if(btn){btn.disabled=false;btn.textContent=T("pairs.cfg.loadLibraries");}
       });
     };
 
@@ -826,7 +828,7 @@ function renderWarnings(state){
   if(HIDE.has(state.feature)) return;
   const src=byName(state,state.src),dst=byName(state,state.dst);
   const isExp=v=>(parseInt(String(v||"0").split(".")[0],10)||0)<1;
-  const html=[src,dst].reduce((a,p)=>a+(p&&isExp(p.version)?`<div class="module-alert experimental-alert"><div class="title"><span class="ic">⚠</span> Experimental Module: ${p.label||p.name||"Provider"}</div><div class="body"><div class="mini">Not yet stable, with limited functionality. Use interactive sync and verify the results. Syncing in one direction only is strongly recommended.</div></div></div>`:""),"");
+  const html=[src,dst].reduce((a,p)=>a+(p&&isExp(p.version)?`<div class="module-alert experimental-alert"><div class="title"><span class="ic">⚠</span> ${TH("pairs.cfg.experimental",{name:p.label||p.name||T("pairs.cfg.provider")})}</div><div class="body"><div class="mini">${TH("pairs.cfg.experimentalHint")}</div></div></div>`:""),"");
   if(!html) return;
   if(BOTTOM.has(state.feature)){
     const host=document.createElement("div");
@@ -892,15 +894,15 @@ function renderProviderSelects(state){
   const providers=scopedPairView()?state.providers.filter(p=>hasOwnInstance(state,p.name)||same(p.name,state.src)||same(p.name,state.dst)):state.providers;
   const opts=providers.map(p=>`<option value="${p.name}">${p.label}</option>`).join("");
   const dstOpts=providers.filter(p=>p.capabilities?.can_target!==false).map(p=>`<option value="${p.name}">${p.label}</option>`).join("");
-  srcSel.innerHTML=`<option value="">Select…</option>${opts}`;dstSel.innerHTML=`<option value="">Select…</option>${dstOpts}`;
+  srcSel.innerHTML=`<option value="">${TH("pairs.cfg.selectEllipsis")}</option>${opts}`;dstSel.innerHTML=`<option value="">${TH("pairs.cfg.selectEllipsis")}</option>${dstOpts}`;
   if(state.src) srcSel.value=state.src;if(state.dst) dstSel.value=state.dst;
   const providerKind=(name)=>{
-    if(isMedia(name)) return "Media server";
-    if(isKodi(name)) return "Media client";
-    if(isCrossWatch(name)) return "Tracker";
-    if(isTrakt(name)||isSimkl(name)||same(name,"mdblist")||same(name,"publicmetadb")||same(name,"floppy")||same(name,"punchplay")||same(name,"tautulli")||same(name,"tracearr")) return "Tracker";
-    if(same(name,"tmdb")||same(name,"anilist")) return "Metadata";
-    return "Provider";
+    if(isMedia(name)) return T("pairs.cfg.mediaServer");
+    if(isKodi(name)) return T("pairs.cfg.mediaClient");
+    if(isCrossWatch(name)) return T("pairs.cfg.tracker");
+    if(isTrakt(name)||isSimkl(name)||same(name,"mdblist")||same(name,"publicmetadb")||same(name,"floppy")||same(name,"punchplay")||same(name,"tautulli")||same(name,"tracearr")) return T("pairs.cfg.tracker");
+    if(same(name,"tmdb")||same(name,"anilist")) return T("pairs.cfg.metadata");
+    return T("pairs.cfg.provider");
   };
   const openPicker=(sel)=>{
     if(!sel) return;
@@ -927,9 +929,9 @@ function renderProviderSelects(state){
     card.style.setProperty("--endpoint-watermark", prov ? `url("${window.CW?.ProviderMeta?.logoPath?.(key) || `/assets/img/${key}.svg`}")` : "none");
     card.classList.toggle("is-selected",!!prov);
     if(logo) logo.innerHTML=prov?providerLogoHTML(prov.name,prov.label):`<span class="prov-wrap"><span class="prov-fallback">?</span></span>`;
-    if(name) name.textContent=prov?.label||(side==="src"?"Select source":"Select target");
-    if(meta) meta.innerHTML=prov?`<span class="endpoint-meta-type">${providerKind(prov.name)}</span><span class="endpoint-meta-cap">${prov.capabilities?.bidirectional?"Bidirectional capable":"Single direction"}</span>`:(side==="src"?"Choose the system CrossWatch reads from.":"Choose the system CrossWatch writes to.");
-    if(trigger) trigger.setAttribute("aria-label", `${side==="src"?"Choose source":"Choose target"} provider${prov?.label?`: ${prov.label}`:""}`);
+    if(name) name.textContent=prov?.label||(side==="src"?T("pairs.cfg.selectSource"):T("pairs.cfg.selectTarget"));
+    if(meta) meta.innerHTML=prov?`<span class="endpoint-meta-type">${providerKind(prov.name)}</span><span class="endpoint-meta-cap">${prov.capabilities?.bidirectional?T("pairs.cfg.bidirectional"):T("pairs.cfg.single")}</span>`:(side==="src"?T("pairs.cfg.readsFrom"):T("pairs.cfg.writesTo"));
+    if(trigger) trigger.setAttribute("aria-label", `${T(side==="src"?"pairs.cfg.chooseSourceProvider":"pairs.cfg.chooseTargetProvider")}${prov?.label?`: ${prov.label}`:""}`);
   };
   const upd=()=>{
     const s=byName(state,srcSel.value),d=byName(state,dstSel.value);
@@ -957,10 +959,10 @@ function renderInstanceSelects(state){
     for(const x of arr){
       if(typeof x==="string"){
         const id=norm(x);
-        if(id) byId.set(id,{id,label:id==="default"?"Default":id,configured:null});
+        if(id) byId.set(id,{id,label:id==="default"?T("pairs.cfg.default"):id,configured:null});
       }else if(x&&typeof x==="object"&&x.id){
         const id=norm(x.id);
-        const label=String(x.display_label||x.label||x.id||"").trim()||(id==="default"?"Default":id);
+        const label=String(x.display_label||x.label||x.id||"").trim()||(id==="default"?T("pairs.cfg.default"):id);
         if(id) byId.set(id,{id,label,configured:typeof x.configured==="boolean"?x.configured:null});
       }
     }
@@ -981,20 +983,20 @@ function renderInstanceSelects(state){
       const known=all.find(row=>row.id===pin);
       const neverConfigured=pin==="default"&&known&&known.configured===false;
       if(!neverConfigured||!rows.length){
-        const base=known||{id:pin,label:pin==="default"?"Default":pin};
+        const base=known||{id:pin,label:pin==="default"?T("pairs.cfg.default"):pin};
         const stale={...base,stale:true};
         rows=pin==="default"?[stale,...rows]:[...rows,stale];
       }
     }
     if(scoped) rows=rows.filter(row=>row.id!=="default"&&row.configured!==false);
-    else if(!rows.length) rows=[{id:"default",label:"Default",stale:!!state.instancesLoaded}];
+    else if(!rows.length) rows=[{id:"default",label:T("pairs.cfg.default"),stale:!!state.instancesLoaded}];
     const samePair=sel===dstInstSel&&same(state.src,state.dst);
     if(samePair) rows=rows.filter(row=>row.id!==norm(srcInstSel.value));
     const ids=rows.map(row=>row.id);
     const lost=scoped&&!!pin&&!ids.includes(pin)&&(pin===want||!String(cur||"").trim());
-    sel.innerHTML=(lost?'<option value="" disabled>Choose an account</option>':"")+rows.map(row=>`<option value="${escHTML(row.id)}" title="${escHTML(row.id)}">${escHTML(row.stale?`${row.label} - not configured`:row.label)}</option>`).join("");
+    sel.innerHTML=(lost?'<option value="" disabled>' + TH("pairs.cfg.chooseAccount") + '</option>':"")+rows.map(row=>`<option value="${escHTML(row.id)}" title="${escHTML(row.id)}">${escHTML(row.stale?T("pairs.cfg.notConfigured",{name:row.label}):row.label)}</option>`).join("");
     sel.value=ids.includes(want)?want:(lost?"":(ids[0]||""));
-    if(!rows.length) sel.innerHTML=`<option value="">${samePair?"No other configured instance":"No configured instance"}</option>`;
+    if(!rows.length) sel.innerHTML=`<option value="">${TH(samePair?"pairs.cfg.noOtherInstance":"pairs.cfg.noInstance")}</option>`;
     sel.disabled=!prov||!rows.length;
   };
 
@@ -1056,7 +1058,7 @@ function renderPairUserProfileControl(state){
   const show=!!profile;
   slot.classList.toggle("hidden",!show);
   row.classList.toggle("hidden",!show);
-  row.innerHTML=show?`<div class="cx-user-profile-display" aria-label="Assigned profile"><span class="material-symbols-rounded" aria-hidden="true">account_circle</span><span>${escHTML(profile.label)}</span></div>`:"";
+  row.innerHTML=show?`<div class="cx-user-profile-display" aria-label="${TH("pairs.cfg.assignedProfile")}"><span class="material-symbols-rounded" aria-hidden="true">account_circle</span><span>${escHTML(profile.label)}</span></div>`:"";
 }
 
 // Fold toggles (works with draggable modals)
@@ -1197,8 +1199,8 @@ function getProviderOverrideCount(state, providerKey){
 function getProviderSummaryText(state, providerKey){
   const overrides = getProviderOverrideCount(state, providerKey);
   return overrides
-    ? `${overrides} custom ${overrides === 1 ? "override" : "overrides"} active`
-    : "Defaults are good for most users";
+    ? T("pairs.cfg.overrides",{count:overrides})
+    : T("pairs.cfg.defaultsGood");
 }
 
 function refreshProviderCardSummaries(state){
@@ -1226,12 +1228,12 @@ function renderFeaturePanel(state){
     if (rightWrap) rightWrap.style.display = "none";
 
     const providerHintText = (providerKey) => {
-      if (providerKey === "plex") return "Tune Plex retries, workers, and pair library scope";
-      if (providerKey === "jellyfin") return "Tune Jellyfin lookup, timeouts and pair library scope.";
-      if (providerKey === "kodi") return "Tune Kodi pair library scope.";
-      if (providerKey === "silo") return "Tune Silo pair library scope.";
-      if (providerKey === "tofa") return "Tune Tofa pair library scope.";
-      return "Tune Emby timeouts and pair library scope.";
+      if (providerKey === "plex") return T("pairs.cfg.tunePlex");
+      if (providerKey === "jellyfin") return T("pairs.cfg.tuneJellyfin");
+      if (providerKey === "kodi") return T("pairs.cfg.tuneKodi");
+      if (providerKey === "silo") return T("pairs.cfg.tuneSilo");
+      if (providerKey === "tofa") return T("pairs.cfg.tuneTofa");
+      return T("pairs.cfg.tuneEmby");
     };
 
     const providerCards = [];
@@ -1252,31 +1254,31 @@ function renderFeaturePanel(state){
         </summary>
         <div class="fold-body provider-card-body">
           <div class="grid2 compact" style="padding:8px 0 2px">
-            <div class="opt-row"><label for="plx-rating-workers">Rating workers</label><input id="plx-rating-workers" class="input small" type="number" min="1" max="64" step="1" value="${plex.rating_workers??12}"></div>
-            <div class="opt-row"><label for="plx-history-workers">History workers</label><input id="plx-history-workers" class="input small" type="number" min="1" max="64" step="1" value="${plex.history_workers??12}"></div>
-            <div class="opt-row"><label for="plx-timeout">Timeout (s)</label><input id="plx-timeout" class="input small" type="number" min="1" max="120" step="1" value="${Number.isFinite(plex.timeout)?plex.timeout:10}"></div>
-            <div class="opt-row"><label for="plx-retries">Max retries</label><input id="plx-retries" class="input small" type="number" min="0" max="10" step="1" value="${Number.isFinite(plex.max_retries)?plex.max_retries:3}"></div>
+            <div class="opt-row"><label for="plx-rating-workers">${TH("pairs.cfg.ratingWorkers")}</label><input id="plx-rating-workers" class="input small" type="number" min="1" max="64" step="1" value="${plex.rating_workers??12}"></div>
+            <div class="opt-row"><label for="plx-history-workers">${TH("pairs.cfg.historyWorkers")}</label><input id="plx-history-workers" class="input small" type="number" min="1" max="64" step="1" value="${plex.history_workers??12}"></div>
+            <div class="opt-row"><label for="plx-timeout">${TH("pairs.cfg.timeout")}</label><input id="plx-timeout" class="input small" type="number" min="1" max="120" step="1" value="${Number.isFinite(plex.timeout)?plex.timeout:10}"></div>
+            <div class="opt-row"><label for="plx-retries">${TH("pairs.cfg.retries")}</label><input id="plx-retries" class="input small" type="number" min="0" max="10" step="1" value="${Number.isFinite(plex.max_retries)?plex.max_retries:3}"></div>
           </div>
           <div class="prov-box" id="plx-pair-libs">
-            <div class="panel-title small">Pair library whitelist</div>
-            <div class="muted">Empty = use server-level whitelist.</div>
+            <div class="panel-title small">${TH("pairs.cfg.whitelist")}</div>
+            <div class="muted">${TH("pairs.cfg.serverWhitelist")}</div>
             <div class="opt-row">
-              <div class="field-label">History</div>
+              <div class="field-label">${TH("pairs.cfg.history")}</div>
               <div class="chip-row" id="plx-hist-libs"></div>
             </div>
             <div class="opt-row">
-              <div class="field-label">Ratings</div>
+              <div class="field-label">${TH("pairs.cfg.ratings")}</div>
               <div class="chip-row" id="plx-rate-libs"></div>
             </div>
             <div class="opt-row">
-              <div class="field-label">Progress</div>
+              <div class="field-label">${TH("pairs.cfg.progress")}</div>
               <div class="chip-row" id="plx-prog-libs"></div>
             </div>
             <div class="opt-row">
-              <div class="field-label">Collections</div>
+              <div class="field-label">${TH("pairs.cfg.collections")}</div>
               <div class="chip-row" id="plx-coll-libs"></div>
             </div>
-            <button type="button" class="cx-btn small" id="plx-libs-load">Load libraries</button>
+            <button type="button" class="cx-btn small" id="plx-libs-load">${TH("pairs.cfg.loadLibraries")}</button>
           </div>
         </div>
       </details>`);
@@ -1298,30 +1300,30 @@ function renderFeaturePanel(state){
         </summary>
         <div class="fold-body provider-card-body">
           <div class="grid2 compact" style="padding:8px 0 2px">
-            <div class="opt-row"><label for="jf-timeout">Timeout (s)</label><input id="jf-timeout" class="input small" type="number" min="1" max="120" step="1" value="${Number.isFinite(jf.timeout)?jf.timeout:15}"></div>
-            <div class="opt-row"><label for="jf-retries">Max retries</label><input id="jf-retries" class="input small" type="number" min="0" max="10" step="1" value="${Number.isFinite(jf.max_retries)?jf.max_retries:3}"></div>
-            <div class="opt-row"><label for="jf-targeted-lookup">Targeted library lookup</label><label class="switch"><input id="jf-targeted-lookup" type="checkbox" ${getPairProviderTargetedLookupValue(state)?"checked":""}><span class="slider"></span></label></div>
+            <div class="opt-row"><label for="jf-timeout">${TH("pairs.cfg.timeout")}</label><input id="jf-timeout" class="input small" type="number" min="1" max="120" step="1" value="${Number.isFinite(jf.timeout)?jf.timeout:15}"></div>
+            <div class="opt-row"><label for="jf-retries">${TH("pairs.cfg.retries")}</label><input id="jf-retries" class="input small" type="number" min="0" max="10" step="1" value="${Number.isFinite(jf.max_retries)?jf.max_retries:3}"></div>
+            <div class="opt-row"><label for="jf-targeted-lookup">${TH("pairs.cfg.targeted")}</label><label class="switch"><input id="jf-targeted-lookup" type="checkbox" ${getPairProviderTargetedLookupValue(state)?"checked":""}><span class="slider"></span></label></div>
           </div>
           <div class="prov-box" id="jf-pair-libs">
-            <div class="panel-title small">Pair library whitelist</div>
-            <div class="muted">Empty = use server-level whitelist.</div>
+            <div class="panel-title small">${TH("pairs.cfg.whitelist")}</div>
+            <div class="muted">${TH("pairs.cfg.serverWhitelist")}</div>
             <div class="opt-row">
-              <div class="field-label">History</div>
+              <div class="field-label">${TH("pairs.cfg.history")}</div>
               <div class="chip-row" id="jf-hist-libs"></div>
             </div>
             <div class="opt-row">
-              <div class="field-label">Ratings</div>
+              <div class="field-label">${TH("pairs.cfg.ratings")}</div>
               <div class="chip-row" id="jf-rate-libs"></div>
             </div>
             <div class="opt-row">
-              <div class="field-label">Progress</div>
+              <div class="field-label">${TH("pairs.cfg.progress")}</div>
               <div class="chip-row" id="jf-prog-libs"></div>
             </div>
             <div class="opt-row">
-              <div class="field-label">Collections</div>
+              <div class="field-label">${TH("pairs.cfg.collections")}</div>
               <div class="chip-row" id="jf-coll-libs"></div>
             </div>
-            <button type="button" class="cx-btn small" id="jf-libs-load">Load libraries</button>
+            <button type="button" class="cx-btn small" id="jf-libs-load">${TH("pairs.cfg.loadLibraries")}</button>
           </div>
         </div>
       </details>`);
@@ -1343,29 +1345,29 @@ function renderFeaturePanel(state){
         </summary>
         <div class="fold-body provider-card-body">
           <div class="grid2 compact" style="padding:8px 0 2px">
-            <div class="opt-row"><label for="em-timeout">Timeout (s)</label><input id="em-timeout" class="input small" type="number" min="1" max="120" step="1" value="${Number.isFinite(em.timeout)?em.timeout:15}"></div>
-            <div class="opt-row"><label for="em-retries">Max retries</label><input id="em-retries" class="input small" type="number" min="0" max="10" step="1" value="${Number.isFinite(em.max_retries)?em.max_retries:3}"></div>
+            <div class="opt-row"><label for="em-timeout">${TH("pairs.cfg.timeout")}</label><input id="em-timeout" class="input small" type="number" min="1" max="120" step="1" value="${Number.isFinite(em.timeout)?em.timeout:15}"></div>
+            <div class="opt-row"><label for="em-retries">${TH("pairs.cfg.retries")}</label><input id="em-retries" class="input small" type="number" min="0" max="10" step="1" value="${Number.isFinite(em.max_retries)?em.max_retries:3}"></div>
           </div>
           <div class="prov-box" id="em-pair-libs">
-            <div class="panel-title small">Pair library whitelist</div>
-            <div class="muted">Empty = use server-level whitelist.</div>
+            <div class="panel-title small">${TH("pairs.cfg.whitelist")}</div>
+            <div class="muted">${TH("pairs.cfg.serverWhitelist")}</div>
             <div class="opt-row">
-              <div class="field-label">History</div>
+              <div class="field-label">${TH("pairs.cfg.history")}</div>
               <div class="chip-row" id="em-hist-libs"></div>
             </div>
             <div class="opt-row">
-              <div class="field-label">Ratings</div>
+              <div class="field-label">${TH("pairs.cfg.ratings")}</div>
               <div class="chip-row" id="em-rate-libs"></div>
             </div>
             <div class="opt-row">
-              <div class="field-label">Progress</div>
+              <div class="field-label">${TH("pairs.cfg.progress")}</div>
               <div class="chip-row" id="em-prog-libs"></div>
             </div>
             <div class="opt-row">
-              <div class="field-label">Collections</div>
+              <div class="field-label">${TH("pairs.cfg.collections")}</div>
               <div class="chip-row" id="em-coll-libs"></div>
             </div>
-            <button type="button" class="cx-btn small" id="em-libs-load">Load libraries</button>
+            <button type="button" class="cx-btn small" id="em-libs-load">${TH("pairs.cfg.loadLibraries")}</button>
           </div>
         </div>
       </details>`);
@@ -1387,21 +1389,21 @@ function renderFeaturePanel(state){
         </summary>
         <div class="fold-body provider-card-body">
           <div class="prov-box" id="kodi-pair-libs">
-            <div class="panel-title small">Pair library whitelist</div>
-            <div class="muted">Empty = use connection-level whitelist.</div>
+            <div class="panel-title small">${TH("pairs.cfg.whitelist")}</div>
+            <div class="muted">${TH("pairs.cfg.connWhitelist")}</div>
             <div class="opt-row">
-              <div class="field-label">History</div>
+              <div class="field-label">${TH("pairs.cfg.history")}</div>
               <div class="chip-row" id="kodi-hist-libs"></div>
             </div>
             <div class="opt-row">
-              <div class="field-label">Ratings</div>
+              <div class="field-label">${TH("pairs.cfg.ratings")}</div>
               <div class="chip-row" id="kodi-rate-libs"></div>
             </div>
             <div class="opt-row">
-              <div class="field-label">Progress</div>
+              <div class="field-label">${TH("pairs.cfg.progress")}</div>
               <div class="chip-row" id="kodi-prog-libs"></div>
             </div>
-            <button type="button" class="cx-btn small" id="kodi-libs-load">Load libraries</button>
+            <button type="button" class="cx-btn small" id="kodi-libs-load">${TH("pairs.cfg.loadLibraries")}</button>
           </div>
         </div>
       </details>`);
@@ -1423,25 +1425,25 @@ function renderFeaturePanel(state){
         </summary>
         <div class="fold-body provider-card-body">
           <div class="prov-box" id="silo-pair-libs">
-            <div class="panel-title small">Pair library whitelist</div>
-            <div class="muted">Empty = use connection-level whitelist.</div>
+            <div class="panel-title small">${TH("pairs.cfg.whitelist")}</div>
+            <div class="muted">${TH("pairs.cfg.connWhitelist")}</div>
             <div class="opt-row">
-              <div class="field-label">History</div>
+              <div class="field-label">${TH("pairs.cfg.history")}</div>
               <div class="chip-row" id="silo-hist-libs"></div>
             </div>
             <div class="opt-row">
-              <div class="field-label">Ratings</div>
+              <div class="field-label">${TH("pairs.cfg.ratings")}</div>
               <div class="chip-row" id="silo-rate-libs"></div>
             </div>
             <div class="opt-row">
-              <div class="field-label">Progress</div>
+              <div class="field-label">${TH("pairs.cfg.progress")}</div>
               <div class="chip-row" id="silo-prog-libs"></div>
             </div>
             <div class="opt-row">
-              <div class="field-label">Collections</div>
+              <div class="field-label">${TH("pairs.cfg.collections")}</div>
               <div class="chip-row" id="silo-coll-libs"></div>
             </div>
-            <button type="button" class="cx-btn small" id="silo-libs-load">Load libraries</button>
+            <button type="button" class="cx-btn small" id="silo-libs-load">${TH("pairs.cfg.loadLibraries")}</button>
           </div>
         </div>
       </details>`);
@@ -1463,39 +1465,39 @@ function renderFeaturePanel(state){
         </summary>
         <div class="fold-body provider-card-body">
           <div class="prov-box" id="tofa-pair-libs">
-            <div class="panel-title small">Pair library whitelist</div>
-            <div class="muted">Empty = use connection-level whitelist.</div>
+            <div class="panel-title small">${TH("pairs.cfg.whitelist")}</div>
+            <div class="muted">${TH("pairs.cfg.connWhitelist")}</div>
             <div class="opt-row">
-              <div class="field-label">History</div>
+              <div class="field-label">${TH("pairs.cfg.history")}</div>
               <div class="chip-row" id="tofa-hist-libs"></div>
             </div>
             <div class="opt-row">
-              <div class="field-label">Progress</div>
+              <div class="field-label">${TH("pairs.cfg.progress")}</div>
               <div class="chip-row" id="tofa-prog-libs"></div>
             </div>
             <div class="opt-row">
-              <div class="field-label">Collections</div>
+              <div class="field-label">${TH("pairs.cfg.collections")}</div>
               <div class="chip-row" id="tofa-coll-libs"></div>
             </div>
-            <button type="button" class="cx-btn small" id="tofa-libs-load">Load libraries</button>
+            <button type="button" class="cx-btn small" id="tofa-libs-load">${TH("pairs.cfg.loadLibraries")}</button>
           </div>
         </div>
       </details>`);
 
-    left.innerHTML=`<div class="panel-title"><span class="material-symbols-rounded" style="vertical-align:-3px;margin-right:6px;">dns</span>Providers</div>
+    left.innerHTML=`<div class="panel-title"><span class="material-symbols-rounded" style="vertical-align:-3px;margin-right:6px;">dns</span>${TH("pairs.cfg.providers")}</div>
       <div id="cx-status-mapping"></div>
       ${renderMatchUsersCard(state)}
       <div class="providers-intro">
         <div class="providers-intro-copy">
-          <div class="providers-intro-title">Advanced media server tuning</div>
-          <div class="providers-intro-sub">Open a media server only if you want different retry behavior or pair-specific library scope.</div>
+          <div class="providers-intro-title">${TH("pairs.cfg.advancedTuning")}</div>
+          <div class="providers-intro-sub">${TH("pairs.cfg.advancedTuningHint")}</div>
         </div>
-        <div class="providers-intro-badge">${providerCards.length} ${providerCards.length === 1 ? "media server" : "media servers"} in this pair</div>
+        <div class="providers-intro-badge">${TH("pairs.cfg.mediaServers",{count:providerCards.length})}</div>
       </div>
-      <div class="provider-card-list">${providerCards.length ? providerCards.join("") : `<div class="providers-empty">This connection does not include a media server with extra controls.</div>`}</div>
+      <div class="provider-card-list">${providerCards.length ? providerCards.join("") : `<div class="providers-empty">${TH("pairs.cfg.noMediaServer")}</div>`}</div>
       <div class="providers-note" role="note" aria-live="polite">
-        <div class="providers-note-title"><span class="material-symbols-rounded">info</span>Optional advanced controls</div>
-        <div class="providers-note-body">Library whitelists only appear for media servers in this pair that support pair-specific library scope.</div>
+        <div class="providers-note-title"><span class="material-symbols-rounded">info</span>${TH("pairs.cfg.optionalControls")}</div>
+        <div class="providers-note-body">${TH("pairs.cfg.optionalControlsHint")}</div>
       </div>`;
 
     right.innerHTML = "";
@@ -1512,33 +1514,33 @@ function renderFeaturePanel(state){
   if(state.feature==="globals"){
     const g=state.globals||{},bb=g.blackbox||{},rt=g.runtime||{suspect_min_prev:20,suspect_shrink_ratio:0.1};
     const removeModeDisabled=isTwoWayMode(state);
-    const removeModeLabel=normalizeRemoveMode(state.pair_remove_mode)==="mirror"?"Stored: Mirror-mode":"Stored: Source";
+    const removeModeLabel=normalizeRemoveMode(state.pair_remove_mode)==="mirror"?T("pairs.cfg.storedMirror"):T("pairs.cfg.storedSource");
     const removeModeRow=removeModeDisabled
-      ? `<div class="opt-row muted"><label data-tip-id="gl-oneway-remove">One-Way Remove mode Source | Mirror-mode</label><span class="provider-card-badge" title="Kept for one-way mode">${removeModeLabel}</span></div>`
-      : `<div class="opt-row"><label for="gl-oneway-remove">One-Way Remove mode Source | Mirror-mode</label><label class="switch"><input id="gl-oneway-remove" type="checkbox" ${normalizeRemoveMode(state.pair_remove_mode)==="source_deletes"?"checked":""}><span class="slider"></span></label></div>`;
+      ? `<div class="opt-row muted"><label data-tip-id="gl-oneway-remove">${TH("pairs.cfg.removeMode")}</label><span class="provider-card-badge" title="${TH("pairs.cfg.keptOneWay")}">${removeModeLabel}</span></div>`
+      : `<div class="opt-row"><label for="gl-oneway-remove">${TH("pairs.cfg.removeMode")}</label><label class="switch"><input id="gl-oneway-remove" type="checkbox" ${normalizeRemoveMode(state.pair_remove_mode)==="source_deletes"?"checked":""}><span class="slider"></span></label></div>`;
     const pct = Math.round((Number.isFinite(rt.suspect_shrink_ratio)?rt.suspect_shrink_ratio:0.1)*100);
     const minPrevVal = Number.isFinite(rt.suspect_min_prev)?rt.suspect_min_prev:20;
     const guardInputType = window.matchMedia('(max-width:760px)').matches ? 'number' : 'range';
 
     const managedUser = document.documentElement.dataset.cwRole === "user";
-    if (managedUser) left.innerHTML = `<div class="panel-title"><span class="material-symbols-rounded" style="vertical-align:-3px;margin-right:6px;">tune</span>General</div><div class="muted">Shared safety settings such as dry run, drop guard and blackbox are managed by the admin.</div>`;
-    else left.innerHTML=`<div class="panel-title"><span class="material-symbols-rounded" style="vertical-align:-3px;margin-right:6px;">tune</span>General <button type="button" class="cx-help material-symbols-rounded" data-tip-id="gl-section-main">help</button></div>
-      <div class="muted">Shared application safety settings. Pair-specific controls are labelled separately.</div>
-      <div class="opt-row"><label for="gl-dry">Dry run</label><label class="switch"><input id="gl-dry" type="checkbox" ${g.dry_run?"checked":""}><span class="slider"></span></label></div>
-      <div class="opt-row"><label for="gl-verify">Verify after write</label><label class="switch"><input id="gl-verify" type="checkbox" ${g.verify_after_write?"checked":""}><span class="slider"></span></label></div>
-      <div class="opt-row"><label for="gl-drop">Drop guard</label><label class="switch"><input id="gl-drop" type="checkbox" ${g.drop_guard?"checked":""}><span class="slider"></span></label></div>
+    if (managedUser) left.innerHTML = `<div class="panel-title"><span class="material-symbols-rounded" style="vertical-align:-3px;margin-right:6px;">tune</span>${TH("pairs.cfg.general")}</div><div class="muted">${TH("pairs.cfg.managedByAdmin")}</div>`;
+    else left.innerHTML=`<div class="panel-title"><span class="material-symbols-rounded" style="vertical-align:-3px;margin-right:6px;">tune</span>${TH("pairs.cfg.general")} <button type="button" class="cx-help material-symbols-rounded" data-tip-id="gl-section-main">help</button></div>
+      <div class="muted">${TH("pairs.cfg.sharedSafety")}</div>
+      <div class="opt-row"><label for="gl-dry">${TH("pairs.cfg.dryRun")}</label><label class="switch"><input id="gl-dry" type="checkbox" ${g.dry_run?"checked":""}><span class="slider"></span></label></div>
+      <div class="opt-row"><label for="gl-verify">${TH("pairs.cfg.verify")}</label><label class="switch"><input id="gl-verify" type="checkbox" ${g.verify_after_write?"checked":""}><span class="slider"></span></label></div>
+      <div class="opt-row"><label for="gl-drop">${TH("pairs.cfg.dropGuard")}</label><label class="switch"><input id="gl-drop" type="checkbox" ${g.drop_guard?"checked":""}><span class="slider"></span></label></div>
       <div id="gl-drop-adv" class="prov-box" style="margin:8px 0 4px; ${g.drop_guard?"":"opacity:var(--cw-disabled-opacity,.5);pointer-events:none;"}">
-        <div class="panel-title small">Suspect guard (shrinking inventories)</div>
+        <div class="panel-title small">${TH("pairs.cfg.suspect")}</div>
         <div class="grid2 compact">
           <div class="opt-row">
-            <label for="gl-sus-min">Min</label>
+            <label for="gl-sus-min">${TH("pairs.cfg.min")}</label>
             <div style="position:relative;width:100%">
               <input id="gl-sus-min" type="${guardInputType}" inputmode="numeric" min="0" max="200" step="1" value="${minPrevVal}" style="width:100%">
               <span id="gl-sus-min-val" style="position:absolute;right:6px;top:-6px;font-size:12px;opacity:var(--cw-content-opacity,.8);">${minPrevVal}</span>
             </div>
           </div>
           <div class="opt-row">
-            <label for="gl-sus-pct-range">Shrink(%)</label>
+            <label for="gl-sus-pct-range">${TH("pairs.cfg.shrink")}</label>
             <div style="position:relative;width:100%">
               <input id="gl-sus-pct-range" type="${guardInputType}" inputmode="numeric" min="1" max="50" step="1" value="${pct}" style="width:100%">
               <span id="gl-sus-pct-val" style="position:absolute;right:6px;top:-6px;font-size:12px;opacity:var(--cw-content-opacity,.8);">${pct}</span>
@@ -1547,28 +1549,28 @@ function renderFeaturePanel(state){
         </div>
       </div>
       <div class="grid2 compact">
-        <div class="opt-row"><label for="gl-mass">Allow mass delete</label><label class="switch"><input id="gl-mass" type="checkbox" ${g.allow_mass_delete?"checked":""}><span class="slider"></span></label></div>
+        <div class="opt-row"><label for="gl-mass">${TH("pairs.cfg.massDelete")}</label><label class="switch"><input id="gl-mass" type="checkbox" ${g.allow_mass_delete?"checked":""}><span class="slider"></span></label></div>
       </div>`;
-    right.innerHTML=`<div class="panel-title small">Pair safety</div>
+    right.innerHTML=`<div class="panel-title small">${TH("pairs.cfg.pairSafety")}</div>
       ${removeModeRow}
-      ${hasPlex(state)||hasJelly(state)||hasEmby(state)||hasSilo(state)||hasFloppy(state)?`<div class="panel-title small">Matching</div>`:""}
-      ${hasPlex(state)?`<div class="opt-row"><label for="plx-strict-ids">Plex: Strict ID matching</label><label class="switch"><input id="plx-strict-ids" type="checkbox" ${getPairProviderStrictValue(state, "plex")?"checked":""}><span class="slider"></span></label></div>`:""}
-      ${hasJelly(state)?`<div class="opt-row"><label for="jf-strict-ids">Jellyfin: Strict ID matching</label><label class="switch"><input id="jf-strict-ids" type="checkbox" ${getPairProviderStrictValue(state, "jellyfin")?"checked":""}><span class="slider"></span></label></div>`:""}
-      ${hasEmby(state)?`<div class="opt-row"><label for="em-strict-ids">Emby: Strict ID matching</label><label class="switch"><input id="em-strict-ids" type="checkbox" ${getPairProviderStrictValue(state, "emby")?"checked":""}><span class="slider"></span></label></div>`:""}
-      ${hasSilo(state)?`<div class="opt-row"><label for="silo-strict-ids">Silo: Strict ID matching</label><label class="switch"><input id="silo-strict-ids" type="checkbox" ${getPairProviderStrictValue(state, "silo")?"checked":""}><span class="slider"></span></label></div>`:""}
-      ${hasFloppy(state)?`<div class="opt-row"><label for="floppy-anime-library" data-tip-id="floppy-anime-library">Floppy: Send new anime to the Anime library</label><label class="switch"><input id="floppy-anime-library" type="checkbox" ${floppyAnimeLibraryOn(state)?"checked":""}><span class="slider"></span></label></div>`:""}
-      ${supportsPathMatching(state)?`<div class="opt-row"><label for="pair-path-matching">Match by file path</label><label class="switch"><input id="pair-path-matching" type="checkbox" ${state.path_matching?"checked":""}><span class="slider"></span></label></div><div class="muted">When IDs cannot resolve an item, try matching its file path across the media servers in this pair. Supports movie and episode history, ratings and progress in both directions, including with Strict ID matching enabled.</div>`:""}
-      ${managedUser ? "" : `      <div class="panel-title" style="margin-top:10px">Advanced (shared) <button type="button" class="cx-help material-symbols-rounded" data-tip-id="gl-section-advanced">help</button></div>
-      <div class="opt-row"><label for="gl-ttl">Tombstone TTL (days)</label><input id="gl-ttl" class="input" type="number" min="0" step="1" value="${g.tombstone_ttl_days??30}"></div><div class="muted">Keep delete markers to avoid re-adding.</div>
-      <div class="opt-row"><label for="gl-observed">Include observed deletes</label><label class="switch"><input id="gl-observed" type="checkbox" ${g.include_observed_deletes?"checked":""}><span class="slider"></span></label></div>
-      <div class="panel-title small" style="margin-top:10px">Blackbox (shared) <button type="button" class="cx-help material-symbols-rounded" data-tip-id="gl-bb-section">help</button></div>
+      ${hasPlex(state)||hasJelly(state)||hasEmby(state)||hasSilo(state)||hasFloppy(state)?`<div class="panel-title small">${TH("pairs.cfg.matching")}</div>`:""}
+      ${hasPlex(state)?`<div class="opt-row"><label for="plx-strict-ids">${TH("pairs.cfg.plexStrict")}</label><label class="switch"><input id="plx-strict-ids" type="checkbox" ${getPairProviderStrictValue(state, "plex")?"checked":""}><span class="slider"></span></label></div>`:""}
+      ${hasJelly(state)?`<div class="opt-row"><label for="jf-strict-ids">${TH("pairs.cfg.jfStrict")}</label><label class="switch"><input id="jf-strict-ids" type="checkbox" ${getPairProviderStrictValue(state, "jellyfin")?"checked":""}><span class="slider"></span></label></div>`:""}
+      ${hasEmby(state)?`<div class="opt-row"><label for="em-strict-ids">${TH("pairs.cfg.emStrict")}</label><label class="switch"><input id="em-strict-ids" type="checkbox" ${getPairProviderStrictValue(state, "emby")?"checked":""}><span class="slider"></span></label></div>`:""}
+      ${hasSilo(state)?`<div class="opt-row"><label for="silo-strict-ids">${TH("pairs.cfg.siloStrict")}</label><label class="switch"><input id="silo-strict-ids" type="checkbox" ${getPairProviderStrictValue(state, "silo")?"checked":""}><span class="slider"></span></label></div>`:""}
+      ${hasFloppy(state)?`<div class="opt-row"><label for="floppy-anime-library" data-tip-id="floppy-anime-library">${TH("pairs.cfg.floppyAnime")}</label><label class="switch"><input id="floppy-anime-library" type="checkbox" ${floppyAnimeLibraryOn(state)?"checked":""}><span class="slider"></span></label></div>`:""}
+      ${supportsPathMatching(state)?`<div class="opt-row"><label for="pair-path-matching">${TH("pairs.cfg.pathMatching")}</label><label class="switch"><input id="pair-path-matching" type="checkbox" ${state.path_matching?"checked":""}><span class="slider"></span></label></div><div class="muted">${TH("pairs.cfg.pathMatchingHint")}</div>`:""}
+      ${managedUser ? "" : `      <div class="panel-title" style="margin-top:10px">${TH("pairs.cfg.advancedShared")} <button type="button" class="cx-help material-symbols-rounded" data-tip-id="gl-section-advanced">help</button></div>
+      <div class="opt-row"><label for="gl-ttl">${TH("pairs.cfg.ttl")}</label><input id="gl-ttl" class="input" type="number" min="0" step="1" value="${g.tombstone_ttl_days??30}"></div><div class="muted">${TH("pairs.cfg.ttlHint")}</div>
+      <div class="opt-row"><label for="gl-observed">${TH("pairs.cfg.observed")}</label><label class="switch"><input id="gl-observed" type="checkbox" ${g.include_observed_deletes?"checked":""}><span class="slider"></span></label></div>
+      <div class="panel-title small" style="margin-top:10px">${TH("pairs.cfg.blackboxShared")} <button type="button" class="cx-help material-symbols-rounded" data-tip-id="gl-bb-section">help</button></div>
       <div class="grid2 compact">
-        <div class="opt-row"><label for="gl-bb-enable">Enabled</label><label class="switch"><input id="gl-bb-enable" type="checkbox" ${bb.enabled?"checked":""}><span class="slider"></span></label></div>
-        <div class="opt-row"><label for="gl-bb-pair">Pair scoped</label><label class="switch"><input id="gl-bb-pair" type="checkbox" ${bb.pair_scoped?"checked":""}><span class="slider"></span></label></div>
-        <div class="opt-row"><label for="gl-bb-promote">Promote after (failed writes) <button type="button" class="cx-help material-symbols-rounded" data-tip-id="gl-bb-promote">help</button></label><input id="gl-bb-promote" class="input small" type="number" min="0" max="365" step="1" value="${bb.promote_after??3}"></div>
-        <div class="opt-row"><label for="gl-bb-cooldown">Cooldown days</label><input id="gl-bb-cooldown" class="input small" type="number" min="0" max="365" step="1" value="${bb.cooldown_days??30}"></div>
+        <div class="opt-row"><label for="gl-bb-enable">${TH("pairs.cfg.enabled")}</label><label class="switch"><input id="gl-bb-enable" type="checkbox" ${bb.enabled?"checked":""}><span class="slider"></span></label></div>
+        <div class="opt-row"><label for="gl-bb-pair">${TH("pairs.cfg.pairScoped")}</label><label class="switch"><input id="gl-bb-pair" type="checkbox" ${bb.pair_scoped?"checked":""}><span class="slider"></span></label></div>
+        <div class="opt-row"><label for="gl-bb-promote">${TH("pairs.cfg.promote")} <button type="button" class="cx-help material-symbols-rounded" data-tip-id="gl-bb-promote">help</button></label><input id="gl-bb-promote" class="input small" type="number" min="0" max="365" step="1" value="${bb.promote_after??3}"></div>
+        <div class="opt-row"><label for="gl-bb-cooldown">${TH("pairs.cfg.cooldown")}</label><input id="gl-bb-cooldown" class="input small" type="number" min="0" max="365" step="1" value="${bb.cooldown_days??30}"></div>
       </div>
-      <div class="muted">Unresolved is a reporting state: failed writes are logged and retried every sync. Blackbox is the quarantine state: after this many failed writes an item is blackboxed and only then stops being planned.</div>`}`;
+      <div class="muted">${TH("pairs.cfg.unresolvedHint")}</div>`}`;
     return;
   }
 
@@ -1588,123 +1590,123 @@ function renderFeaturePanel(state){
     const animeMapDisabled = !globalAnimeMappingEnabled(state);
 
     left.innerHTML = `
-      <div class="panel-title">Watchlist | Basics</div>
+      <div class="panel-title">${TH("pairs.cfg.wlBasics")}</div>
       <div class="opt-row">
-        <label for="cx-wl-enable">Enable</label>
+        <label for="cx-wl-enable">${TH("pairs.cfg.enable")}</label>
         <label class="switch"><input id="cx-wl-enable" type="checkbox" ${wl.enable?"checked":""}><span class="slider"></span></label>
       </div>
       <div class="grid2">
-        <div class="opt-row"><label for="cx-wl-add">Add</label><label class="switch"><input id="cx-wl-add" type="checkbox" ${wl.add?"checked":""}><span class="slider"></span></label></div>
-        <div class="opt-row"><label for="cx-wl-remove">Remove</label><label class="switch"><input id="cx-wl-remove" type="checkbox" ${wl.remove?"checked":""}><span class="slider"></span></label></div>
+        <div class="opt-row"><label for="cx-wl-add">${TH("pairs.cfg.add")}</label><label class="switch"><input id="cx-wl-add" type="checkbox" ${wl.add?"checked":""}><span class="slider"></span></label></div>
+        <div class="opt-row"><label for="cx-wl-remove">${TH("pairs.cfg.remove")}</label><label class="switch"><input id="cx-wl-remove" type="checkbox" ${wl.remove?"checked":""}><span class="slider"></span></label></div>
       </div>
     `;
 
     const wlOptions = `
-      ${pairSupportsLibraryOnly(state, state?.src, state?.dst, isTwoWayMode(state), "watchlist") ? `<div class="grid2 compact"><div class="opt-row" style="grid-column:1/-1"><label for="cx-wl-library-only" data-tip-id="cx-wl-library-only">Only items in destination library</label><label class="switch"><input id="cx-wl-library-only" type="checkbox" ${libraryOnlyOn(state, wl, "watchlist")?"checked":""}><span class="slider"></span></label></div></div>` : ""}
+      ${pairSupportsLibraryOnly(state, state?.src, state?.dst, isTwoWayMode(state), "watchlist") ? `<div class="grid2 compact"><div class="opt-row" style="grid-column:1/-1"><label for="cx-wl-library-only" data-tip-id="cx-wl-library-only">${TH("pairs.cfg.libraryOnly")}</label><label class="switch"><input id="cx-wl-library-only" type="checkbox" ${libraryOnlyOn(state, wl, "watchlist")?"checked":""}><span class="slider"></span></label></div></div>` : ""}
 
       ${showAnime?`
-        <div class="panel-title small" style="margin-top:6px">Anime options</div>
+        <div class="panel-title small" style="margin-top:6px">${TH("pairs.cfg.animeOptions")}</div>
         <div class="grid2 compact">
           <div class="opt-row">
-            <label for="cx-wl-anime-map">Use Anime ID Mapping</label>
+            <label for="cx-wl-anime-map">${TH("pairs.cfg.useAnimeMapping")}</label>
             <label class="switch"><input id="cx-wl-anime-map" type="checkbox" ${wl.use_anime_mapping?"checked":""} ${animeMapDisabled?"disabled":""}><span class="slider"></span></label>
           </div>
-          ${animeMapDisabled?`<div class="muted" style="grid-column:1/-1">Enable global Anime ID Mapping first.</div>`:""}
+          ${animeMapDisabled?`<div class="muted" style="grid-column:1/-1">${TH("pairs.cfg.enableAnime")}</div>`:""}
           ${renderAnimeOnlyOption(state,"watchlist")}
         </div>
       `:""}
 
       ${hasJelly(state)?`
-        <div class="panel-title small" style="margin-top:6px">Jellyfin specifics</div>
+        <div class="panel-title small" style="margin-top:6px">${TH("pairs.cfg.jfSpecifics")}</div>
         <div class="muted" style="margin:-2px 0 10px;display:flex;align-items:center;justify-content:space-between;gap:8px;">
-          <span>Favorites / Playlist / Collections</span>
+          <span>${TH("pairs.cfg.favPlaylistCollections")}</span>
           <button type="button" class="cx-help material-symbols-rounded" data-tip-id="cx-jf-wl-mode">help</button>
         </div>
         <div class="grid2 compact">
           <div class="opt-row" style="grid-column:1/-1">
-            <div class="field-label">Mode</div>
+            <div class="field-label">${TH("pairs.cfg.mode")}</div>
             <div class="seg">
-              <input type="radio" name="cx-jf-wl-mode" id="cx-jf-wl-mode-fav" value="favorites" ${jfw.mode==="favorites"?"checked":""}/><label for="cx-jf-wl-mode-fav">Favorites</label>
-              <input type="radio" name="cx-jf-wl-mode" id="cx-jf-wl-mode-pl"  value="playlist"  ${jfw.mode==="playlist"?"checked":""}/><label for="cx-jf-wl-mode-pl">Playlist</label>
-              <input type="radio" name="cx-jf-wl-mode" id="cx-jf-wl-mode-col" value="collection" ${(jfw.mode==="collection")?"checked":""}/><label for="cx-jf-wl-mode-col">Collections</label>
+              <input type="radio" name="cx-jf-wl-mode" id="cx-jf-wl-mode-fav" value="favorites" ${jfw.mode==="favorites"?"checked":""}/><label for="cx-jf-wl-mode-fav">${TH("pairs.cfg.favorites")}</label>
+              <input type="radio" name="cx-jf-wl-mode" id="cx-jf-wl-mode-pl"  value="playlist"  ${jfw.mode==="playlist"?"checked":""}/><label for="cx-jf-wl-mode-pl">${TH("pairs.cfg.playlist")}</label>
+              <input type="radio" name="cx-jf-wl-mode" id="cx-jf-wl-mode-col" value="collection" ${(jfw.mode==="collection")?"checked":""}/><label for="cx-jf-wl-mode-col">${TH("pairs.cfg.collections")}</label>
             </div>
           </div>
           <div class="opt-row" style="grid-column:1/-1">
-            <label for="cx-jf-wl-pl-name">Name</label>
+            <label for="cx-jf-wl-pl-name">${TH("pairs.cfg.name")}</label>
             <input id="cx-jf-wl-pl-name" class="input" type="text" value="${jfw.playlist_name||"Watchlist"}" placeholder="Watchlist">
           </div>
         </div>
       `:""}
 
       ${hasEmby(state)?`
-        <div class="panel-title small" style="margin-top:6px">Emby specifics</div>
+        <div class="panel-title small" style="margin-top:6px">${TH("pairs.cfg.emSpecifics")}</div>
         <div class="muted" style="margin:-2px 0 10px;display:flex;align-items:center;justify-content:space-between;gap:8px;">
-          <span>Favorites / Playlist / Collections</span>
+          <span>${TH("pairs.cfg.favPlaylistCollections")}</span>
           <button type="button" class="cx-help material-symbols-rounded" data-tip-id="cx-em-wl-mode">help</button>
         </div>
         <div class="grid2 compact">
           <div class="opt-row" style="grid-column:1/-1">
-            <div class="field-label">Mode</div>
+            <div class="field-label">${TH("pairs.cfg.mode")}</div>
             <div class="seg">
-              <input type="radio" name="cx-em-wl-mode" id="cx-em-wl-mode-fav" value="favorites" ${emw.mode==="favorites"?"checked":""}/><label for="cx-em-wl-mode-fav">Favorites</label>
-              <input type="radio" name="cx-em-wl-mode" id="cx-em-wl-mode-pl"  value="playlist"  ${emw.mode==="playlist"?"checked":""}/><label for="cx-em-wl-mode-pl">Playlist</label>
-              <input type="radio" name="cx-em-wl-mode" id="cx-em-wl-mode-col" value="collection" ${(emw.mode==="collection")?"checked":""}/><label for="cx-em-wl-mode-col">Collections</label>
+              <input type="radio" name="cx-em-wl-mode" id="cx-em-wl-mode-fav" value="favorites" ${emw.mode==="favorites"?"checked":""}/><label for="cx-em-wl-mode-fav">${TH("pairs.cfg.favorites")}</label>
+              <input type="radio" name="cx-em-wl-mode" id="cx-em-wl-mode-pl"  value="playlist"  ${emw.mode==="playlist"?"checked":""}/><label for="cx-em-wl-mode-pl">${TH("pairs.cfg.playlist")}</label>
+              <input type="radio" name="cx-em-wl-mode" id="cx-em-wl-mode-col" value="collection" ${(emw.mode==="collection")?"checked":""}/><label for="cx-em-wl-mode-col">${TH("pairs.cfg.collections")}</label>
             </div>
           </div>
           <div class="opt-row" style="grid-column:1/-1">
-            <label for="cx-em-wl-pl-name">Name</label>
+            <label for="cx-em-wl-pl-name">${TH("pairs.cfg.name")}</label>
             <input id="cx-em-wl-pl-name" class="input" type="text" value="${emw.playlist_name||"Watchlist"}" placeholder="Watchlist">
           </div>
         </div>
       `:""}
 
       ${hasPublicMetaDB(state)?`
-        <div class="panel-title small" style="margin-top:6px">PublicMetaDB specifics</div>
+        <div class="panel-title small" style="margin-top:6px">${TH("pairs.cfg.pmdbSpecifics")}</div>
         <div class="grid2 compact">
           <div class="opt-row" style="grid-column:1/-1">
-            <label for="cx-pmdb-wl-name">List name</label>
+            <label for="cx-pmdb-wl-name">${TH("pairs.cfg.listName")}</label>
             <input id="cx-pmdb-wl-name" class="input" type="text" value="${pmwName}" placeholder="Watchlist">
           </div>
         </div>
       `:""}
 
       ${hasFloppy(state)?`
-        <div class="panel-title small" style="margin-top:6px">Floppy specifics</div>
+        <div class="panel-title small" style="margin-top:6px">${TH("pairs.cfg.floppySpecifics")}</div>
         <div class="grid2 compact">
           <div class="opt-row" style="grid-column:1/-1">
-            <label for="cx-floppy-wl-name">List name</label>
+            <label for="cx-floppy-wl-name">${TH("pairs.cfg.listName")}</label>
             <input id="cx-floppy-wl-name" class="input" type="text" value="${floppyName}" placeholder="Watchlist">
           </div>
         </div>
       `:""}
 
       ${hasScrob(state)?`
-        <div class="panel-title small" style="margin-top:6px">Scrob specifics</div>
+        <div class="panel-title small" style="margin-top:6px">${TH("pairs.cfg.scrobSpecifics")}</div>
         <div class="grid2 compact">
           <div class="opt-row" style="grid-column:1/-1">
-            <label for="cx-scrob-wl-name">List name</label>
+            <label for="cx-scrob-wl-name">${TH("pairs.cfg.listName")}</label>
             <input id="cx-scrob-wl-name" class="input" type="text" value="${scrobName}" placeholder="Watchlist">
           </div>
         </div>
-        <div class="muted">Scrob has no dedicated watchlist, so CrossWatch syncs a normal Scrob list by name. It is created on the first push if it does not exist yet.</div>
+        <div class="muted">${TH("pairs.cfg.scrobHint")}</div>
       `:""}
     `;
 
-    const parts = [`<div class="panel-title">Watchlist | Options</div>`, wlOptions];
+    const parts = [`<div class="panel-title">${TH("pairs.cfg.wlOptions")}</div>`, wlOptions];
     
     if (hasPlex(state)) {
       const plex = (state.cfgRaw?.plex) || {};
       parts.push(`
         <div class="panel-title small" style="margin-top:6px">Plex</div>
         <details id="cx-plx-wl">
-          <summary class="muted" style="margin-bottom:10px;">Plex watchlist controls</summary>
+          <summary class="muted" style="margin-bottom:10px;">${TH("pairs.cfg.plexWlControls")}</summary>
           <div class="grid2 compact">
             <div class="opt-row">
-              <label for="plx-wl-pms">Allow PMS fallback</label>
+              <label for="plx-wl-pms">${TH("pairs.cfg.pmsFallback")}</label>
               <label class="switch"><input id="plx-wl-pms" type="checkbox" ${plex.watchlist_allow_pms_fallback ? "checked" : ""}><span class="slider"></span></label>
             </div>
             <div class="opt-row">
-              <label for="plx-wl-title">Title text search</label>
+              <label for="plx-wl-title">${TH("pairs.cfg.titleSearch")}</label>
               <label class="switch"><input id="plx-wl-title" type="checkbox" ${plex.watchlist_title_query !== false ? "checked" : ""}><span class="slider"></span></label>
             </div>
           </div>
@@ -1723,47 +1725,47 @@ function renderFeaturePanel(state){
     const showAnime = hasAnimeProvider(state);
     const animeMapDisabled = !globalAnimeMappingEnabled(state);
 
-    left.innerHTML=`<div class="panel-title">Ratings | Basics</div>
-      <div class="opt-row"><label for="cx-rt-enable">Enable</label><label class="switch"><input id="cx-rt-enable" type="checkbox" ${rt.enable?"checked":""}><span class="slider"></span></label></div>
-      <div class="grid2"><div class="opt-row"><label for="cx-rt-add">Add / Update</label><label class="switch"><input id="cx-rt-add" type="checkbox" ${rt.add?"checked":""}><span class="slider"></span></label></div>
-      <div class="opt-row"><label for="cx-rt-remove">Remove (clear)</label><label class="switch"><input id="cx-rt-remove" type="checkbox" ${rt.remove?"checked":""}><span class="slider"></span></label></div></div>`;
+    left.innerHTML=`<div class="panel-title">${TH("pairs.cfg.rtBasics")}</div>
+      <div class="opt-row"><label for="cx-rt-enable">${TH("pairs.cfg.enable")}</label><label class="switch"><input id="cx-rt-enable" type="checkbox" ${rt.enable?"checked":""}><span class="slider"></span></label></div>
+      <div class="grid2"><div class="opt-row"><label for="cx-rt-add">${TH("pairs.cfg.addUpdate")}</label><label class="switch"><input id="cx-rt-add" type="checkbox" ${rt.add?"checked":""}><span class="slider"></span></label></div>
+      <div class="opt-row"><label for="cx-rt-remove">${TH("pairs.cfg.removeClear")}</label><label class="switch"><input id="cx-rt-remove" type="checkbox" ${rt.remove?"checked":""}><span class="slider"></span></label></div></div>`;
     const rtAnime = `${showAnime?`
-        <div class="panel-title small" style="margin-top:6px">Anime options</div>
+        <div class="panel-title small" style="margin-top:6px">${TH("pairs.cfg.animeOptions")}</div>
         <div class="grid2 compact">
           <div class="opt-row">
-            <label for="cx-rt-anime-map">Use Anime ID Mapping</label>
+            <label for="cx-rt-anime-map">${TH("pairs.cfg.useAnimeMapping")}</label>
             <label class="switch"><input id="cx-rt-anime-map" type="checkbox" ${rt.use_anime_mapping?"checked":""} ${animeMapDisabled?"disabled":""}><span class="slider"></span></label>
           </div>
-          ${animeMapDisabled?`<div class="muted" style="grid-column:1/-1">Enable global Anime ID Mapping first.</div>`:""}
+          ${animeMapDisabled?`<div class="muted" style="grid-column:1/-1">${TH("pairs.cfg.enableAnime")}</div>`:""}
           ${renderAnimeOnlyOption(state,"ratings")}
         </div>
       `:""}`;
-    const rtScope = `<div class="panel-title small">Scope</div>
+    const rtScope = `<div class="panel-title small">${TH("pairs.cfg.scope")}</div>
       <div class="grid2 compact">
-        <div class="opt-row"><label for="cx-rt-type-all">All</label><label class="switch"><input id="cx-rt-type-all" type="checkbox" ${(hasType("movies")&&hasType("shows")&&hasType("seasons")&&hasType("episodes"))?"checked":""}><span class="slider"></span></label></div>
-        <div class="opt-row"><label for="cx-rt-type-movies">Movies</label><label class="switch"><input id="cx-rt-type-movies" type="checkbox" ${hasType("movies")?"checked":""}><span class="slider"></span></label></div>
-        <div class="opt-row"><label for="cx-rt-type-shows">Shows</label><label class="switch"><input id="cx-rt-type-shows" type="checkbox" ${hasType("shows")?"checked":""}><span class="slider"></span></label></div><div class="opt-row"><label for="cx-rt-type-seasons">Seasons</label><label class="switch"><input id="cx-rt-type-seasons" type="checkbox" ${hasType("seasons")?"checked":""}><span class="slider"></span></label></div>
-        <div class="opt-row"><label for="cx-rt-type-episodes">Episodes</label><label class="switch"><input id="cx-rt-type-episodes" type="checkbox" ${hasType("episodes")?"checked":""}><span class="slider"></span></label></div>
-        <div class="opt-row"><label for="cx-rt-specials" data-tip-id="cx-rt-specials">Specials (Season 0)</label><label class="switch"><input id="cx-rt-specials" type="checkbox" ${rt.include_specials!==false?"checked":""}><span class="slider"></span></label></div>
-        ${pairSupportsLibraryOnly(state, state?.src, state?.dst, isTwoWayMode(state), "ratings") ? `<div class="opt-row" style="grid-column:1/-1"><label for="cx-rt-library-only" data-tip-id="cx-rt-library-only">Only items in destination library</label><label class="switch"><input id="cx-rt-library-only" type="checkbox" ${libraryOnlyOn(state, rt, "ratings")?"checked":""}><span class="slider"></span></label></div>` : ""}
+        <div class="opt-row"><label for="cx-rt-type-all">${TH("pairs.cfg.all")}</label><label class="switch"><input id="cx-rt-type-all" type="checkbox" ${(hasType("movies")&&hasType("shows")&&hasType("seasons")&&hasType("episodes"))?"checked":""}><span class="slider"></span></label></div>
+        <div class="opt-row"><label for="cx-rt-type-movies">${TH("pairs.cfg.movies")}</label><label class="switch"><input id="cx-rt-type-movies" type="checkbox" ${hasType("movies")?"checked":""}><span class="slider"></span></label></div>
+        <div class="opt-row"><label for="cx-rt-type-shows">${TH("pairs.cfg.shows")}</label><label class="switch"><input id="cx-rt-type-shows" type="checkbox" ${hasType("shows")?"checked":""}><span class="slider"></span></label></div><div class="opt-row"><label for="cx-rt-type-seasons">${TH("pairs.cfg.seasons")}</label><label class="switch"><input id="cx-rt-type-seasons" type="checkbox" ${hasType("seasons")?"checked":""}><span class="slider"></span></label></div>
+        <div class="opt-row"><label for="cx-rt-type-episodes">${TH("pairs.cfg.episodes")}</label><label class="switch"><input id="cx-rt-type-episodes" type="checkbox" ${hasType("episodes")?"checked":""}><span class="slider"></span></label></div>
+        <div class="opt-row"><label for="cx-rt-specials" data-tip-id="cx-rt-specials">${TH("pairs.cfg.specials")}</label><label class="switch"><input id="cx-rt-specials" type="checkbox" ${rt.include_specials!==false?"checked":""}><span class="slider"></span></label></div>
+        ${pairSupportsLibraryOnly(state, state?.src, state?.dst, isTwoWayMode(state), "ratings") ? `<div class="opt-row" style="grid-column:1/-1"><label for="cx-rt-library-only" data-tip-id="cx-rt-library-only">${TH("pairs.cfg.libraryOnly")}</label><label class="switch"><input id="cx-rt-library-only" type="checkbox" ${libraryOnlyOn(state, rt, "ratings")?"checked":""}><span class="slider"></span></label></div>` : ""}
       </div>`;
 
-    const parts = [`<div class="panel-title">Ratings | Options</div>
+    const parts = [`<div class="panel-title">${TH("pairs.cfg.rtOptions")}</div>
       <details id="cx-rt-adv" open>
         <summary class="muted" style="margin-bottom:10px;"></summary>
         ${rtScope}
         ${rtAnime}
-        <div class="panel-title small" style="margin-top:6px">History window</div>
+        <div class="panel-title small" style="margin-top:6px">${TH("pairs.cfg.historyWindow")}</div>
         <div class="grid2">
-          <div class="opt-row"><label for="cx-rt-mode">Mode</label>
+          <div class="opt-row"><label for="cx-rt-mode">${TH("pairs.cfg.mode")}</label>
             <select id="cx-rt-mode" class="input">
-              <option value="all" ${rt.mode==="all"?"selected":""}>All</option>
-              <option value="from_date" ${rt.mode==="from_date"?"selected":""}>From a date…</option>
+              <option value="all" ${rt.mode==="all"?"selected":""}>${TH("pairs.cfg.all")}</option>
+              <option value="from_date" ${rt.mode==="from_date"?"selected":""}>${TH("pairs.cfg.fromADate")}</option>
             </select>
           </div>
-          <div class="opt-row"><label for="cx-rt-from-date">From date</label><input id="cx-rt-from-date" class="input small" type="date" value="${rt.from_date||""}" ${rt.mode==="from_date"?"":"disabled"}></div>
+          <div class="opt-row"><label for="cx-rt-from-date">${TH("pairs.cfg.fromDateLabel")}</label><input id="cx-rt-from-date" class="input small" type="date" value="${rt.from_date||""}" ${rt.mode==="from_date"?"":"disabled"}></div>
         </div>
-        <div class="hint">All is everything or “From a date”.</div>
+        <div class="hint">${TH("pairs.cfg.allHint")}</div>
       </details>`];
 
     if (hasStremio(state)) {
@@ -1771,18 +1773,18 @@ function renderFeaturePanel(state){
       parts.push(`
         <div class="panel-title small" style="margin-top:6px">Stremio</div>
         <details id="cx-st-rt">
-          <summary class="muted" style="margin-bottom:10px;">Stremio ratings controls</summary>
+          <summary class="muted" style="margin-bottom:10px;">${TH("pairs.cfg.stremioControls")}</summary>
           <div class="grid2 compact">
             <div class="opt-row">
-              <label for="st-rt-liked-min">Liked from</label>
+              <label for="st-rt-liked-min">${TH("pairs.cfg.likedFrom")}</label>
               <input id="st-rt-liked-min" class="input small" type="number" min="0" max="10" step="0.1" value="${sr.liked_min ?? 6.0}">
             </div>
             <div class="opt-row">
-              <label for="st-rt-loved-min">Loved from</label>
+              <label for="st-rt-loved-min">${TH("pairs.cfg.lovedFrom")}</label>
               <input id="st-rt-loved-min" class="input small" type="number" min="0" max="10" step="0.1" value="${sr.loved_min ?? 8.0}">
             </div>
           </div>
-          <div class="hint">Ratings below Liked from are not sent to Stremio.</div>
+          <div class="hint">${TH("pairs.cfg.likedHint")}</div>
         </details>
       `);
     }
@@ -1812,7 +1814,7 @@ function renderFeaturePanel(state){
 
     const trColRow = hasTrakt(state)
       ? `<div class="opt-row" style="grid-column:1/-1">
-          <label for="cx-tr-hs-col"><span class="cx-provider-pill provider-trakt">TRAKT</span> Add to library</label>
+          <label for="cx-tr-hs-col"><span class="cx-provider-pill provider-trakt">TRAKT</span> ${TH("pairs.cfg.addLibrary")}</label>
           <label class="switch">
             <input id="cx-tr-hs-col" type="checkbox" ${trColOn ? "checked" : ""}>
             <span class="slider"></span>
@@ -1820,14 +1822,14 @@ function renderFeaturePanel(state){
         </div>
         <div class="grid2 compact" id="cx-tr-hs-col-types" style="grid-column:1/-1; padding-left:8px; margin-top:-6px; ${trColOn ? "" : "display:none;"}">
           <div class="opt-row">
-            <label for="cx-tr-hs-col-movies">Movies</label>
+            <label for="cx-tr-hs-col-movies">${TH("pairs.cfg.movies")}</label>
             <label class="switch">
               <input id="cx-tr-hs-col-movies" type="checkbox" ${colMovies ? "checked" : ""}>
               <span class="slider"></span>
             </label>
           </div>
           <div class="opt-row">
-            <label for="cx-tr-hs-col-shows">Shows</label>
+            <label for="cx-tr-hs-col-shows">${TH("pairs.cfg.shows")}</label>
             <label class="switch">
               <input id="cx-tr-hs-col-shows" type="checkbox" ${colShows ? "checked" : ""}>
               <span class="slider"></span>
@@ -1840,18 +1842,18 @@ function renderFeaturePanel(state){
     const mappingActive = statusMappingActive(state);
     const droppedOpt = (value, label, off = false) => `<option value="${value}" ${droppedPair === value ? "selected" : ""}${off ? " disabled" : ""}>${label}</option>`;
     const droppedTag = droppedKeys.some(key => droppedTagAllowed(state, key))
-      ? droppedOpt("tag", mappingActive ? "Sync + tag dropped (off with status mapping)" : "Sync + tag dropped", mappingActive)
+      ? droppedOpt("tag", mappingActive ? T("pairs.cfg.syncTag") : T("pairs.cfg.syncTagShort"), mappingActive)
       : "";
     const droppedNote = mappingActive && droppedTagSaved(state)
-      ? `<div class="opt-row muted" style="grid-column:1/-1">Status mapping now handles dropped shows for this pair, so tagging is off.</div>`
+      ? `<div class="opt-row muted" style="grid-column:1/-1">${TH("pairs.cfg.mappingHandles")}</div>`
       : mappingActive && hs.use_source_status
-        ? `<div class="opt-row muted" style="grid-column:1/-1">Status mapping handles the dropped status for this pair. This setting only controls the plays of dropped shows.</div>`
+        ? `<div class="opt-row muted" style="grid-column:1/-1">${TH("pairs.cfg.mappingHandlesStatus")}</div>`
         : "";
     const droppedBlock = droppedKeys.length
       ? `<div class="grid2 compact"><div class="opt-row" style="grid-column:1/-1">
-          <label for="cx-hs-dropped" data-tip-id="cx-hs-dropped">Dropped shows</label>
+          <label for="cx-hs-dropped" data-tip-id="cx-hs-dropped">${TH("pairs.cfg.dropped")}</label>
           <select id="cx-hs-dropped" class="input small">
-            ${droppedOpt("sync", "Sync normally")}${droppedOpt("ignore", "Ignore dropped")}${droppedTag}
+            ${droppedOpt("sync", T("pairs.cfg.syncNormally"))}${droppedOpt("ignore", T("pairs.cfg.ignoreDropped"))}${droppedTag}
           </select>
         </div>${droppedNote}</div>`
       : "";
@@ -1863,17 +1865,17 @@ function renderFeaturePanel(state){
     const animeNote = animeHistoryBlockReason(state);
     const animeRow = hasAnimeProvider(state)
       ? `
-      <div class="panel-title small" style="margin-top:6px">Anime</div>
+      <div class="panel-title small" style="margin-top:6px">${TH("pairs.cfg.anime")}</div>
       <div class="opt-row ${animeBlocked ? "muted" : ""}">
-        <label for="cx-hs-anime-map">Anime episode mapping</label>
+        <label for="cx-hs-anime-map">${TH("pairs.cfg.animeEpisodeMapping")}</label>
         <label class="switch">
           <input id="cx-hs-anime-map" type="checkbox" ${animeOpts.use_anime_mapping ? "checked" : ""} ${animeBlocked ? "disabled" : ""}>
           <span class="slider"></span>
         </label>
       </div>
       ${animeNote ? `<div class="muted">${animeNote}</div>` : ""}
-      ${hsCumulative ? `<div class="opt-row muted" title="This provider only holds anime, so this is always on for history.">
-        <label for="cx-hs-anime-only">Anime-only sync</label>
+      ${hsCumulative ? `<div class="opt-row muted" title="${TH("pairs.cfg.animeOnlyHistory")}">
+        <label for="cx-hs-anime-only">${TH("pairs.cfg.animeOnly")}</label>
         <label class="switch">
           <input id="cx-hs-anime-only" type="checkbox" checked disabled>
           <span class="slider"></span>
@@ -1881,9 +1883,9 @@ function renderFeaturePanel(state){
       </div>` : ""}`
       : "";
 left.innerHTML = `
-      <div class="panel-title">History | Basics</div>
+      <div class="panel-title">${TH("pairs.cfg.hsBasics")}</div>
       <div class="opt-row">
-        <label for="cx-hs-enable">Enable</label>
+        <label for="cx-hs-enable">${TH("pairs.cfg.enable")}</label>
         <label class="switch">
           <input id="cx-hs-enable" type="checkbox" ${hs.enable ? "checked" : ""}>
           <span class="slider"></span>
@@ -1891,65 +1893,65 @@ left.innerHTML = `
       </div>
       <div class="grid2">
         <div class="opt-row">
-          <label for="cx-hs-add">Add</label>
+          <label for="cx-hs-add">${TH("pairs.cfg.add")}</label>
           <label class="switch">
             <input id="cx-hs-add" type="checkbox" ${hs.add ? "checked" : ""}>
             <span class="slider"></span>
           </label>
         </div>
         <div class="opt-row">
-          <label for="cx-hs-remove">Remove</label>
+          <label for="cx-hs-remove">${TH("pairs.cfg.remove")}</label>
           <label class="switch">
             <input id="cx-hs-remove" type="checkbox" ${hs.remove && hsRemoveAllowed ? "checked" : ""} ${hsRemoveAllowed ? "" : 'disabled data-locked="1"'}>
             <span class="slider"></span>
           </label>
         </div>
       </div>
-      ${hsRemoveAllowed ? "" : `<div class="muted">Remove is not available when Tautulli or Tracearr is the source. They only import watch history.</div>`}
-      ${hsCumulative && !globalAnimeMappingEnabled(state) ? `<div class="muted"><b>Enable global Anime ID Mapping for episode history.</b></div>` : ""}
-      ${hsCumulative ? `<div class="muted">${hasAniList(state) ? "AniList" : [state?.src,state?.dst].some(p=>same(p,"myanimelist")) ? "MyAnimeList" : "Kitsu"} history supports both directions and is anime only. It uses watched status and episode progress per title. Remove reduces progress only for the latest watched episodes, or resets a movie to unwatched; ratings and notes are preserved. Gaps are reported unresolved. Specials and rewatches are skipped.</div>` : ""}
-      <div class="muted">${rwSupported ? "Synchronize plays between providers. Rewatches require event-capable providers; SIMKL requires Pro/VIP. Remove is not recommended." : "Synchronize plays between providers. Rewatches are available only when both sides support event history; SIMKL requires Pro/VIP."}</div>
+      ${hsRemoveAllowed ? "" : `<div class="muted">${TH("pairs.cfg.removeUnavailable")}</div>`}
+      ${hsCumulative && !globalAnimeMappingEnabled(state) ? `<div class="muted"><b>${TH("pairs.cfg.enableAnimeHistory")}</b></div>` : ""}
+      ${hsCumulative ? `<div class="muted">${TH("pairs.cfg.cumulativeHint",{provider:hasAniList(state) ? "AniList" : [state?.src,state?.dst].some(p=>same(p,"myanimelist")) ? "MyAnimeList" : "Kitsu"})}</div>` : ""}
+      <div class="muted">${rwSupported ? T("pairs.cfg.playsRewatch") : T("pairs.cfg.playsNoRewatch")}</div>
     `;
 
-    const parts = [`<div class="panel-title">History | Options</div>
+    const parts = [`<div class="panel-title">${TH("pairs.cfg.hsOptions")}</div>
       <div class="grid2 compact">
         <div class="opt-row">
-          <label for="cx-hs-rewatches">Rewatches</label>
+          <label for="cx-hs-rewatches">${TH("pairs.cfg.rewatches")}</label>
           <label class="switch">
             <input id="cx-hs-rewatches" type="checkbox" ${hs.rewatches && rwSupported ? "checked" : ""} ${rwSupported ? "" : "disabled"}>
             <span class="slider"></span>
           </label>
         </div>
         <div class="opt-row">
-          <label for="cx-hs-specials" data-tip-id="cx-hs-specials">Specials (Season 0)</label>
+          <label for="cx-hs-specials" data-tip-id="cx-hs-specials">${TH("pairs.cfg.specials")}</label>
           <label class="switch">
             <input id="cx-hs-specials" type="checkbox" ${hs.include_specials !== false && !hsCumulative ? "checked" : ""} ${hsCumulative ? 'disabled data-locked="1"' : ""}>
             <span class="slider"></span>
           </label>
         </div>
         ${libSupported ? `<div class="opt-row" style="grid-column:1/-1">
-          <label for="cx-hs-library-only" data-tip-id="cx-hs-library-only">Only items in destination library</label>
+          <label for="cx-hs-library-only" data-tip-id="cx-hs-library-only">${TH("pairs.cfg.libraryOnly")}</label>
           <label class="switch">
             <input id="cx-hs-library-only" type="checkbox" ${libraryOnlyOn(state, hs) ? "checked" : ""}>
             <span class="slider"></span>
           </label>
         </div>` : ""}
         ${undatedAsTodayAllowed(state) ? `<div class="opt-row" style="grid-column:1/-1">
-          <label for="cx-hs-undated-today" data-tip-id="cx-hs-undated-today">Replace unknown watch dates with today (SIMKL)</label>
+          <label for="cx-hs-undated-today" data-tip-id="cx-hs-undated-today">${TH("pairs.cfg.undatedToday")}</label>
           <label class="switch">
             <input id="cx-hs-undated-today" type="checkbox" ${hs.undated_as_today ? "checked" : ""}>
             <span class="slider"></span>
           </label>
         </div>` : ""}
         ${allCopiesAllowed(state) ? `<div class="opt-row" style="grid-column:1/-1">
-          <label for="cx-hs-all-copies" data-tip-id="cx-hs-all-copies">Update all copies</label>
+          <label for="cx-hs-all-copies" data-tip-id="cx-hs-all-copies">${TH("pairs.cfg.allCopies")}</label>
           <label class="switch">
             <input id="cx-hs-all-copies" type="checkbox" ${hs.update_all_copies ? "checked" : ""}>
             <span class="slider"></span>
           </label>
         </div>` : ""}
         ${traktResetsAllowed(state) ? `<div class="opt-row" style="grid-column:1/-1">
-          <label for="cx-hs-trakt-resets" data-tip-id="cx-hs-trakt-resets">Follow Trakt rewatch resets${traktResetsNeedVip(state) ? ' <span class="muted">(needs Trakt VIP)</span>' : ""}</label>
+          <label for="cx-hs-trakt-resets" data-tip-id="cx-hs-trakt-resets">${TH("pairs.cfg.traktResets")}${traktResetsNeedVip(state) ? ` <span class="muted">(${TH("pairs.cfg.needsVip")})</span>` : ""}</label>
           <label class="switch">
             <input id="cx-hs-trakt-resets" type="checkbox" ${hs.trakt_rewatch_resets && !traktResetsNeedVip(state) ? "checked" : ""} ${traktResetsNeedVip(state) ? 'disabled data-locked="1"' : ""}>
             <span class="slider"></span>
@@ -1958,7 +1960,7 @@ left.innerHTML = `
       </div>
       ${droppedBlock}
       ${hsSourceStatus ? `<div class="opt-row">
-        <label for="cx-hs-source-status">Status mapping</label>
+        <label for="cx-hs-source-status">${TH("pairs.cfg.statusMapping")}</label>
         <label class="switch">
           <input id="cx-hs-source-status" type="checkbox" ${hs.use_source_status ? "checked" : ""}>
           <span class="slider"></span>
@@ -1966,10 +1968,10 @@ left.innerHTML = `
       </div>` : ""}
       ${animeRow}`];
 
-    if (hasPlex(state)) parts.push(`<div class="panel-title small">Plex</div><div class="opt-row"><label for="plx-marked-watched">Marked Watched</label><label class="switch"><input id="plx-marked-watched" type="checkbox" ${getPairMarkedWatchedValue(state)?"checked":""}><span class="slider"></span></label></div><div class="muted">Include watched items from your Plex library, even when no playback-history entry is available. Applies only to this pair.</div>`);
-    if (hasPlex(state)) parts.push(`<div class="panel-title small">Plex cloud history <span class="pill">Beta</span></div>`);
-    if (same(state.src,"plex") || (isTwoWayMode(state) && same(state.dst,"plex"))) parts.push(`<div class="opt-row"><label for="plx-cloud-read" data-tip-id="plx-cloud-read">${isTwoWayMode(state) || (same(state.src,"plex") && same(state.dst,"plex")) ? "Read cloud history" : "Include Plex cloud history"}</label><label class="switch"><input id="plx-cloud-read" type="checkbox" ${state.pairProviders?.plex?.history?.read_cloud_history === true ? "checked" : ""}><span class="slider"></span></label></div>`);
-    if (same(state.dst,"plex") || (isTwoWayMode(state) && same(state.src,"plex"))) parts.push(`<div class="opt-row"><label for="plx-discover-fallback" data-tip-id="plx-discover-fallback">${isTwoWayMode(state) || (same(state.src,"plex") && same(state.dst,"plex")) ? "Write cloud fallback" : "Include Plex cloud history"}</label><label class="switch"><input id="plx-discover-fallback" type="checkbox" ${state.pairProviders?.plex?.history?.discover_fallback === true ? "checked" : ""}><span class="slider"></span></label></div>`);
+    if (hasPlex(state)) parts.push(`<div class="panel-title small">Plex</div><div class="opt-row"><label for="plx-marked-watched">${TH("pairs.cfg.markedWatched")}</label><label class="switch"><input id="plx-marked-watched" type="checkbox" ${getPairMarkedWatchedValue(state)?"checked":""}><span class="slider"></span></label></div><div class="muted">${TH("pairs.cfg.markedWatchedHint")}</div>`);
+    if (hasPlex(state)) parts.push(`<div class="panel-title small">${TH("pairs.cfg.plexCloud")} <span class="pill">${TH("pairs.cfg.beta")}</span></div>`);
+    if (same(state.src,"plex") || (isTwoWayMode(state) && same(state.dst,"plex"))) parts.push(`<div class="opt-row"><label for="plx-cloud-read" data-tip-id="plx-cloud-read">${isTwoWayMode(state) || (same(state.src,"plex") && same(state.dst,"plex")) ? TH("pairs.cfg.readCloud") : TH("pairs.cfg.includeCloud")}</label><label class="switch"><input id="plx-cloud-read" type="checkbox" ${state.pairProviders?.plex?.history?.read_cloud_history === true ? "checked" : ""}><span class="slider"></span></label></div>`);
+    if (same(state.dst,"plex") || (isTwoWayMode(state) && same(state.src,"plex"))) parts.push(`<div class="opt-row"><label for="plx-discover-fallback" data-tip-id="plx-discover-fallback">${isTwoWayMode(state) || (same(state.src,"plex") && same(state.dst,"plex")) ? TH("pairs.cfg.writeCloud") : TH("pairs.cfg.includeCloud")}</label><label class="switch"><input id="plx-discover-fallback" type="checkbox" ${state.pairProviders?.plex?.history?.discover_fallback === true ? "checked" : ""}><span class="slider"></span></label></div>`);
 
     if (hasTrakt(state)) {
       parts.push(`
@@ -1987,20 +1989,20 @@ left.innerHTML = `
   if (state.feature === "playlists") {
     const pl=getOpts(state,"playlists");
     if(!Array.isArray(pl.mappings)) pl.mappings=[];
-    left.innerHTML=`<div class="panel-title">Playlists</div>
-      <div class="opt-row"><label for="cx-pl-enable">Enable</label><label class="switch"><input id="cx-pl-enable" type="checkbox" ${pl.enable?"checked":""}><span class="slider"></span></label></div>
-      <div class="hint">Enables playlist sync for this pair. Attach one or more mapping profiles (MAP-xx) on the right; each carries its own source/target lists and rules.</div>
+    left.innerHTML=`<div class="panel-title">${TH("pairs.cfg.playlists")}</div>
+      <div class="opt-row"><label for="cx-pl-enable">${TH("pairs.cfg.enable")}</label><label class="switch"><input id="cx-pl-enable" type="checkbox" ${pl.enable?"checked":""}><span class="slider"></span></label></div>
+      <div class="hint">${TH("pairs.cfg.playlistsHint")}</div>
       <input id="cx-pl-add" type="checkbox" ${pl.add?"checked":""} hidden>
       <input id="cx-pl-remove" type="checkbox" ${pl.remove?"checked":""} hidden>`;
-    right.innerHTML=`<div class="panel-title">Mapping profiles</div>
-      <div class="muted" style="margin-bottom:10px">Attach mapping profiles whose endpoints match this pair. Only compatible, unattached MAP-ids are shown. Create and edit them on the Playlists page.</div>
-      <div id="cx-pl-maplist"><div class="muted">Loading…</div></div>
-      <button type="button" class="cx-btn" style="margin-top:10px" onclick="window.cxCloseModal&&window.cxCloseModal();window.showTab&&window.showTab('playlists')">Open Playlists page →</button>`;
+    right.innerHTML=`<div class="panel-title">${TH("pairs.cfg.mappingProfiles")}</div>
+      <div class="muted" style="margin-bottom:10px">${TH("pairs.cfg.mappingProfilesHint")}</div>
+      <div id="cx-pl-maplist"><div class="muted">${TH("pairs.cfg.loading")}</div></div>
+      <button type="button" class="cx-btn" style="margin-top:10px" onclick="window.cxCloseModal&&window.cxCloseModal();window.showTab&&window.showTab('playlists')">${TH("pairs.cfg.openPlaylists")}</button>`;
     applySubDisable("playlists");
     (async()=>{
       const host=ID("cx-pl-maplist"); if(!host) return;
       const e=s=>String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
-      let data; try{ const r=await fetch("/api/playlists/mappings",{cache:"no-store"}); data=await r.json(); }catch(err){ host.innerHTML='<div class="muted">Could not load mapping profiles.</div>'; return; }
+      let data; try{ const r=await fetch("/api/playlists/mappings",{cache:"no-store"}); data=await r.json(); }catch(err){ host.innerHTML='<div class="muted">' + TH("pairs.cfg.mappingLoadFailed") + '</div>'; return; }
       const all=(data&&data.mappings)||[];
       const twoWay=isTwoWayMode(state);
       const norm=(p,i)=>`${String(p||"").toUpperCase()}#${String(i||"default")}`;
@@ -2009,7 +2011,7 @@ left.innerHTML = `
       const compat=(m)=>{const s=norm((m.source||{}).provider,(m.source||{}).instance),t=norm((m.target||{}).provider,(m.target||{}).instance);return twoWay?((s===A&&t===B)||(s===B&&t===A)):(s===A&&t===B)};
       const avail=(m)=>!m.assigned_pair||sel.has(String(m.id));
       const choices=all.filter(m=>m.valid!==false&&compat(m)&&avail(m));
-      if(!choices.length){ host.innerHTML=`<div class="muted">No compatible mapping profiles. On the Playlists page, create endpoints for ${e(state.src)} and ${e(state.dst)}, then a MAP-xx linking them.</div>`; return; }
+      if(!choices.length){ host.innerHTML=`<div class="muted">${TH("pairs.cfg.noMappingProfiles",{src:String(state.src||""),dst:String(state.dst||"")})}</div>`; return; }
       host.innerHTML=choices.map(m=>`<label class="opt-row" style="justify-content:flex-start;gap:10px;cursor:pointer">
         <input type="checkbox" class="cx-plmap" name="cx-plmap" value="${e(m.id)}" ${sel.has(String(m.id))?"checked":""}>
         <span><b>${e(m.id)}</b> ${e(m.name||"")} <span class="muted">(${e((m.source||{}).label)} → ${e((m.target||{}).label)}, ${e(m.membership)})</span></span>
@@ -2030,41 +2032,41 @@ left.innerHTML = `
     const mediaRead=["plex","emby","jellyfin","silo","tofa"].some(p=>same(state.src,p));
     const mediaUpdates=["trakt","floppy","crosswatch","flicklist","mdblist","wetrakr"].some(p=>same(state.dst,p));
     const copyDetails=same(state.dst,"wetrakr")||(isTwoWayMode(state)&&same(state.src,"wetrakr"));
-    left.innerHTML = `<div class="panel-title">Collections | Basics</div>
+    left.innerHTML = `<div class="panel-title">${TH("pairs.cfg.coBasics")}</div>
       <div class="opt-row">
-        <label for="cx-co-enable">Enable</label>
+        <label for="cx-co-enable">${TH("pairs.cfg.enable")}</label>
         <label class="switch"><input id="cx-co-enable" type="checkbox" ${co.enable ? "checked" : ""}><span class="slider"></span></label>
       </div>
       <div class="grid2">
         <div class="opt-row">
-          <label for="cx-co-add">Add</label>
+          <label for="cx-co-add">${TH("pairs.cfg.add")}</label>
           <label class="switch"><input id="cx-co-add" type="checkbox" ${co.add ? "checked" : ""}><span class="slider"></span></label>
         </div>
         <div class="opt-row">
-          <label for="cx-co-remove">Remove</label>
+          <label for="cx-co-remove">${TH("pairs.cfg.remove")}</label>
           <label class="switch"><input id="cx-co-remove" type="checkbox" ${co.remove ? "checked" : ""}><span class="slider"></span></label>
         </div>
       </div>`;
-    right.innerHTML = `<div class="panel-title">Collections | Options</div>
-      <div class="panel-title small">Scope</div>
+    right.innerHTML = `<div class="panel-title">${TH("pairs.cfg.coOptions")}</div>
+      <div class="panel-title small">${TH("pairs.cfg.scope")}</div>
       <div class="grid2 compact">
-        <div class="opt-row"><label for="cx-co-type-all">All available</label><label class="switch"><input id="cx-co-type-all" type="checkbox" ${(hasType("movies")&&hasType("shows")&&hasType("seasons")&&hasType("episodes"))?"checked":""}><span class="slider"></span></label></div>
-        <div class="opt-row"><label for="cx-co-type-movies">Movies</label><label class="switch"><input id="cx-co-type-movies" type="checkbox" ${hasType("movies")?"checked":""}><span class="slider"></span></label></div>
-        <div class="opt-row"><label for="cx-co-type-shows">Shows</label><label class="switch"><input id="cx-co-type-shows" type="checkbox" ${hasType("shows")?"checked":""}><span class="slider"></span></label></div>
-        <div class="opt-row"><label for="cx-co-type-seasons">Seasons</label><label class="switch"><input id="cx-co-type-seasons" type="checkbox" ${hasType("seasons")?"checked":""}><span class="slider"></span></label></div>
-        <div class="opt-row"><label for="cx-co-type-episodes">Episodes</label><label class="switch"><input id="cx-co-type-episodes" type="checkbox" ${hasType("episodes")?"checked":""}><span class="slider"></span></label></div>
+        <div class="opt-row"><label for="cx-co-type-all">${TH("pairs.cfg.allAvailable")}</label><label class="switch"><input id="cx-co-type-all" type="checkbox" ${(hasType("movies")&&hasType("shows")&&hasType("seasons")&&hasType("episodes"))?"checked":""}><span class="slider"></span></label></div>
+        <div class="opt-row"><label for="cx-co-type-movies">${TH("pairs.cfg.movies")}</label><label class="switch"><input id="cx-co-type-movies" type="checkbox" ${hasType("movies")?"checked":""}><span class="slider"></span></label></div>
+        <div class="opt-row"><label for="cx-co-type-shows">${TH("pairs.cfg.shows")}</label><label class="switch"><input id="cx-co-type-shows" type="checkbox" ${hasType("shows")?"checked":""}><span class="slider"></span></label></div>
+        <div class="opt-row"><label for="cx-co-type-seasons">${TH("pairs.cfg.seasons")}</label><label class="switch"><input id="cx-co-type-seasons" type="checkbox" ${hasType("seasons")?"checked":""}><span class="slider"></span></label></div>
+        <div class="opt-row"><label for="cx-co-type-episodes">${TH("pairs.cfg.episodes")}</label><label class="switch"><input id="cx-co-type-episodes" type="checkbox" ${hasType("episodes")?"checked":""}><span class="slider"></span></label></div>
       </div>
-      ${mediaRead||mediaUpdates||copyDetails ? `<div class="panel-title small">Media info</div>` : ""}
+      ${mediaRead||mediaUpdates||copyDetails ? `<div class="panel-title small">${TH("pairs.cfg.mediaInfo")}</div>` : ""}
       ${mediaRead ? `<div class="opt-row">
-        <label for="cx-co-media" data-tip-id="cx-co-media">Read from media server</label>
+        <label for="cx-co-media" data-tip-id="cx-co-media">${TH("pairs.cfg.readMedia")}</label>
         <label class="switch"><input id="cx-co-media" type="checkbox" ${co.media_info ? "checked" : ""}><span class="slider"></span></label>
       </div>` : ""}
       ${mediaUpdates ? `<div class="opt-row">
-        <label for="cx-co-media-upd" data-tip-id="cx-co-media-upd">Update existing items</label>
+        <label for="cx-co-media-upd" data-tip-id="cx-co-media-upd">${TH("pairs.cfg.updateExisting")}</label>
         <label class="switch"><input id="cx-co-media-upd" type="checkbox" ${co.media_updates ? "checked" : ""}><span class="slider"></span></label>
       </div>` : ""}
       ${copyDetails ? `<div class="opt-row">
-        <label for="cx-co-copy-details" data-tip-id="cx-co-copy-details">Send private copy details</label>
+        <label for="cx-co-copy-details" data-tip-id="cx-co-copy-details">${TH("pairs.cfg.copyDetails")}</label>
         <label class="switch"><input id="cx-co-copy-details" type="checkbox" ${co.copy_details ? "checked" : ""}><span class="slider"></span></label>
       </div>` : ""}`;
     applySubDisable("collection");
@@ -2084,45 +2086,45 @@ left.innerHTML = `
     const replayEnabled = pr.replay_enabled === true || ["1", "true", "yes", "on"].includes(String(pr.replay_enabled ?? "").trim().toLowerCase());
     const timestampTolerance = Number.isFinite(Number(pr.timestamp_tolerance_seconds)) ? Math.max(0, Math.min(300, Math.round(Number(pr.timestamp_tolerance_seconds)))) : 30;
 
-    left.innerHTML = `<div class="panel-title">Progress | Basics</div>
-      <div class="opt-row"><label for="cx-pr-enable" data-tip-id="cx-pr-enable">Enable</label>
+    left.innerHTML = `<div class="panel-title">${TH("pairs.cfg.prBasics")}</div>
+      <div class="opt-row"><label for="cx-pr-enable" data-tip-id="cx-pr-enable">${TH("pairs.cfg.enable")}</label>
         <label class="switch"><input id="cx-pr-enable" type="checkbox" ${progressEnabled ? "checked" : ""}><span class="slider"></span></label></div>
       <div class="grid2">
-        <div class="opt-row"><label for="cx-pr-add" data-tip-id="cx-pr-add">Add / Update</label>
+        <div class="opt-row"><label for="cx-pr-add" data-tip-id="cx-pr-add">${TH("pairs.cfg.addUpdate")}</label>
           <label class="switch"><input id="cx-pr-add" type="checkbox" ${progressAdd ? "checked" : ""}><span class="slider"></span></label></div>
-        <div class="opt-row"><label for="cx-pr-remove" data-tip-id="cx-pr-remove">Remove</label>
+        <div class="opt-row"><label for="cx-pr-remove" data-tip-id="cx-pr-remove">${TH("pairs.cfg.remove")}</label>
           <label class="switch"><input id="cx-pr-remove" type="checkbox" ${pr.remove ? "checked" : ""}><span class="slider"></span></label></div>
       </div>`;
-    const prAnime = `${simklCanReceiveProgress(state) ? `<div class="panel-title small" style="margin-top:6px">Anime</div>
+    const prAnime = `${simklCanReceiveProgress(state) ? `<div class="panel-title small" style="margin-top:6px">${TH("pairs.cfg.anime")}</div>
       <div class="opt-row ${globalAnimeMappingEnabled(state) ? "" : "muted"}">
-        <label for="cx-pr-anime-map" data-tip-id="cx-pr-anime-map">Anime episode mapping</label>
+        <label for="cx-pr-anime-map" data-tip-id="cx-pr-anime-map">${TH("pairs.cfg.animeEpisodeMapping")}</label>
         <label class="switch"><input id="cx-pr-anime-map" type="checkbox" ${pr.use_anime_mapping ? "checked" : ""} ${globalAnimeMappingEnabled(state) ? "" : "disabled"}><span class="slider"></span></label>
       </div>
-      ${globalAnimeMappingEnabled(state) ? "" : `<div class="muted">Enable global Anime ID Mapping first.</div>`}` : ""}`;
+      ${globalAnimeMappingEnabled(state) ? "" : `<div class="muted">${TH("pairs.cfg.enableAnime")}</div>`}` : ""}`;
 
-    right.innerHTML = `<div class="panel-title">Progress | Options</div>
+    right.innerHTML = `<div class="panel-title">${TH("pairs.cfg.prOptions")}</div>
       <div class="grid2 compact">
-        <div class="opt-row"><label for="cx-pr-min" data-tip-id="cx-pr-min">Minimum seconds</label>
+        <div class="opt-row"><label for="cx-pr-min" data-tip-id="cx-pr-min">${TH("pairs.cfg.minSeconds")}</label>
           <input id="cx-pr-min" class="input small" type="number" min="0" max="36000" value="${minS}"></div>
-        <div class="opt-row"><label for="cx-pr-delta" data-tip-id="cx-pr-delta">Change threshold (s)</label>
+        <div class="opt-row"><label for="cx-pr-delta" data-tip-id="cx-pr-delta">${TH("pairs.cfg.changeThreshold")}</label>
           <input id="cx-pr-delta" class="input small" type="number" min="0" max="36000" value="${deltaS}"></div>
-        <div class="opt-row"><label for="cx-pr-maxp" data-tip-id="cx-pr-maxp">Ignore near complete (%)</label>
+        <div class="opt-row"><label for="cx-pr-maxp" data-tip-id="cx-pr-maxp">${TH("pairs.cfg.nearComplete")}</label>
           <input id="cx-pr-maxp" class="input small" type="number" min="0" max="100" step="1" value="${maxP}"></div>
-        <div class="opt-row"><label for="cx-pr-replay" data-tip-id="cx-pr-replay">Replay watched items</label>
+        <div class="opt-row"><label for="cx-pr-replay" data-tip-id="cx-pr-replay">${TH("pairs.cfg.replay")}</label>
           <label class="switch"><input id="cx-pr-replay" type="checkbox" ${replayEnabled ? "checked" : ""}><span class="slider"></span></label></div>
-        <div class="opt-row"><label for="cx-pr-tolerance" data-tip-id="cx-pr-tolerance">Timestamp tolerance (s)</label>
+        <div class="opt-row"><label for="cx-pr-tolerance" data-tip-id="cx-pr-tolerance">${TH("pairs.cfg.tolerance")}</label>
           <input id="cx-pr-tolerance" class="input small" type="number" min="0" max="300" step="1" value="${timestampTolerance}"></div>
-        <div class="opt-row"><label for="cx-pr-specials" data-tip-id="cx-pr-specials">Specials (Season 0)</label>
+        <div class="opt-row"><label for="cx-pr-specials" data-tip-id="cx-pr-specials">${TH("pairs.cfg.specials")}</label>
           <label class="switch"><input id="cx-pr-specials" type="checkbox" ${pr.include_specials !== false ? "checked" : ""}><span class="slider"></span></label></div>
-        ${pairSupportsLibraryOnly(state, state?.src, state?.dst, isTwoWayMode(state), "progress") ? `<div class="opt-row" style="grid-column:1/-1"><label for="cx-pr-library-only" data-tip-id="cx-pr-library-only">Only items in destination library</label>
+        ${pairSupportsLibraryOnly(state, state?.src, state?.dst, isTwoWayMode(state), "progress") ? `<div class="opt-row" style="grid-column:1/-1"><label for="cx-pr-library-only" data-tip-id="cx-pr-library-only">${TH("pairs.cfg.libraryOnly")}</label>
           <label class="switch"><input id="cx-pr-library-only" type="checkbox" ${libraryOnlyOn(state, pr, "progress") ? "checked" : ""}><span class="slider"></span></label></div>` : ""}
-        ${pairSupportsContinueWatching(state) ? `<div class="opt-row" style="grid-column:1/-1"><label for="cx-pr-cw-removals" data-tip-id="cx-pr-cw-removals">Sync Continue Watching removals <span class="pill">Beta</span></label>
+        ${pairSupportsContinueWatching(state) ? `<div class="opt-row" style="grid-column:1/-1"><label for="cx-pr-cw-removals" data-tip-id="cx-pr-cw-removals">${TH("pairs.cfg.cwRemovals")} <span class="pill">${TH("pairs.cfg.beta")}</span></label>
           <label class="switch"><input id="cx-pr-cw-removals" type="checkbox" ${pr.continue_watching_removals ? "checked" : ""}><span class="slider"></span></label></div>` : ""}
       </div>
       ${prAnime}
       ${progressRecommendation ?`<div class="muted" style="margin-top:10px">${escHTML(progressRecommendation)}</div>` : ""}
-      <div class="muted" style="margin-top:10px;color:#f0b35a">Warning: replay progress marks watched targets unwatched before writing the resume position.</div>
-      <div class="muted" style="margin-top:10px">Tip: Progress does not infer clears from absence. It only syncs resume positions.</div>`;
+      <div class="muted" style="margin-top:10px;color:#f0b35a">${TH("pairs.cfg.replayWarning")}</div>
+      <div class="muted" style="margin-top:10px">${TH("pairs.cfg.progressTip")}</div>`;
 
     applySubDisable("progress");
     const animeMap = ID("cx-pr-anime-map");
@@ -2973,11 +2975,11 @@ export default{
     hostEl.__doSave=async()=>{
       const payload=buildPayload(state,wrap);
       if(same(payload.source,payload.target)&&(!payload.target_instance||payload.source_instance===payload.target_instance)){
-        (window.CW?.MobileUI?.notice || window.alert)("Choose two different instances to create a sync pair.");
+        (window.CW?.MobileUI?.notice || window.alert)(T("pairs.cfg.differentInstances"));
         return;
       }
       if(scopedPairView()&&(!state.src_instance||!state.dst_instance)){
-        (window.CW?.MobileUI?.notice || window.alert)("Choose a connected account for both source and target.");
+        (window.CW?.MobileUI?.notice || window.alert)(T("pairs.cfg.connectedAccount"));
         return;
       }
       await saveConfigBits(state);
@@ -2985,12 +2987,12 @@ export default{
       const feats=payload.features||{};
       const enabledKeys=Object.keys(feats).filter(k=>feats[k]?.enable);
       if(!enabledKeys.length){
-        const ok=(await (window.CW?.MobileUI?.ask || window.confirm)("This pair has no enabled features.\nIt will not transfer any data.\nSave anyway?"));
+        const ok=(await (window.CW?.MobileUI?.ask || window.confirm)(T("pairs.cfg.noFeaturesConfirm")));
         if(!ok)return;
       }
 
       const res=await savePair(payload);
-      if(!res.ok){(window.CW?.MobileUI?.notice || window.alert)(res.error==="same_provider_instance"?"Choose two different instances to create a sync pair.":res.error==="not_found"?"This pair no longer exists. Close the editor and create a new pair.":res.error==="profile_scope_denied"?"Choose accounts that belong to this profile.":String(res.error||"").toLowerCase().includes("status")||res.error==="Planned remains managed by Watchlist"?res.error:"Save failed");return;}
+      if(!res.ok){(window.CW?.MobileUI?.notice || window.alert)(res.error==="same_provider_instance"?T("pairs.cfg.differentInstances"):res.error==="not_found"?T("pairs.cfg.notFound"):res.error==="profile_scope_denied"?T("pairs.cfg.profileAccounts"):String(res.error||"").toLowerCase().includes("status")||res.error==="Planned remains managed by Watchlist"?res.error:T("pairs.cfg.saveFailed"));return;}
 
       try{
         if(typeof window.loadPairs==="function"){await window.loadPairs(true)}

@@ -2,6 +2,8 @@
 // CrossWatch - Scrob auth UI
 // Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 (function () {
+  const T = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.t?.(key, vars) ?? key;
+  const TH = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.html?.(key, vars) ?? key;
   if (window._scrobAuthPatched) return;
   window._scrobAuthPatched = true;
 
@@ -16,7 +18,7 @@
     sectionId: "sec-scrob",
     selectId: "scrob_instance",
     storageKey: "cw.ui.scrob.auth.instance.v1",
-    title: "Select which Scrob server this config applies to.",
+    title: T("connections.auth.gen.selectServer", {provider: "Scrob"}),
   });
 
   const api = (path) => profile ? profile.api(path) : String(path || "");
@@ -26,27 +28,27 @@
   function friendlyError(code) {
     const key = String(code || "").trim();
     switch (key) {
-      case "server_url_required": return "Enter Scrob server URL";
-      case "api_key_required": return "Enter your Scrob API key";
-      case "username_required": return "Enter your Scrob username";
-      case "password_required": return "Enter your Scrob password";
-      case "invalid_api_key": return "Invalid Scrob API key";
-      case "invalid_credentials": return "Invalid Scrob username or password";
-      case "totp_required": return "Enter the 6 digit code from your authenticator app";
-      case "invalid_totp_code": return "That two factor code was not accepted";
-      case "credentials_mismatch": return "That API key belongs to a different Scrob account than this login";
-      case "password_login_disabled": return "Password login is disabled on this Scrob server";
-      case "email_not_confirmed": return "Confirm your Scrob account email first";
-      case "api_not_found": return "No Scrob API found at this URL";
-      case "api_prefix_mismatch": return "Scrob API not reachable at this URL";
-      case "validation_timeout": return "Scrob validation timed out";
-      case "unreachable": return "Could not reach Scrob";
-      case "invalid_ssl": return "Scrob SSL validation failed";
-      case "validation_bad_response": return "Scrob returned an unexpected response";
-      case "server_error": return "Scrob server error";
+      case "server_url_required": return T("connections.validation.serverUrlRequired", {provider: "Scrob"});
+      case "api_key_required": return T("connections.validation.apiKeyRequired", {provider: "Scrob"});
+      case "username_required": return T("connections.validation.usernameRequired", {provider: "Scrob"});
+      case "password_required": return T("connections.validation.passwordRequired", {provider: "Scrob"});
+      case "invalid_api_key": return T("connections.validation.invalidApiKey", {provider: "Scrob"});
+      case "invalid_credentials": return T("connections.validation.invalidCredentials", {provider: "Scrob"});
+      case "totp_required": return T("connections.auth.totpRequired");
+      case "invalid_totp_code": return T("connections.auth.totpInvalid");
+      case "credentials_mismatch": return T("connections.validation.credentialsMismatch", {provider: "Scrob"});
+      case "password_login_disabled": return T("connections.validation.passwordLoginDisabled", {provider: "Scrob"});
+      case "email_not_confirmed": return T("connections.validation.emailNotConfirmed", {provider: "Scrob"});
+      case "api_not_found": return T("connections.validation.apiNotFound", {provider: "Scrob"});
+      case "api_prefix_mismatch": return T("connections.validation.apiPrefixMismatch", {provider: "Scrob"});
+      case "validation_timeout": return T("connections.validation.timeout", {provider: "Scrob"});
+      case "unreachable": return T("connections.validation.reachFailed", {provider: "Scrob"});
+      case "invalid_ssl": return T("connections.validation.sslFailed", {provider: "Scrob"});
+      case "validation_bad_response": return T("connections.validation.returnedUnexpected", {provider: "Scrob"});
+      case "server_error": return T("connections.validation.serverError", {provider: "Scrob"});
       default:
-        if (key.startsWith("validation_http_")) return "Scrob validation failed";
-        return key || "Not connected";
+        if (key.startsWith("validation_http_")) return T("connections.validation.httpFailed", {provider: "Scrob"});
+        return key || T("connections.auth.notConnected");
     }
   }
 
@@ -63,7 +65,7 @@
 
   function setConn(ok, msg) {
     try { Shared.setConnectLocked("scrob_connect", !!ok); } catch {}
-    return Shared.setStatus("scrob_msg", ok, msg || (ok ? "Connected" : "Not connected"));
+    return Shared.setStatus("scrob_msg", ok, msg || (ok ? T("connections.auth.connected") : T("connections.auth.notConnected")));
   }
 
   function currentSignature() {
@@ -104,9 +106,9 @@
       const reauth = !!(r.data && r.data.reauth_required);
       showReauth(reauth);
       if (!reauth && r.data && r.data.totp_enabled) showTotp(true);
-      setConn(ok && !reauth, reauth ? "Two factor code required" : ok ? "Connected" : friendlyError(r.data && r.data.reason));
+      setConn(ok && !reauth, reauth ? T("connections.auth.twoFactorRequired") : ok ? T("connections.auth.connected") : friendlyError(r.data && r.data.reason));
     } catch {
-      setConn(false, "Could not connect to Scrob");
+      setConn(false, T("connections.validation.connectFailed", {provider: "Scrob"}));
     }
   }
 
@@ -149,10 +151,10 @@
     const password = passInput?.value || "";
     const verify_ssl = !!el("scrob_verify_ssl")?.checked;
 
-    if (!server) { note("Enter Scrob server URL"); return; }
-    if (!key && !(keyInput && keyInput.dataset.hasKey === "1")) { note("Enter your Scrob API key"); return; }
-    if (!username) { note("Enter your Scrob username"); return; }
-    if (!password && !(passInput && passInput.dataset.hasKey === "1")) { note("Enter your Scrob password"); return; }
+    if (!server) { note(T("connections.validation.serverUrlRequired", {provider: "Scrob"})); return; }
+    if (!key && !(keyInput && keyInput.dataset.hasKey === "1")) { note(T("connections.validation.apiKeyRequired", {provider: "Scrob"})); return; }
+    if (!username) { note(T("connections.validation.usernameRequired", {provider: "Scrob"})); return; }
+    if (!password && !(passInput && passInput.dataset.hasKey === "1")) { note(T("connections.validation.passwordRequired", {provider: "Scrob"})); return; }
 
     try {
       const r = await Shared.fetchJSON(api("/api/scrob/save?validate_only=1"), {
@@ -170,10 +172,10 @@
       showReauth(false);
       showTotp(!!r.data?.totp_enabled);
       stagePending(r.data || {});
-      setConn(true, "Connected - save settings to apply");
-      note("Scrob connected - save settings to apply");
+      setConn(true, T("connections.auth.connectedSave"));
+      note(T("connections.auth.gen.connectedSave", {provider: "Scrob"}));
     } catch (e) {
-      const msg = e && e.message ? e.message : "Saving Scrob failed";
+      const msg = e && e.message ? e.message : T("connections.validation.saveFailed", {provider: "Scrob"});
       setConn(false, msg);
       note(msg);
     }
@@ -189,9 +191,9 @@
       Shared.maskSecret(el("scrob_key"), false);
       Shared.maskSecret(el("scrob_password"), false);
       setConn(false);
-      note("Scrob disconnected");
+      note(T("connections.auth.gen.disconnected", {provider: "Scrob"}));
     } catch (e) {
-      note("Scrob disconnect failed" + (e && e.message ? ": " + e.message : ""));
+      note(T("connections.auth.gen.disconnectFailed", {provider: "Scrob"}) + (e && e.message ? ": " + e.message : ""));
     }
   }
 
