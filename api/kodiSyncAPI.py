@@ -31,7 +31,6 @@ def _too_large() -> JSONResponse:
 
 def _device(request: Request, cfg: dict[str, Any]) -> tuple[str | None, JSONResponse | None]:
     from providers.scrobble.kodi import addon as kodi_addon
-    from providers.sync.kodi import _addon_sync as addon_sync
 
     if "token" in request.query_params:
         return None, _error(400, "invalid_request", "Send the token in the X-CrossWatch-Token header.")
@@ -39,8 +38,6 @@ def _device(request: Request, cfg: dict[str, Any]) -> tuple[str | None, JSONResp
     device = kodi_addon.instance_for_token(cfg, token)
     if device is None:
         return None, _error(401, "invalid_token", "Unknown or revoked token.")
-    if not addon_sync.sync_enabled(cfg):
-        return None, _error(403, "sync_disabled", "Library sync is off.")
     return device, None
 
 

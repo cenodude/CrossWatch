@@ -16,11 +16,11 @@ from pathlib import Path
 from typing import Any, cast
 from zoneinfo import ZoneInfo
 
-from cw_platform.provider_instances import _SYNC_USER_MARKER, list_sync_user_ids, normalize_instance_id, split_sync_user_id, sync_user_instance_id
+from cw_platform.account_match import normalize_media_account_name
+from cw_platform.provider_instances import _SYNC_USER_MARKER, normalize_instance_id, split_sync_user_id, sync_user_instance_id
 from providers.auth._auth_KODI import KodiAuthError
 
 VERSION = 1
-FLAG_KEY = "kodi_addon_sync"
 KODI_TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
 UTC_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
 WRITE_METHODS = {"VideoLibrary.SetMovieDetails": "movieid", "VideoLibrary.SetEpisodeDetails": "episodeid"}
@@ -93,10 +93,6 @@ def _log(level: str, event: str, **fields: Any) -> None:
         log("addon_sync", level, event, **fields)
     except Exception:
         pass
-
-
-def sync_enabled(cfg: Mapping[str, Any] | None) -> bool:
-    return _dict(_dict(cfg).get("runtime")).get(FLAG_KEY) is True
 
 
 def _root() -> Path:
@@ -266,42 +262,62 @@ def library_taken(cfg: Mapping[str, Any] | None, device: Any) -> bool:
 
 def device_active(cfg: Mapping[str, Any] | None, device: Any) -> bool:
     dev = normalize_instance_id(device)
-    return (sync_enabled(cfg) and _token_enabled(cfg, dev) and device_info(dev).get("enabled") is True
-            and not library_taken(cfg, dev))
+    return _token_enabled(cfg, dev) and device_info(dev).get("enabled") is True and not library_taken(cfg, dev)
+
+
+def _viewer_names(info: Mapping[str, Any]) -> dict[str, str]:
+    return {str(v.get("viewer_id")): str(v.get("name") or "") for v in info.get("viewers") or []
+            if isinstance(v, Mapping) and v.get("viewer_id")}
 
 
 def _viewer_ids(info: Mapping[str, Any]) -> list[str]:
     return [str(v.get("viewer_id")) for v in info.get("viewers") or [] if isinstance(v, Mapping) and v.get("viewer_id")]
 
 
-def _parent_sync_users(cfg: Mapping[str, Any] | None, device: str) -> list[str]:
+def _parent_user_entries(cfg: Mapping[str, Any] | None, device: str) -> dict[str, dict[str, Any]]:
     from providers.sync.kodi._common import pick_instance_id
 
-    users = list_sync_user_ids(dict(cfg or {}), "kodi", device)
-    if users or device == "default":
-        return users
     block = _dict(_dict(cfg).get("kodi"))
-    if device in _dict(block.get("instances")) or normalize_instance_id(pick_instance_id(cfg)) != device:
-        return []
-    return [sync_user_instance_id(device, str(key).strip()) for key, entry in _dict(block.get("sync_users")).items()
-            if str(key).strip() and isinstance(entry, Mapping)]
+    instances = _dict(block.get("instances"))
+    parent = block if device == "default" else _dict(instances.get(device))
+    users = _dict(parent.get("sync_users"))
+    if not users and device != "default" and device not in instances and normalize_instance_id(pick_instance_id(cfg)) == device:
+        users = _dict(block.get("sync_users"))
+    return {sync_user_instance_id(device, str(key).strip()): dict(entry) for key, entry in users.items()
+            if str(key).strip() and isinstance(entry, Mapping)}
 
 
-def _sync_users(cfg: Mapping[str, Any] | None, device: str) -> list[str]:
-    users = _parent_sync_users(cfg, device)
-    if users:
-        return users
+def _parent_sync_users(cfg: Mapping[str, Any] | None, device: str) -> list[str]:
+    return list(_parent_user_entries(cfg, device))
+
+
+def _sync_user_entries(cfg: Mapping[str, Any] | None, device: str) -> dict[str, dict[str, Any]]:
+    entries = _parent_user_entries(cfg, device)
+    if entries:
+        return entries
     block = _dict(_dict(cfg).get("kodi"))
     key = _text(block.get(_SYNC_USER_MARKER), 80)
     if not key:
-        return []
+        return {}
     ref = split_sync_user_id(_dict(cfg).get("_cw_provider_instance"))
     if ref is not None and (ref[0] != device or ref[1] != key):
-        return []
-    return [sync_user_instance_id(device, key)]
+        return {}
+    return {sync_user_instance_id(device, key): block}
 
 
-def viewer_instance(cfg: Mapping[str, Any] | None, device: Any, viewer_id: Any, known: Iterable[str] | None = None) -> str | None:
+def _user_by_name(entries: Mapping[str, Mapping[str, Any]], device: str, viewer_id: str,
+                  names: Mapping[str, str]) -> str | None:
+    name = normalize_media_account_name(names.get(viewer_id))
+    if not name or sum(1 for other in names.values() if normalize_media_account_name(other) == name) > 1:
+        return None
+    taken = {sync_user_instance_id(device, other) for other in names}
+    hits = [inst for inst, entry in entries.items() if inst not in taken
+            and normalize_media_account_name(entry.get("username") or entry.get("user")) == name]
+    return hits[0] if len(hits) == 1 else None
+
+
+def viewer_instance(cfg: Mapping[str, Any] | None, device: Any, viewer_id: Any, known: Iterable[str] | None = None,
+                    names: Mapping[str, str] | None = None) -> str | None:
     dev = normalize_instance_id(device)
     vid = _text(viewer_id, 80)
     if not vid:
@@ -309,13 +325,15 @@ def viewer_instance(cfg: Mapping[str, Any] | None, device: Any, viewer_id: Any, 
     viewers = list(known) if known is not None else _viewer_ids(device_info(dev))
     if vid not in viewers:
         return None
-    users = _sync_users(cfg, dev)
+    entries = _sync_user_entries(cfg, dev)
     candidate = sync_user_instance_id(dev, vid)
-    if candidate in users:
+    bound = binding(cfg, dev)["viewers"].get(dev)
+    if candidate in entries:
         inst: str | None = candidate
-    elif not users and ((viewers == [vid] and binding(cfg, dev)["viewers"].get(dev) in (None, vid))
-                        or binding(cfg, dev)["viewers"].get(dev) == vid):
+    elif bound == vid or (not entries and viewers == [vid] and bound is None):
         inst = dev
+    elif entries:
+        inst = _user_by_name(entries, dev, vid, names if names is not None else _viewer_names(device_info(dev)))
     else:
         inst = None
     if inst is None or uses_jsonrpc(cfg, inst):
@@ -344,8 +362,6 @@ def _clean_viewers(value: Any) -> list[dict[str, str]]:
 
 
 def handle_ping(cfg: Mapping[str, Any] | None, device: Any, body: Mapping[str, Any] | None) -> dict[str, Any] | None:
-    if not sync_enabled(cfg):
-        return None
     try:
         dev = normalize_instance_id(device)
         payload = _dict(body)
@@ -365,6 +381,8 @@ def handle_ping(cfg: Mapping[str, Any] | None, device: Any, body: Mapping[str, A
                 _save_binding(dev, {**current, "device_id": device_id, "bound_at": time.time()})
             path = _path(dev, "device")
             info = _read(path)
+            if not sent and not info:
+                return {"version": VERSION, "enabled": False, "viewers": [], "queue_pending": 0}
             before = dict(info)
             info["instance"] = dev
             if sent:
@@ -374,7 +392,8 @@ def handle_ping(cfg: Mapping[str, Any] | None, device: Any, body: Mapping[str, A
                     if key in sent:
                         info[key] = _text(sent.get(key), limit)
             known = _viewer_ids(info)
-            mapping = [[vid, viewer_instance(cfg, dev, vid, known)] for vid in known]
+            names = _viewer_names(info)
+            mapping = [[vid, viewer_instance(cfg, dev, vid, known, names)] for vid in known]
             mapping_key = json.dumps([info.get("library_id") or "", mapping], sort_keys=True)
             if info.get("mapping_key") != mapping_key:
                 info["rev"] = (_int(info.get("rev")) or 0) + 1
@@ -1417,7 +1436,7 @@ def receive_ack(cfg: Mapping[str, Any] | None, device: Any, body: Mapping[str, A
     results = body.get("results")
     if not isinstance(results, list):
         raise SyncRequestError(400, "invalid_request", "results must be a list.")
-    wanted: dict[int, tuple[str, str]] = {}
+    wanted: dict[int, tuple[str, str, str]] = {}
     for row in results:
         if not isinstance(row, Mapping):
             continue
@@ -1754,7 +1773,6 @@ __all__ = [
     "receive_upload",
     "run_with_retry",
     "schedule_pair_runs",
-    "sync_enabled",
     "to_utc",
     "trigger_pair_runs",
     "uses_jsonrpc",

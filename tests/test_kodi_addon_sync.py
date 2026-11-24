@@ -44,7 +44,6 @@ def _sync_root(config_base, monkeypatch: pytest.MonkeyPatch):
 
 def make_cfg(**kodi: Any) -> dict[str, Any]:
     return {
-        "runtime": {"kodi_addon_sync": True},
         "security": {"webhook_ids": {"kodiwatcher:default": TOKEN}},
         "kodi": dict(kodi),
         "pairs": [],
@@ -142,9 +141,16 @@ def ratings(cfg: dict[str, Any]) -> dict[str, int]:
     return {row["title"]: row["rating"] for row in module(cfg).build_index("ratings").values()}
 
 
-def test_ping_block_only_with_flag_and_maps_single_viewer_to_device():
+def test_ping_without_sync_block_stays_off_and_writes_nothing():
     cfg = make_cfg()
-    assert addon_sync.handle_ping({**cfg, "runtime": {}}, "default", {"event": "ping"}) is None
+    off = {"version": 1, "enabled": False, "viewers": [], "queue_pending": 0}
+    assert addon_sync.handle_ping(cfg, "default", {"event": "ping"}) == off
+    assert addon_sync.handle_ping({**cfg, "runtime": {"kodi_addon_sync": False}}, "default", {"event": "ping"}) == off
+    assert not addon_sync._path("default", "device").exists()
+
+
+def test_ping_maps_single_viewer_to_device():
+    cfg = make_cfg()
     block = ping(cfg)
     assert block == {"version": 1, "enabled": True, "queue_pending": 0,
                      "viewers": [{"viewer_id": "kv-1", "instance": "default", "upload_seq": 0, "next_change": 1, "run_pending": False}]}
@@ -192,7 +198,7 @@ def test_sync_user_pairs_find_their_own_upload():
 def test_sync_users_of_a_named_instance_pass_parent_health():
     from cw_platform.provider_instances import build_pair_config_view, build_provider_config_view
 
-    cfg = {"runtime": {"kodi_addon_sync": True}, "security": {"webhook_ids": {"kodiwatcher:living": TOKEN}}, "pairs": [],
+    cfg = {"security": {"webhook_ids": {"kodiwatcher:living": TOKEN}}, "pairs": [],
            "kodi": {"instances": {"living": {"sync_users": {"kv-1": {"username": "user1"}, "kv-2": {"username": "user2"}}}}}}
     viewers = [{"viewer_id": "kv-1", "name": "user1"}, {"viewer_id": "kv-2", "name": "user2"}]
     addon_sync.handle_ping(cfg, "living", {"event": "ping", "device": {"id": "dev-1"},
@@ -215,6 +221,122 @@ def test_sync_user_waits_while_only_its_sibling_uploaded():
     view = {**build_pair_config_view(cfg, "TRAKT", "default", "KODI", "default~kv-2"), "_cw_provider_instance": "default~kv-2"}
     assert not common.is_configured(view, "default~kv-2")
     assert common.is_configured(cfg, "default")
+
+
+def test_sync_users_made_by_viewer_name_still_map():
+    from cw_platform.provider_instances import build_pair_config_view
+
+    cfg = make_cfg(sync_users={"user1": {"username": "User1"}, "user2": {"username": "user2"}})
+    viewers = [{"viewer_id": "kv-1", "name": "user1"}, {"viewer_id": "kv-2", "name": "user2"}]
+    assert [(v["viewer_id"], v["instance"]) for v in ping(cfg, viewers)["viewers"]] == [
+        ("kv-1", "default~user1"), ("kv-2", "default~user2")]
+    assert full(cfg)["instance"] == "default~user1"
+    view = {**build_pair_config_view(cfg, "TRAKT", "default", "KODI", "default~user1"), "_cw_provider_instance": "default~user1"}
+    assert {row["title"] for row in mod.KODIModule(view).build_index("history").values()} == {"Fight Club"}
+
+
+def test_name_mapping_never_guesses():
+    same = [{"viewer_id": "kv-1", "name": "user1"}, {"viewer_id": "kv-2", "name": "user1"}]
+    cfg = make_cfg(sync_users={"user1": {"username": "user1"}})
+    assert ping(cfg, same)["viewers"] == []
+    addon_sync._CACHE.clear()
+    cfg = make_cfg(sync_users={"kv-2": {"username": "user1"}})
+    viewers = [{"viewer_id": "kv-1", "name": "user1"}, {"viewer_id": "kv-2", "name": "user2"}]
+    assert [(v["viewer_id"], v["instance"]) for v in ping(cfg, viewers)["viewers"]] == [("kv-2", "default~kv-2")]
+
+
+def test_kodi_users_offer_sync_viewers_by_viewer_id(monkeypatch: pytest.MonkeyPatch):
+    from api.authenticationAPI import register_auth
+
+    cfg = make_cfg()
+    ping(cfg, [{"viewer_id": "kv-1", "name": "user1"}, {"viewer_id": "kv-2", "name": "user2"}])
+    monkeypatch.setattr("api.authenticationAPI.load_config", lambda: cfg)
+    monkeypatch.setattr("api.authenticationAPI.save_config", lambda *_a, **_k: None)
+    app = FastAPI()
+    register_auth(app)
+    users = TestClient(app).get("/api/kodi/users").json()["users"]
+    assert [(u["id"], u["username"]) for u in users] == [("kv-1", "user1"), ("kv-2", "user2")]
+
+
+def _setup_client(cfg: dict[str, Any]) -> TestClient:
+    from api.authenticationAPI import register_auth
+    from cw_platform import config_base
+
+    config_base.save_config(cfg)
+    app = FastAPI()
+    register_auth(app)
+    return TestClient(app)
+
+
+def _saved() -> dict[str, Any]:
+    from cw_platform import config_base
+
+    return config_base.load_config()
+
+
+def _with_trakt(cfg: dict[str, Any]) -> dict[str, Any]:
+    return {**cfg, "trakt": {"client_id": "c" * 32, "client_secret": "s" * 32, "access_token": "t" * 32, "refresh_token": "r" * 32}}
+
+
+def test_sync_setup_for_the_only_viewer_adds_one_two_way_pair(monkeypatch: pytest.MonkeyPatch):
+    triggered: list[str] = []
+    monkeypatch.setattr(addon_sync, "trigger_pair_runs", lambda cfg, inst: triggered.append(inst) or [])
+    cfg = _with_trakt(make_cfg())
+    ping(cfg)
+    full(cfg, movies=[unwatched()], episodes=[], tvshows=[])
+    http = _setup_client(cfg)
+    view = http.get("/api/kodi/addon/sync").json()
+    assert {"provider": "TRAKT", "instance": "default", "label": "Trakt"} in view["targets"]
+    assert [(v["viewer_id"], v["instance"], v["pairs"]) for v in view["viewers"]] == [("kv-1", "default", [])]
+    body = {"viewer_id": "kv-1", "target": "TRAKT", "target_instance": "default"}
+    done = http.post("/api/kodi/addon/sync-setup", json=body).json()
+    assert [(p["provider"], p["instance"]) for p in done["viewers"][0]["pairs"]] == [("TRAKT", "default")]
+    assert http.post("/api/kodi/addon/sync-setup", json=body).json()["ok"] is True
+    pairs = _saved()["pairs"]
+    assert len(pairs) == 1
+    pair = pairs[0]
+    assert (pair["source"], pair["source_instance"], pair["target"], pair["target_instance"], pair["mode"], pair["enabled"]) == (
+        "KODI", "default", "TRAKT", "default", "two-way", True)
+    assert pair["features"]["history"]["enable"] is True and pair["features"]["history"]["remove"] is False
+    assert pair["features"]["ratings"]["enable"] is True and "watchlist" not in pair["features"]
+    assert pair["features"]["ratings"]["types"] == ["movies", "shows", "seasons", "episodes"]
+    assert pair["features"]["ratings"]["mode"] == "all" and pair["features"]["ratings"]["remove"] is False
+    assert triggered == ["default"]
+
+
+def test_sync_setup_gives_a_second_viewer_its_own_sync_user(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(addon_sync, "trigger_pair_runs", lambda cfg, inst: [])
+    cfg = _with_trakt(make_cfg())
+    ping(cfg)
+    full(cfg, movies=[unwatched()], episodes=[], tvshows=[])
+    viewers = [{"viewer_id": "kv-1", "name": "user1"}, {"viewer_id": "kv-2", "name": "user2"}]
+    ping(cfg, viewers)
+    http = _setup_client(cfg)
+    done = http.post("/api/kodi/addon/sync-setup", json={"viewer_id": "kv-2", "target": "TRAKT"}).json()
+    assert [(v["viewer_id"], v["instance"]) for v in done["viewers"]] == [("kv-1", "default"), ("kv-2", "default~kv-2")]
+    saved = _saved()
+    assert saved["kodi"]["sync_users"]["kv-2"]["username"] == "user2"
+    assert [(p["source_instance"], p["target"]) for p in saved["pairs"]] == [("default~kv-2", "TRAKT")]
+    assert [(v["viewer_id"], v["instance"]) for v in ping(saved, viewers)["viewers"]] == [("kv-1", "default"), ("kv-2", "default~kv-2")]
+
+
+def test_sync_setup_refuses_what_it_cannot_set_up(monkeypatch: pytest.MonkeyPatch):
+    cfg = make_cfg()
+    ping(cfg)
+    http = _setup_client(cfg)
+    assert http.post("/api/kodi/addon/sync-setup", json={"viewer_id": "kv-1", "target": "TRAKT"}).status_code == 400
+    assert http.post("/api/kodi/addon/sync-setup", json={"viewer_id": "kv-9", "target": "TRAKT"}).status_code == 404
+    http = _setup_client(_with_trakt(make_cfg(server="http://kodi:8080", connection_verified=True)))
+    assert http.post("/api/kodi/addon/sync-setup", json={"viewer_id": "kv-1", "target": "TRAKT"}).json()["error"] == "This Kodi syncs over JSON-RPC"
+    assert _saved()["pairs"] == []
+
+
+def test_old_sync_switch_is_removed_from_saved_config():
+    from cw_platform import config_base
+
+    cfg: dict[str, Any] = {"runtime": {"kodi_addon_sync": True, "debug": False}}
+    assert config_base.cleanup_obsolete_config_keys(cfg) == ["runtime.kodi_addon_sync"]
+    assert cfg == {"runtime": {"debug": False}}
 
 
 def test_not_ready_until_full_upload_and_read_never_empty():
@@ -806,9 +928,7 @@ def test_endpoints_auth_and_flow(client):
     headers = {"X-CrossWatch-Token": TOKEN, "X-CrossWatch-Device": "dev-1"}
     assert http.get(f"{base}/queue?viewer_id=kv-1&token={TOKEN}").json()["error"]["code"] == "invalid_request"
     assert http.get(f"{base}/queue?viewer_id=kv-1", headers={"X-CrossWatch-Token": "wrong-token-000000000"}).status_code == 401
-    state["cfg"] = {**state["cfg"], "runtime": {}}
     assert http.get(f"{base}/queue?viewer_id=kv-1", headers=headers).json()["error"]["code"] == "sync_disabled"
-    state["cfg"] = make_cfg()
     ping(state["cfg"])
     assert http.get(f"{base}/queue?viewer_id=nobody", headers=headers).status_code == 409
     body = full_body(movies=[unwatched()], episodes=[], tvshows=[], upload_id="u-9")

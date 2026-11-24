@@ -159,12 +159,12 @@
   const ADDON_COPY = {
     code: {
       title: "Connect the Kodi add-on",
-      copy: "The add-on reports playback and viewers to CrossWatch, so scrobbling from Kodi works without a JSON-RPC connection. Pair it with a short code.",
+      copy: "The add-on syncs this Kodi library per viewer and reports playback, without Kodi's web server or a JSON-RPC connection. Pair it with a short code.",
       steps: [["Install add-on", "Install the CrossWatch add-on on Kodi"], ["Get a code", "Press Connect add-on below"], ["Pair", "Enter the address and code in the add-on"]],
     },
     link: {
       title: "Connect the Kodi add-on",
-      copy: "The add-on reports playback and viewers to CrossWatch. This Kodi is connected over JSON-RPC, so CrossWatch can send the add-on its settings directly.",
+      copy: "The add-on syncs this Kodi library per viewer and reports playback. This Kodi is connected over JSON-RPC, so CrossWatch can send the add-on its settings directly.",
       steps: [["Install add-on", "Install the CrossWatch add-on on Kodi"], ["Link", "Press Link add-on below"], ["Confirm", "Confirm on your TV"]],
     },
   };
@@ -175,6 +175,14 @@
         <div id="kodi_addon_info" class="muted"></div>
         <button id="kodi_addon_repair" class="btn" type="button">Pair again</button>
         <div id="kodi_addon_msg" class="msg cw-connection-status-pill hidden" role="status" aria-live="polite"></div>
+      </div>
+
+      <div id="kodi_addon_sync" class="kodi-sync" hidden>
+        <div class="kodi-sync-head">
+          <strong>Library sync</strong>
+          <span id="kodi_addon_sync_note" class="muted"></span>
+        </div>
+        <div id="kodi_addon_sync_rows" class="kodi-sync-rows"></div>
       </div>
 
       <div id="kodi_addon_link_row" hidden>
@@ -230,6 +238,8 @@
   let addonPollUntil = 0;
   let addonLinkUntil = 0;
   let addonRpc = false;
+  let syncFor = "";
+  let syncBusy = false;
 
   function authSubpanel() {
     return Q('#sec-kodi .cw-subpanel[data-sub="auth"]');
@@ -310,7 +320,7 @@
     if (!wanted) {
       try { wanted = localStorage.getItem(METHOD_KEY) || ""; } catch {}
     }
-    if (!wanted) wanted = data.paired && !data.jsonrpc_connected ? "addon" : "jsonrpc";
+    if (!wanted) wanted = data.jsonrpc_connected && !data.paired ? "jsonrpc" : "addon";
     setMethod(wanted);
   }
 
@@ -429,10 +439,106 @@
       el("kodi_addon_info").textContent = "";
     }
 
+    if (paired && !rpc) {
+      if (syncFor !== instance) {
+        syncFor = instance;
+        void loadSync();
+      }
+    } else {
+      syncFor = "";
+      renderSync(null);
+    }
+
     if (paired && addonPaired === false && addonInstance === instance) note("Kodi add-on connected");
     addonPaired = paired;
     addonInstance = instance;
     if (code) watchAddon(left);
+  }
+
+  function syncRow(viewer, targets) {
+    const row = document.createElement("div");
+    row.className = "kodi-sync-row";
+    const name = document.createElement("span");
+    name.className = "kodi-sync-name";
+    name.textContent = txt(viewer.name) || txt(viewer.viewer_id);
+    const state = document.createElement("span");
+    state.className = "muted kodi-sync-state";
+    const pairs = Array.isArray(viewer.pairs) ? viewer.pairs : [];
+    const labels = pairs.map((p) => (p.enabled === false ? `${txt(p.label)} (off)` : txt(p.label))).filter(Boolean).join(", ");
+    state.textContent = pairs.length ? `Syncs with ${labels}${viewer.ready ? "" : ", starts after the first upload"}` : "Not synced yet";
+    row.append(name, state);
+    const used = new Set(pairs.map((p) => `${txt(p.provider)}|${txt(p.instance)}`));
+    const free = targets.filter((t) => !used.has(`${txt(t.provider)}|${txt(t.instance)}`));
+    if (!free.length) return row;
+    const select = document.createElement("select");
+    select.setAttribute("aria-label", `Sync ${name.textContent} with`);
+    free.forEach((t) => {
+      const opt = document.createElement("option");
+      opt.value = `${txt(t.provider)}|${txt(t.instance)}`;
+      opt.textContent = txt(t.label) || txt(t.provider);
+      select.appendChild(opt);
+    });
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "btn";
+    btn.textContent = pairs.length ? "Add" : "Set up sync";
+    btn.addEventListener("click", () => { void setupSync(txt(viewer.viewer_id), select.value, btn); });
+    row.append(select, btn);
+    return row;
+  }
+
+  function renderSync(data) {
+    const host = el("kodi_addon_sync");
+    const rows = el("kodi_addon_sync_rows");
+    if (!host || !rows) return;
+    const viewers = Array.isArray(data?.viewers) ? data.viewers : [];
+    if (!data || data.jsonrpc || !viewers.length) {
+      host.hidden = true;
+      rows.replaceChildren();
+      return;
+    }
+    const targets = Array.isArray(data.targets) ? data.targets : [];
+    let msg = "Pick where each viewer's watches and ratings go. CrossWatch adds the sync pair for you.";
+    if (!targets.length) msg = "Connect a service such as Trakt first, then pick it here.";
+    if (!data.sync_on) msg = "Turn on library sync in the add-on on this Kodi to start.";
+    el("kodi_addon_sync_note").textContent = msg;
+    rows.replaceChildren(...viewers.map((v) => syncRow(v, targets)));
+    host.hidden = false;
+  }
+
+  async function loadSync() {
+    if (!el("kodi_addon_sync")) return;
+    try {
+      const r = await fetchJSON(api("/api/kodi/addon/sync"), { cache: "no-store" });
+      renderSync(r.ok && r.data && r.data.ok ? r.data : null);
+    } catch {
+      renderSync(null);
+    }
+  }
+
+  async function setupSync(viewerId, value, btn) {
+    const raw = String(value || "");
+    const cut = raw.indexOf("|");
+    const target = cut > 0 ? raw.slice(0, cut) : "";
+    if (syncBusy || !viewerId || !target) return;
+    syncBusy = true;
+    if (btn) btn.disabled = true;
+    try {
+      const r = await fetchJSON(api("/api/kodi/addon/sync-setup"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ viewer_id: viewerId, target, target_instance: raw.slice(cut + 1) || "default" }),
+        cache: "no-store",
+      });
+      if (!r.ok || !r.data || r.data.ok === false) throw new Error(txt(r.data?.error) || "Could not set up sync");
+      renderSync(r.data);
+      note("Sync set up");
+    } catch (e) {
+      note(e && e.message ? e.message : "Could not set up sync");
+    } finally {
+      syncBusy = false;
+      if (btn) btn.disabled = false;
+    }
   }
 
   async function loadAddon() {
@@ -529,6 +635,7 @@
     loadedInstance = (profile?.getInstance?.() || "default") === inst ? inst : null;
     syncHidden();
     renderLibraries(lastLibraries);
+    syncFor = "";
     void loadAddon();
 
     try {

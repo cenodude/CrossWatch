@@ -99,7 +99,11 @@ def playback(event: str = "progress", **media: Any) -> dict[str, Any]:
 
 @pytest.fixture(autouse=True)
 def isolated_state(tmp_path, monkeypatch):
+    from providers.sync.kodi import _addon_sync as addon_sync
+
     monkeypatch.setattr(addon, "_state_file", lambda: tmp_path / "kodi_addon.json")
+    monkeypatch.setattr(addon_sync, "_root", lambda: tmp_path / "kodi_addon_sync")
+    addon_sync._CACHE.clear()
     monkeypatch.setattr(addon, "_cw_update", lambda *a, **k: None)
     monkeypatch.setattr(addon, "_cw_update_payload", lambda *a, **k: None)
     addon.reset_state()
@@ -476,6 +480,7 @@ def test_kodi_users_offers_addon_viewers_without_jsonrpc(monkeypatch) -> None:
     res = _auth_client(monkeypatch, cfg).get("/api/kodi/users")
     assert res.status_code == 200
     assert [u["name"] for u in res.json()["users"]] == ["anna", "tom"]
+    assert [u["username"] for u in res.json()["users"]] == ["anna", "tom"]
 
     assert _auth_client(monkeypatch, make_cfg(tokens=False)).get("/api/kodi/users").status_code == 401
 

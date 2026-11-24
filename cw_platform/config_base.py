@@ -1202,7 +1202,7 @@ CONFIG_TOP_LEVEL_ORDER: tuple[str, ...] = (
     "ui",
 )
 
-OBSOLETE_CONFIG_KEYS: tuple[str, ...] = ("mobile_auth", "runtime.kodi_addon", "_cw_scrobble_provider_configs", "_cw_scrobble_sink")
+OBSOLETE_CONFIG_KEYS: tuple[str, ...] = ("mobile_auth", "runtime.kodi_addon", "runtime.kodi_addon_sync", "_cw_scrobble_provider_configs", "_cw_scrobble_sink")
 
 
 def cleanup_obsolete_config_keys(cfg: dict[str, Any]) -> list[str]:
