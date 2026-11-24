@@ -48,6 +48,9 @@ body.cw-profile-page .cw-profile-tabs button.active>.material-symbols-rounded{co
 .cw-mobile-last-schedule{color:var(--cw-theme-muted);font-size:13px;font-weight:400}
 .cw-mobile-last-schedule time{color:var(--cw-theme-text);font-variant-numeric:tabular-nums}
 .cw-mobile-last-schedule.is-failed>.material-symbols-rounded{color:var(--danger,#e5757f)}
+#stats-card .cw-page-feed-action{background:transparent;border:0;box-shadow:none;color:var(--cw-theme-muted);cursor:pointer}
+#stats-card .cw-page-feed-action:is(:hover,:active){color:var(--cw-theme-text)}
+#stats-card .cw-page-feed-action:focus-visible{outline:2px solid var(--cw-theme-accent);outline-offset:2px;border-radius:6px}
 #stats-card .activity-mobile[role="button"]{cursor:pointer}
 #stats-card .activity-mobile[role="button"]:focus-visible{outline:2px solid var(--accent);outline-offset:5px;border-radius:8px}
 .cw-hub-mobile-summary{color:var(--profile-muted);font-size:13px;font-weight:400}
