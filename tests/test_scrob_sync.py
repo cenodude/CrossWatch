@@ -174,7 +174,7 @@ def episode_row(**over: Any) -> dict[str, Any]:
 def test_manifest_declares_supported_features_only():
     manifest = mod.get_manifest()
     assert manifest["name"] == "SCROB"
-    assert manifest["version"] == "1.1"
+    assert manifest["version"] == "1.3"
     assert manifest["bidirectional"] is True
     assert manifest["features"] == {"watchlist": True, "ratings": True, "history": True, "progress": True, "playlists": True, "collection": True}
 
@@ -335,7 +335,7 @@ def test_history_add_sends_watched_at_for_movies():
     result = _history.add(adapter, [item])
     assert result["ok"] and result["confirmed_keys"] == ["tmdb:550@1754078400"]
     body = adapter.calls[0]["json"]
-    assert body == {"completed": True, "watched_at": "2026-08-01T20:00:00.000Z", "media_type": "movie", "tmdb_id": 550}
+    assert body == {"completed": True, "watched_at": "2026-08-01T20:00:00.000Z", "media_type": "movie", "tmdb_id": 550, "source": "crosswatch"}
 
 
 def test_history_add_event_keys_are_accounted_by_applier(monkeypatch: pytest.MonkeyPatch):
@@ -518,6 +518,7 @@ def test_progress_add_uses_a_stop_below_the_watched_threshold():
     assert body["total_seconds"] == 8340
     assert body["position_seconds"] == 3336
     assert body["session_id"].startswith("crosswatch-progress-")
+    assert body["source"] == "crosswatch"
 
 
 def test_progress_add_looks_up_the_show_tvdb_id_when_missing():

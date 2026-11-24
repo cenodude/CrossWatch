@@ -45,6 +45,7 @@ except ImportError:
 from providers.sync.scrob._common import (
     PATH_WEBHOOK_KODI,
     PATH_WEBHOOK_JELLYFIN,
+    WATCH_SOURCE,
     as_int,
     ok_status,
     safe_json,
@@ -389,7 +390,7 @@ class ScrobSink(ScrobbleSink):
         title = str(getattr(event, "title", "") or "")
 
         try:
-            resp = webhook_post(adapter, PATH_WEBHOOK_KODI, payload)
+            resp = webhook_post(adapter, PATH_WEBHOOK_KODI, {**payload, "source": WATCH_SOURCE})
         except Exception as exc:
             reason = exc.__class__.__name__
             _log(f"SCROB: scrobble {action} failed ({reason})", "WARN")
