@@ -1,6 +1,10 @@
 /* assets/js/modals/upgrade-warning/index.js */
 /* CrossWatch - upgrade warning modal component */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
+const I18N = () => globalThis.window?.CW?.I18n || globalThis.window?.__cwI18n;
+const T = (key, vars) => I18N()?.t?.(key, vars) ?? key;
+const TH = (key, vars) => I18N()?.html?.(key, vars) ?? key;
+const TR = (key, vars) => I18N()?.rich?.(key, vars) ?? key;
 const NOTES_ENDPOINT = "/api/version/release-notes";
 const _cwV = (() => {
   try { return new URL(import.meta.url).searchParams.get("v") || window.__CW_VERSION__ || Date.now(); }
@@ -56,7 +60,7 @@ async function _waitForScheduledRestart() {
   } catch {}
 
   try {
-    window.cwShowApplyOverlay?.("Restarting CrossWatch", "Restarting container / service...", 12);
+    window.cwShowApplyOverlay?.(T("modals.upgrade.restarting"), T("modals.upgrade.restartingDetail"), 12);
   } catch {}
 
   setTimeout(() => {
@@ -70,7 +74,7 @@ async function runCleanupAndRestart(btn) {
     if (btn) {
       btn.disabled = true;
       btn.classList.add("busy");
-      btn.textContent = "Cleaning...";
+      btn.textContent = T("modals.upgrade.cleaning");
     }
   } catch {}
 
@@ -80,17 +84,17 @@ async function runCleanupAndRestart(btn) {
       throw new Error(String(res.error || (res.errors || []).join(", ") || "reset_failed"));
     }
     notify(res && res.backup
-      ? `Cleanup completed. Config backup created: ${res.backup}`
-      : "Cleanup completed. CrossWatch will restart now.");
+      ? T("modals.upgrade.cleanupBackup", {path: res.backup})
+      : T("modals.upgrade.cleanupRestart"));
     await _waitForScheduledRestart();
   } catch (e) {
     console.warn("[upgrade-warning] cleanup failed", e);
-    notify("Cleanup failed. Check logs.");
+    notify(T("modals.upgrade.cleanupFailed"));
     try {
       if (btn) {
         btn.disabled = false;
         btn.classList.remove("busy");
-        btn.textContent = "Clean & Reboot";
+        btn.textContent = T("modals.upgrade.cleanReboot");
       }
     } catch {}
   }
@@ -172,7 +176,7 @@ export default {
       if (requiresCleanReset || state.autoSaveStarted) return;
       state.autoSaveStarted = true;
       state.autoSaveFailed = false;
-      state.autoSaveMessage = "Saving the updated config format in the background...";
+      state.autoSaveMessage = T("modals.upgrade.savingFormat");
       render();
 
       try {
@@ -184,14 +188,14 @@ export default {
         state.backup = String(res.backup || "").split(/[\\/]/).pop() || "";
         state.adjustedSettings = [res.forced_paths, res.profile_cleanup_paths, res.obsolete_paths].some(paths => Array.isArray(paths) && paths.length);
         state.autoSaveMessage = res && res.backup
-          ? `Saved the updated config format. Backup created: ${res.backup}`
-          : "Saved the updated config format.";
-        notify("Upgrade settings saved.");
+          ? T("modals.upgrade.savedBackup", {path: res.backup})
+          : T("modals.upgrade.savedFormat");
+        notify(T("modals.upgrade.settingsSaved"));
       } catch (e) {
         console.warn("[upgrade-warning] auto-save failed", e);
         state.autoSaveFailed = true;
-        state.autoSaveMessage = "Automatic save failed. Check logs before continuing.";
-        notify("Automatic upgrade save failed. Check logs.");
+        state.autoSaveMessage = T("modals.upgrade.autoSaveFailed");
+        notify(T("modals.upgrade.autoSaveFailedShort"));
       } finally {
         render();
       }
@@ -220,14 +224,14 @@ export default {
         state.password2 = "";
         state.step = requiresCleanReset ? "cleanup" : "migrate";
         notify(requiresCleanReset
-          ? "Sign-in saved. You can now run the clean reset."
-          : "Sign-in saved. CrossWatch is updating the config in the background.");
+          ? T("modals.upgrade.signInSavedReset")
+          : T("modals.upgrade.signInSavedUpdating"));
         render();
         if (!requiresCleanReset) ensureAutoSaved();
         return;
       } catch (err) {
         state.saving = false;
-        state.error = String(err?.message || "Failed to save sign-in settings.");
+        state.error = String(err?.message || T("modals.upgrade.signInFailed"));
         render();
       }
     }
@@ -239,12 +243,12 @@ export default {
           <div class="head">
             <div class="icon" aria-hidden="true"><span class="material-symbols-rounded">${state.autoSaveDone ? "fact_check" : "system_update"}</span></div>
             <div>
-              <h1 class="t" id="upg-title">${requiresCleanReset ? "Unsupported config detected" : state.step !== "migrate" ? "Update your configuration" : state.autoSaveFailed ? "Configuration update failed" : state.autoSaveDone ? "Configuration updated" : "Updating configuration"}</h1>
-              <div class="sub">${requiresCleanReset ? "Pre-v0.9.12 requires a clean reset" : state.step !== "migrate" ? "Set up sign-in to continue your upgrade." : state.autoSaveFailed ? "The update could not be completed. Review the error below." : state.autoSaveDone ? `Your config was migrated successfully${state.backup ? " and a backup was created" : ""}.` : "Your existing config is being updated. Please wait."}</div>
+              <h1 class="t" id="upg-title">${requiresCleanReset ? T("modals.upgrade.unsupported") : state.step !== "migrate" ? T("modals.upgrade.updateConfig") : state.autoSaveFailed ? T("modals.upgrade.updateFailed") : state.autoSaveDone ? T("modals.upgrade.updated") : T("modals.upgrade.updating")}</h1>
+              <div class="sub">${requiresCleanReset ? T("modals.upgrade.preRequires") : state.step !== "migrate" ? T("modals.upgrade.setupSignIn") : state.autoSaveFailed ? T("modals.upgrade.notCompleted") : state.autoSaveDone ? TH(state.backup ? "modals.upgrade.migratedBackup" : "modals.upgrade.migrated") : T("modals.upgrade.beingUpdated")}</div>
             </div>
             <div class="pill">
-              <span class="b">${hasCfgVer ? `Config v${escapeHtml(cfg)}${state.autoSaveDone ? ` &rarr; v${escapeHtml(cur)}` : ""}` : "Config: Legacy"}</span>
-              <span class="b">Engine v${escapeHtml(cur)}</span>
+              <span class="b">${hasCfgVer ? `${TH("modals.upgrade.configVersion", {version: cfg})}${state.autoSaveDone ? ` &rarr; v${escapeHtml(cur)}` : ""}` : TH("modals.upgrade.configLegacy")}</span>
+              <span class="b">${TH("about.engine", {version: cur})}</span>
             </div>
           </div>
           <div class="body">${body}</div>
@@ -260,38 +264,38 @@ export default {
       return `
         <section class="upg-result ${state.autoSaveFailed ? "upg-failed" : success ? "upg-success" : ""}" role="status" aria-live="polite">
           <span class="material-symbols-rounded upg-result-icon" aria-hidden="true">${icon}</span>
-          <div><h2>${state.autoSaveFailed ? "Update needs attention" : success ? "Update completed successfully" : "Updating your configuration"}</h2>
+          <div><h2>${state.autoSaveFailed ? T("modals.upgrade.needsAttention") : success ? T("modals.upgrade.success") : T("modals.upgrade.updatingYour")}</h2>
           ${success ? `<ul class="upg-checks">
-            <li><span class="material-symbols-rounded" aria-hidden="true">check_circle</span>${state.adjustedSettings ? "Existing config migrated with compatibility adjustments" : "Existing settings retained"}</li>
-            <li><span class="material-symbols-rounded" aria-hidden="true">${state.backup ? "check_circle" : "info"}</span>${state.backup ? `Backup created: <code>${escapeHtml(state.backup)}</code>` : "No backup was reported. Check your backups before making further changes."}</li>
-            <li><span class="material-symbols-rounded" aria-hidden="true">${state.upgradeNote ? "info" : "check_circle"}</span>${state.upgradeNote ? "Review the upgrade note below" : "Configuration migration complete"}</li>
-          </ul>` : `<p>${escapeHtml(state.autoSaveMessage || "Preparing the configuration update...")}</p>`}</div>
+            <li><span class="material-symbols-rounded" aria-hidden="true">check_circle</span>${state.adjustedSettings ? T("modals.upgrade.migratedAdjusted") : T("modals.upgrade.retained")}</li>
+            <li><span class="material-symbols-rounded" aria-hidden="true">${state.backup ? "check_circle" : "info"}</span>${state.backup ? `${TH("modals.upgrade.backupCreated")} <code>${escapeHtml(state.backup)}</code>` : T("modals.upgrade.noBackup")}</li>
+            <li><span class="material-symbols-rounded" aria-hidden="true">${state.upgradeNote ? "info" : "check_circle"}</span>${state.upgradeNote ? T("modals.upgrade.reviewNote") : T("modals.upgrade.migrationComplete")}</li>
+          </ul>` : `<p>${escapeHtml(state.autoSaveMessage || T("modals.upgrade.preparing"))}</p>`}</div>
         </section>
-        ${state.upgradeNote ? `<section class="upg-upgrade-note" aria-label="Upgrade note"><h2><span class="material-symbols-rounded" aria-hidden="true">info</span>Upgrade note</h2><div>${state.upgradeNote.split(/\n\s*\n/).map(text => `<p>${renderInlineMarkup(text.replace(/\n/g, " "))}</p>`).join("")}</div></section>` : ""}
-        <section class="upg-changes" aria-label="What changed"><h2>What changed</h2>
+        ${state.upgradeNote ? `<section class="upg-upgrade-note" aria-label="${TH("modals.upgrade.upgradeNote")}"><h2><span class="material-symbols-rounded" aria-hidden="true">info</span>${TH("modals.upgrade.upgradeNote")}</h2><div>${state.upgradeNote.split(/\n\s*\n/).map(text => `<p>${renderInlineMarkup(text.replace(/\n/g, " "))}</p>`).join("")}</div></section>` : ""}
+        <section class="upg-changes" aria-label="${TH("modals.upgrade.whatChanged")}"><h2>${TH("modals.upgrade.whatChanged")}</h2>
           ${state.summary ? `<div class="upg-summary">${state.summary.split(/\n\s*\n/).map(text => `<p>${renderInlineMarkup(text.replace(/\n/g, " "))}</p>`).join("")}</div>` : ""}
           ${highlights.length ? `<ul class="upg-highlights">${highlights.map((item, index) => `<li><span class="material-symbols-rounded" aria-hidden="true">${["auto_awesome", "tune", "sync_alt", "dashboard", "insights"][index % 5]}</span><div>${item.children.length ? `<details><summary>${renderInlineMarkup(item.text)}</summary><ul>${item.children.map(text => `<li>${renderInlineMarkup(text)}</li>`).join("")}</ul></details>` : renderInlineMarkup(item.text)}</div></li>`).join("")}</ul>` : `<p class="upg-muted">${state.notesLoading ? "Loading release highlights..." : "Highlights are unavailable for this build. You can check the full release notes below."}</p>`}
-          ${state.highlights.length > 5 ? `<button class="upg-show-all" type="button" data-x="highlights" aria-expanded="${state.showAllHighlights}">${state.showAllHighlights ? "Show fewer highlights" : `Show all highlights (${state.highlights.length})`}</button>` : ""}
-          <a class="upg-release-link" href="${escapeHtml(state.notesUrl)}" target="_blank" rel="noopener noreferrer">View full release notes <span class="material-symbols-rounded" aria-hidden="true">arrow_forward</span></a>
+          ${state.highlights.length > 5 ? `<button class="upg-show-all" type="button" data-x="highlights" aria-expanded="${state.showAllHighlights}">${state.showAllHighlights ? TH("modals.upgrade.fewerHighlights") : TH("modals.upgrade.allHighlights", {count: state.highlights.length})}</button>` : ""}
+          <a class="upg-release-link" href="${escapeHtml(state.notesUrl)}" target="_blank" rel="noopener noreferrer">${TH("modals.upgrade.viewNotes")} <span class="material-symbols-rounded" aria-hidden="true">arrow_forward</span></a>
         </section>
-        ${state.wikiLinks.length ? `<section class="upg-wiki" aria-label="Updated Wiki"><h2>Updated Wiki</h2><ul>${state.wikiLinks.map(item => `<li><a href="${escapeHtml(item.url)}" title="${escapeHtml(item.url)}" target="_blank" rel="noopener noreferrer"><span class="material-symbols-rounded" aria-hidden="true">menu_book</span>${escapeHtml(item.title)}<span class="material-symbols-rounded" aria-hidden="true">open_in_new</span></a></li>`).join("")}</ul></section>` : ""}
-        <aside class="upg-help"><span class="material-symbols-rounded" aria-hidden="true">info</span><p>After updating CrossWatch, refresh your browser with <b>Ctrl + F5</b> if the UI does not load the latest assets.</p><a href="https://wiki.crosswatch.app/" target="_blank" rel="noopener noreferrer"><span class="material-symbols-rounded" aria-hidden="true">menu_book</span>Open documentation</a></aside>
+        ${state.wikiLinks.length ? `<section class="upg-wiki" aria-label="${TH("modals.upgrade.updatedWiki")}"><h2>${TH("modals.upgrade.updatedWiki")}</h2><ul>${state.wikiLinks.map(item => `<li><a href="${escapeHtml(item.url)}" title="${escapeHtml(item.url)}" target="_blank" rel="noopener noreferrer"><span class="material-symbols-rounded" aria-hidden="true">menu_book</span>${escapeHtml(item.title)}<span class="material-symbols-rounded" aria-hidden="true">open_in_new</span></a></li>`).join("")}</ul></section>` : ""}
+        <aside class="upg-help"><span class="material-symbols-rounded" aria-hidden="true">info</span><p>${TR("modals.upgrade.refreshHelp")}</p><a href="https://wiki.crosswatch.app/" target="_blank" rel="noopener noreferrer"><span class="material-symbols-rounded" aria-hidden="true">menu_book</span>${TH("modals.upgrade.openDocs")}</a></aside>
       `;
     }
 
     function cleanupBody() {
       return `
         <div class="card warn">
-          <div class="h">Clean reset required</div>
-          <div class="p">Configs older than <b>v0.9.12</b> are no longer supported. CrossWatch must clean everything using the maintenance reset flow, create a backup of <code>config.json</code>, and reboot.</div>
+          <div class="h">${TH("modals.upgrade.cleanRequired")}</div>
+          <div class="p">${TR("modals.upgrade.olderUnsupported")}</div>
         </div>
         <div class="card">
-          <div class="h">What will be cleaned</div>
-          <div class="p">This matches the maintenance <b>Reset all to default</b> action: local state, provider cache, tracker files, reports, metadata cache, and TLS material are removed. Snapshots are kept.</div>
+          <div class="h">${TH("modals.upgrade.whatCleaned")}</div>
+          <div class="p">${TR("modals.upgrade.cleanedDetail")}</div>
         </div>
         <div class="card">
-          <div class="h">What happens next</div>
-          <div class="p">Click <b>Clean &amp; Reboot</b> to start over with a fresh config baseline. This runs before any username/password upgrade checks.</div>
+          <div class="h">${TH("modals.upgrade.whatNext")}</div>
+          <div class="p">${TR("modals.upgrade.cleanNext")}</div>
         </div>
       `;
     }
@@ -300,14 +304,14 @@ export default {
       setModalDismissible(false);
       hostEl.innerHTML = layout(`
         <div class="card warn">
-          <div class="h">Migration now requires admin credentials</div>
-          <div class="p">Before this supported upgrade can continue, CrossWatch needs a local admin username and password to be configured.</div>
+          <div class="h">${TH("modals.upgrade.needsAdmin")}</div>
+          <div class="p">${TH("modals.upgrade.needsAdminDetail")}</div>
         </div>
         <div class="card">
-          <div class="h">What happens next</div>
-          <div class="p">Click <b>Next</b>, create the admin credentials, and CrossWatch will save the updated config in the background.</div>
+          <div class="h">${TH("modals.upgrade.whatNext")}</div>
+          <div class="p">${TR("modals.upgrade.credsNext")}</div>
         </div>
-      `, `<button class="btn primary" type="button" data-x="next">Next</button>`);
+      `, `<button class="btn primary" type="button" data-x="next">${TH("modals.upgrade.next")}</button>`);
       setModalShellInline(shell);
       hostEl.querySelector('[data-x="next"]')?.addEventListener("click", () => {
         state.step = "credentials";
@@ -319,16 +323,16 @@ export default {
       setModalDismissible(false);
       hostEl.innerHTML = layout(`
         <div class="card">
-          <div class="h">Create admin credentials</div>
+          <div class="h">${TH("modals.upgrade.createAdmin")}</div>
           <div class="p">${requiresCleanReset
-            ? "You must finish this step before CrossWatch can run the clean reset."
-            : "You must finish this step before the supported upgrade flow can continue."}</div>
+            ? T("modals.upgrade.finishReset")
+            : T("modals.upgrade.finishUpgrade")}</div>
         </div>
         <div class="card">
-          <div class="h">${requiresCleanReset ? "Clean reset will unlock afterwards" : "Background save will start afterwards"}</div>
+          <div class="h">${requiresCleanReset ? T("modals.upgrade.resetUnlocks") : T("modals.upgrade.bgSaveStarts")}</div>
           <div class="p">${requiresCleanReset
-            ? "As soon as sign-in is configured, the reset action uses your authenticated session instead of a public setup endpoint."
-            : "As soon as sign-in is configured, CrossWatch saves the new config keys automatically."}</div>
+            ? T("modals.upgrade.resetUsesSession")
+            : T("modals.upgrade.savesKeys")}</div>
         </div>
         <div class="card">
           ${renderAppAuthFields({
@@ -338,8 +342,8 @@ export default {
           })}
         </div>
       `, `
-        <button class="btn" type="button" data-x="back">Back</button>
-        <button class="btn primary" type="button" data-x="save"${state.saving ? " disabled" : ""}>${state.saving ? "Saving..." : "Enable Sign-in"}</button>
+        <button class="btn" type="button" data-x="back">${TH("modals.upgrade.back")}</button>
+        <button class="btn primary" type="button" data-x="save"${state.saving ? " disabled" : ""}>${state.saving ? T("modals.upgrade.saving") : T("modals.upgrade.enableSignIn")}</button>
       `);
       setModalShellInline(shell);
       hostEl.querySelector('[data-x="back"]')?.addEventListener("click", () => {
@@ -358,7 +362,7 @@ export default {
     function renderCleanup() {
       setModalDismissible(false);
       hostEl.innerHTML = layout(cleanupBody(), `
-        <button class="btn danger" type="button" data-x="cleanup">Clean &amp; Reboot</button>
+        <button class="btn danger" type="button" data-x="cleanup">${TH("modals.upgrade.cleanReboot")}</button>
       `);
       setModalShellInline(shell);
       hostEl.querySelector('[data-x="cleanup"]')?.addEventListener("click", (e) => runCleanupAndRestart(e.currentTarget));
@@ -368,8 +372,8 @@ export default {
       const waiting = !state.autoSaveDone && !state.autoSaveFailed;
       setModalDismissible(!waiting);
       hostEl.innerHTML = layout(migrationBody(), `
-        <button class="btn" type="button" data-x="close"${waiting ? " disabled" : ""}>Close</button>
-        <button class="btn primary" type="button" data-x="continue"${!state.autoSaveDone ? " disabled" : ""}>Continue <span class="material-symbols-rounded" aria-hidden="true">arrow_forward</span></button>
+        <button class="btn" type="button" data-x="close"${waiting ? " disabled" : ""}>${TH("modals.upgrade.close")}</button>
+        <button class="btn primary" type="button" data-x="continue"${!state.autoSaveDone ? " disabled" : ""}>${TH("modals.upgrade.continue")} <span class="material-symbols-rounded" aria-hidden="true">arrow_forward</span></button>
       `);
       setModalShellInline(shell);
       hostEl.querySelector('[data-x="close"]')?.addEventListener("click", () => {

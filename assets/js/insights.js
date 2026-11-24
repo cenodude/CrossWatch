@@ -3,10 +3,12 @@
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 
 (function (w, d) {
+  const T = (key, vars) => (w.CW?.I18n || w.__cwI18n)?.t?.(key, vars) ?? key;
+  const TH = (key, vars) => (w.CW?.I18n || w.__cwI18n)?.html?.(key, vars) ?? key;
   const authSetupPending = () => w.cwIsAuthSetupPending?.() === true;
   const featureMeta = w.CW?.FeatureMeta || {};
   const providerMeta = w.CW?.ProviderMeta || {};
-  const FEAT_LABEL = featureMeta.labels || { watchlist:"Watchlist", ratings:"Ratings", history:"History", progress:"Progress", playlists:"Playlists", collection:"Collections" };
+  const FEAT_LABEL = featureMeta.labels || { watchlist:T("common.media.watchlist"), ratings:T("profile.ratings.title"), history:T("profile.history.title"), progress:T("profile.playback.title"), playlists:T("navigation.tabs.playlists"), collection:T("profile.collection.title") };
 const FEAT_ICON = { watchlist:"movie", ratings:"star", history:"play_arrow", progress:"timelapse", playlists:"queue_music", collection:"inventory_2" };
   const FEATS = featureMeta.order || Object.keys(FEAT_LABEL);
   const DEFAULT_RECENT_SYNCS_LIMIT = 3;
@@ -61,7 +63,7 @@ const FEAT_ICON = { watchlist:"movie", ratings:"star", history:"play_arrow", pro
     const res = await fetch(url, { method: "POST", credentials: "same-origin" });
     if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`);
     const body = await res.json().catch(() => ({}));
-    if (body?.ok === false) throw new Error(body.error || "Backend reported failure");
+    if (body?.ok === false) throw new Error(body.error || T("dashboard.insights.backendFailed"));
     return body;
   };
   const clone = v => v && typeof v === "object" ? JSON.parse(JSON.stringify(v)) : {};
@@ -264,7 +266,7 @@ const FEAT_ICON = { watchlist:"movie", ratings:"star", history:"play_arrow", pro
   function renderSparkline(id, points) {
     const el = d.getElementById(id);
     if (!el) return;
-    if (!points?.length) return void (el.innerHTML = '<div class="muted">No data</div>');
+    if (!points?.length) return void (el.innerHTML = '<div class="muted">' + TH("common.status.noData") + '</div>');
     const wv = el.clientWidth || 260, hv = el.clientHeight || 64, pad = 4, xs = points.map(p => +p.ts || 0), ys = points.map(p => +p.count || 0);
     const minX = Math.min(...xs), maxX = Math.max(...xs), minY = Math.min(...ys), maxY = Math.max(...ys);
     const X = t => maxX === minX ? pad : pad + (wv - 2 * pad) * (t - minX) / (maxX - minX);
@@ -377,7 +379,7 @@ const FEAT_ICON = { watchlist:"movie", ratings:"star", history:"play_arrow", pro
       host = d.createElement("div");
       host.id = "insights-switch";
       host.className = "ins-switch";
-      host.innerHTML = '<div class="ins-mobile-feature"><select id="insights-mobile-feature" aria-label="Provider statistics feature"></select><button type="button" class="ins-mobile-settings" aria-label="Insight settings"><span class="material-symbols-rounded" aria-hidden="true">settings</span></button></div><div class="seg" role="tablist" aria-label="Insights features"></div>';
+      host.innerHTML = '<div class="ins-mobile-feature"><select id="insights-mobile-feature" aria-label="' + TH("dashboard.insights.mobileFeature") + '"></select><button type="button" class="ins-mobile-settings" aria-label="' + TH("dashboard.insights.settings") + '"><span class="material-symbols-rounded" aria-hidden="true">settings</span></button></div><div class="seg" role="tablist" aria-label="' + TH("dashboard.insights.features") + '"></div>';
       wrap.appendChild(host);
     } else if (host.parentNode !== wrap) wrap.appendChild(host);
     if (!host.dataset.bound) {
@@ -397,7 +399,7 @@ const FEAT_ICON = { watchlist:"movie", ratings:"star", history:"play_arrow", pro
     host.querySelector(":scope > .ins-gear")?.remove();
     const needsGear = seg && !seg.querySelector(".ins-gear");
     if (host.dataset.feats !== sig || host.dataset.cur !== _feature || needsGear) {
-      const settingsButton = '<button class="ins-gear" type="button" title="Insight settings" aria-label="Insight settings"><span class="material-symbols-rounded" aria-hidden="true">settings</span></button>';
+      const settingsButton = '<button class="ins-gear" type="button" title="' + TH("dashboard.insights.settings") + '" aria-label="' + TH("dashboard.insights.settings") + '"><span class="material-symbols-rounded" aria-hidden="true">settings</span></button>';
       seg.innerHTML = _visibleFeats.map(f => `<button class="seg-btn${_feature === f ? " active" : ""}" data-key="${esc(f)}" role="tab" aria-selected="${_feature === f}" title="${esc(featureLabel(f))}" aria-label="${esc(featureLabel(f))}"><span class="material-symbols-rounded" aria-hidden="true">${FEAT_ICON[lc(f)] || "insights"}</span><span>${esc(featureLabel(f))}</span></button>`).join("") + settingsButton;
       host.dataset.feats = sig;
       host.dataset.cur = _feature;
@@ -476,7 +478,7 @@ const FEAT_ICON = { watchlist:"movie", ratings:"star", history:"play_arrow", pro
       tile.classList.toggle("inactive", !live);
       $(".tile-k", tile).textContent = label;
       $(".tile-state", tile).classList.toggle("on", live);
-      $(".tile-state .txt", tile).textContent = live ? "Live" : "Idle";
+      $(".tile-state .txt", tile).textContent = live ? T("dashboard.details.live") : T("dashboard.progress.idle");
       animateNumber($(".n", tile), total, 650, animate);
 
       const info = $(".mse", tile);
@@ -556,7 +558,7 @@ const FEAT_ICON = { watchlist:"movie", ratings:"star", history:"play_arrow", pro
 
   function crosswatchSnapshotProfiles(cwSnapshots) {
     const profiles = Array.isArray(cwSnapshots?._profiles) ? cwSnapshots._profiles : [];
-    return profiles.length ? profiles : [{ id: "default", label: "Default", root_dir: "/config/.cw_provider" }];
+    return profiles.length ? profiles : [{ id: "default", label: T("common.labels.default"), root_dir: "/config/.cw_provider" }];
   }
 
   function crosswatchSnapshotProfileId(cwSnapshots, preferred = "") {
@@ -586,7 +588,7 @@ const FEAT_ICON = { watchlist:"movie", ratings:"star", history:"play_arrow", pro
     const info = crosswatchSnapshotProfileInfo(cwSnapshots, inst, _feature);
     if (!info?.has_snapshots || !info?.actual) return void old?.remove();
     const label = old || (() => { const el = d.createElement("div"); el.className = "cw-snapshot"; tile.appendChild(el); return el; })();
-    const selected = String(info.selected || "latest") === "latest" ? "Latest" : (info.human || info.actual);
+    const selected = String(info.selected || "latest") === "latest" ? T("dashboard.insights.latest") : (info.human || info.actual);
     label.textContent = inst === "default" ? selected : `${inst}: ${selected}`;
     label.title = `${crosswatchSnapshotProfileLabel(cwSnapshots, inst)} - ${info.actual}`;
   }
@@ -612,11 +614,11 @@ const FEAT_ICON = { watchlist:"movie", ratings:"star", history:"play_arrow", pro
       const t = totalsFor(_feature, row), cls = typeof row?.exit_code === "number" && row.exit_code !== 0 ? "err" : String(row?.result || "").toUpperCase() === "EQUAL" || t.sum === 0 ? "ok" : "warn";
       const stamp = rowTs(row);
       const elapsed = Math.max(0, Math.floor((Date.now() - stamp) / 60000));
-      const when = stamp ? (window.relTimeFromEpoch?.(stamp / 1000) || (elapsed < 1 ? "Just now" : elapsed < 60 ? `${elapsed}m ago` : elapsed < 1440 ? `${Math.floor(elapsed / 60)}h ago` : `${Math.floor(elapsed / 1440)}d ago`)) : "";
-      const changes = [[t.a, "added"], [t.r, "removed"], [t.u, "updated"]].filter(([count]) => count).map(([count, label]) => `${count} ${label}`).join(" \u00b7 ");
-      const mobile = `<div class="history-mobile"><span class="history-mobile-icon material-symbols-rounded" aria-hidden="true">${cls === "err" ? "error" : "check_circle"}</span><div class="history-mobile-copy"><div class="history-mobile-title">${esc(featureLabel(_feature))} ${cls === "err" ? "needs attention" : "synced"}</div><div class="history-mobile-result">${esc(changes || (cls === "err" ? "Sync failed" : "No changes"))}</div><div class="history-mobile-detail">${esc(when)}${when ? " \u00b7 " : ""}${esc(fmtDur(row?.duration_sec))}</div></div></div>`;
+      const when = stamp ? (window.relTimeFromEpoch?.(stamp / 1000) || ((w.CW?.I18n || w.__cwI18n)?.relative?.(stamp) ?? (elapsed < 1 ? T("dashboard.insights.justNow") : T("dashboard.insights.minAgo", {n: elapsed})))) : "";
+      const changes = [[t.a, "dashboard.insights.changesAdded"], [t.r, "dashboard.insights.changesRemoved"], [t.u, "dashboard.insights.changesUpdated"]].filter(([count]) => count).map(([count, key]) => T(key, { count })).join(" \u00b7 ");
+      const mobile = `<div class="history-mobile"><span class="history-mobile-icon material-symbols-rounded" aria-hidden="true">${cls === "err" ? "error" : "check_circle"}</span><div class="history-mobile-copy"><div class="history-mobile-title">${TH(cls === "err" ? "dashboard.insights.featureAttention" : "dashboard.insights.featureSynced", { feature: featureLabel(_feature) })}</div><div class="history-mobile-result">${esc(changes || (cls === "err" ? T("dashboard.insights.syncFailed") : T("dashboard.lanes.noChanges")))}</div><div class="history-mobile-detail">${esc(when)}${when ? " \u00b7 " : ""}${esc(fmtDur(row?.duration_sec))}</div></div></div>`;
       return `<div class="history-item ${cls} history-feed-row">${mobile}<div class="history-main"><div class="history-meta"><span class="history-time">${esc(fmtWhen(row))}</span><span class="badge ${cls}">${esc(row?.result || "—")}${typeof row?.exit_code === "number" ? ` · ${row.exit_code}` : ""}</span></div><div class="history-sub">${esc(featureLabel(_feature))} • ${esc(fmtDur(row?.duration_sec))}</div></div><div class="history-badges"><span class="badge add">+${t.a}</span><span class="badge del">-${t.r}</span>${t.u ? `<span class="badge micro">~${t.u}</span>` : ""}</div></div>`;
-    }).join("") : `<div class="history-item"><div class="history-meta muted">${display.mode === "hours" ? `No runs in the last ${display.hours} hours` : "No runs for this feature"}</div></div>`;
+    }).join("") : `<div class="history-item"><div class="history-meta muted">${display.mode === "hours" ? TH("dashboard.insights.noRunsHours", { count: Number(display.hours) }) : TH("dashboard.insights.noRuns")}</div></div>`;
     if (!list.children.length) { list.innerHTML = html; return; }
     const template = document.createElement("template");
     template.innerHTML = html;
@@ -638,10 +640,10 @@ const FEAT_ICON = { watchlist:"movie", ratings:"star", history:"play_arrow", pro
     const chip = $("#trend-week") || $("#stat-delta-chip");
     if (chip) {
       const diff = (week | 0) - (weekRemoved | 0);
-      chip.textContent = diff === 0 ? "" : `${diff > 0 ? "+" : ""}${diff} this week`;
+      chip.textContent = diff === 0 ? "" : T("dashboard.insights.thisWeek", { diff: `${diff > 0 ? "+" : ""}${diff}` });
       chip.classList.remove("up", "down", "flat");
       chip.classList.add(diff > 0 ? "up" : diff < 0 ? "down" : "flat");
-      chip.title = diff === 0 ? "No change in the last 7 days" : `${week | 0} added, ${weekRemoved | 0} removed in the last 7 days`;
+      chip.title = diff === 0 ? T("dashboard.insights.noChangeWeek") : T("dashboard.insights.weekChanges", { added: week | 0, removed: weekRemoved | 0 });
     }
     $("#stat-breakdown")?.remove();
   }
@@ -834,7 +836,7 @@ const FEAT_ICON = { watchlist:"movie", ratings:"star", history:"play_arrow", pro
     if (_cwSnapModal?.parentNode) return _cwSnapModal;
     const modal = d.createElement("div");
     modal.className = "cw-snap-picker cw-snap-hidden";
-    modal.innerHTML = '<div class="cw-snap-dialog" role="dialog" aria-modal="true" aria-labelledby="cw-snap-title"><div class="cw-snap-head"><div class="cw-snap-title-wrap"><div class="cw-snap-kicker">Snapshot selector</div><div class="cw-snap-title" id="cw-snap-title">Select snapshot for <span class="hl"></span></div></div><button class="snap-icon-close" type="button" aria-label="Close snapshot selector">×</button></div><div class="cw-snap-body"></div><div class="cw-snap-foot"><button class="snap-close" type="button">Cancel</button></div></div>';
+    modal.innerHTML = '<div class="cw-snap-dialog" role="dialog" aria-modal="true" aria-labelledby="cw-snap-title"><div class="cw-snap-head"><div class="cw-snap-title-wrap"><div class="cw-snap-kicker">' + TH("dashboard.insights.snap.kicker") + '</div><div class="cw-snap-title" id="cw-snap-title">' + TH("dashboard.insights.snap.titleFor") + '<span class="hl"></span></div></div><button class="snap-icon-close" type="button" aria-label="' + TH("dashboard.insights.snap.close") + '">×</button></div><div class="cw-snap-body"></div><div class="cw-snap-foot"><button class="snap-close" type="button">' + TH("common.actions.cancel") + '</button></div></div>';
     modal.addEventListener("click", async ev => {
       const close = ev.target.closest(".snap-close,.snap-icon-close");
       if (close) closeCrosswatchSnapshotPicker();
@@ -844,11 +846,11 @@ const FEAT_ICON = { watchlist:"movie", ratings:"star", history:"play_arrow", pro
       try { await postOK(`/api/crosswatch/select-snapshot?feature=${encodeURIComponent(feature)}&snapshot=${encodeURIComponent(name)}&provider_instance=${encodeURIComponent(profile)}`); }
       catch (err) {
         console.error("[Insights] Failed to select snapshot", err);
-        return void w.cxToast?.("Failed to set snapshot. Check server logs.");
+        return void w.cxToast?.(T("dashboard.insights.snap.setFailed"));
       }
       try { localStorage.setItem(CW_SNAPSHOT_PROFILE_KEY, profile); } catch {}
       closeCrosswatchSnapshotPicker();
-      w.cxToast?.(`Snapshot set for ${profile}: ${name === "latest" ? "latest" : snapLabel(name)}`);
+      w.cxToast?.(T("dashboard.insights.snapshotSet", { profile, name: name === "latest" ? T("dashboard.insights.latestLower") : snapLabel(name) }));
       refreshInsights(true);
     });
     modal.addEventListener("change", ev => {
@@ -872,26 +874,26 @@ const FEAT_ICON = { watchlist:"movie", ratings:"star", history:"play_arrow", pro
     const cwSnapshots = _lastInsightsData?.crosswatch_snapshots || {};
     const profiles = crosswatchSnapshotProfiles(cwSnapshots);
     const inst = crosswatchSnapshotProfileId(cwSnapshots, profileId);
-    const profile = profiles.find(p => String(p.id || "default") === inst) || profiles[0] || { id: "default", label: "Default", root_dir: "/config/.cw_provider" };
+    const profile = profiles.find(p => String(p.id || "default") === inst) || profiles[0] || { id: "default", label: T("common.labels.default"), root_dir: "/config/.cw_provider" };
     const info = crosswatchSnapshotProfileInfo(cwSnapshots, inst, feature);
     const selected = String(info?.selected || "latest");
     modal.dataset.providerInstance = inst;
     try { localStorage.setItem(CW_SNAPSHOT_PROFILE_KEY, inst); } catch {}
 
     body.innerHTML = `${profiles.length > 1
-      ? `<label class="cw-snap-profile"><span>Instance</span><select class="cw-snap-profile-select" data-cw-sort="alphabetical">${profiles.map(p => `<option value="${esc(p.id || "default")}"${String(p.id || "default") === inst ? " selected" : ""}>${esc(p.label || p.id || "Default")}</option>`).join("")}</select></label>`
-      : `<div class="cw-snap-profile is-single"><span>Instance</span><strong>${esc(profile.label || inst)}</strong></div>`}<div class="cw-snap-list"><div class="cw-snap-empty muted">Loading snapshots...</div></div>`;
+      ? `<label class="cw-snap-profile"><span>${TH("dashboard.insights.snap.instance")}</span><select class="cw-snap-profile-select" data-cw-sort="alphabetical">${profiles.map(p => `<option value="${esc(p.id || "default")}"${String(p.id || "default") === inst ? " selected" : ""}>${esc(p.label || p.id || T("common.labels.default"))}</option>`).join("")}</select></label>`
+      : `<div class="cw-snap-profile is-single"><span>${TH("dashboard.insights.snap.instance")}</span><strong>${esc(profile.label || inst)}</strong></div>`}<div class="cw-snap-list"><div class="cw-snap-empty muted">${TH("dashboard.insights.snap.loading")}</div></div>`;
     const list = $(".cw-snap-list", body);
 
     try {
       const data = await fetchJSON(`/api/maintenance/crosswatch-tracker/restore-points?provider_instance=${encodeURIComponent(inst)}`);
       const names = Array.isArray(data?.restore_points?.[feature]) ? data.restore_points[feature] : [];
       const files = names.map(name => ({ name: String(name) })).sort((a, b) => a.name.localeCompare(b.name)).slice(-10).reverse();
-      if (!files.length) list.innerHTML = '<div class="cw-snap-empty muted">No snapshots found for this feature yet.</div>';
-      else list.innerHTML = [{ name: "latest", label: "Latest snapshot", meta: selected === "latest" ? "Active" : "Live" }, ...files.map(f => ({ name: f.name, label: snapLabel(f.name), meta: f.name === selected ? "Active" : "Saved" }))].map(o => `<button class="snap-btn${o.name === "latest" ? " is-latest" : ""}${o.meta === "Active" ? " is-active" : ""}" data-name="${esc(o.name)}" data-profile="${esc(inst)}" type="button"><span class="snap-name">${esc(o.label)}</span><span class="snap-meta">${esc(o.meta)}</span></button>`).join("");
+      if (!files.length) list.innerHTML = '<div class="cw-snap-empty muted">' + TH("dashboard.insights.snap.none") + '</div>';
+      else list.innerHTML = [{ name: "latest", label: T("dashboard.insights.latestSnapshot"), meta: selected === "latest" ? T("dashboard.insights.active") : T("dashboard.details.live") }, ...files.map(f => ({ name: f.name, label: snapLabel(f.name), meta: f.name === selected ? T("dashboard.insights.active") : T("dashboard.insights.saved") }))].map(o => `<button class="snap-btn${o.name === "latest" ? " is-latest" : ""}${o.meta === T("dashboard.insights.active") ? " is-active" : ""}" data-name="${esc(o.name)}" data-profile="${esc(inst)}" type="button"><span class="snap-name">${esc(o.label)}</span><span class="snap-meta">${esc(o.meta)}</span></button>`).join("");
     } catch (e) {
       console.error("[Insights] Failed to load snapshot files", e);
-      list.innerHTML = '<div class="cw-snap-empty muted">Failed to load snapshots. Check server logs or configuration.</div>';
+      list.innerHTML = '<div class="cw-snap-empty muted">' + TH("dashboard.insights.snap.loadFailed") + '</div>';
     }
   }
 

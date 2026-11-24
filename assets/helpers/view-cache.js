@@ -2,6 +2,8 @@
 /* CrossWatch - Background page refresh client */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude */
 (function () {
+  const T = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.t?.(key, vars) ?? key;
+  const TH = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.html?.(key, vars) ?? key;
   const jobs = new Map();
   const retries = new Set();
   const sessions = new Map();
@@ -147,7 +149,7 @@
           return poll();
         }
       }
-      if (!meta.ready || (fresh && meta.error)) throw Object.assign(new Error("The view could not be prepared. Please retry."), {code:"view_refresh_failed"});
+      if (!meta.ready || (fresh && meta.error)) throw Object.assign(new Error(T("common.viewCache.notPrepared")), {code:"view_refresh_failed"});
       delivered = true;
       return data;
     };
@@ -209,7 +211,7 @@
     node.replaceChildren();
     if (!selected) return;
     node.dataset.state = "error";
-    const message = meta.ready ? "Refresh failed. Showing saved results." : `Could not load ${label}.`;
+    const message = meta.ready ? T("common.viewCache.refreshFailed") : T("common.viewCache.loadFailed", {label});
     const text = document.createElement("span");
     text.className = "cw-view-status-label";
     text.textContent = message;
@@ -218,7 +220,7 @@
       const button = document.createElement("button");
       button.type = "button";
       button.className = "cw-btn";
-      button.textContent = "Retry";
+      button.textContent = T("common.viewCache.retry");
       button.addEventListener("click", retry, {once:true});
       node.append(button);
     }

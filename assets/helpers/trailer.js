@@ -2,6 +2,8 @@
 /* Shared trailer modal used by the playing card variants */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 (function () {
+  const T = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.t?.(key, vars) ?? key;
+  const TH = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.html?.(key, vars) ?? key;
   const MODAL_ID = "cw-trailer";
 
   let modal = null;
@@ -16,16 +18,16 @@
     modal.id = MODAL_ID;
     modal.setAttribute("role", "dialog");
     modal.setAttribute("aria-modal", "true");
-    modal.setAttribute("aria-label", "Trailer");
+    modal.setAttribute("aria-label", T("library.trailer.trailer"));
     modal.innerHTML = `
       <div class="cw-trailer-box">
         <div class="cw-trailer-shell">
           <div class="cw-trailer-head">
             <div class="cw-trailer-meta">
-              <div class="cw-trailer-kicker">Trailer</div>
-              <div class="cw-trailer-title">Loading trailer</div>
+              <div class="cw-trailer-kicker">${TH("library.trailer.trailer")}</div>
+              <div class="cw-trailer-title">${TH("library.trailer.loading")}</div>
             </div>
-            <button type="button" class="cw-trailer-close" title="Close trailer" aria-label="Close trailer"><span class="material-symbol">close</span></button>
+            <button type="button" class="cw-trailer-close" title="${TH("library.trailer.close")}" aria-label="${TH("library.trailer.close")}"><span class="material-symbol">close</span></button>
           </div>
           <div class="cw-trailer-stage"></div>
         </div>
@@ -55,7 +57,7 @@
       const type = String(v.type || "").toLowerCase();
       const rank = (type.includes("trailer") ? 100 : type.includes("teaser") ? 60 : type.includes("clip") ? 40 : 10)
         + (v.official ? 30 : 0) + (site === "youtube" ? 5 : 0) + (v.published_at || v.created_at ? 1 : 0);
-      return { site, key: v.key || v.id || "", name: v.name || "Trailer", rank };
+      return { site, key: v.key || v.id || "", name: v.name || T("library.trailer.trailer"), rank };
     }).filter((v) => v.site && v.key);
     const best = scored.sort((a, b) => b.rank - a.rank)[0];
     if (!best) return null;
@@ -64,11 +66,11 @@
     return null;
   }
 
-  function open(url, title = "Trailer") {
+  function open(url, title = T("library.trailer.trailer")) {
     if (!url) return;
     ensureModal();
     if (!modal.classList.contains("show")) returnFocus = document.activeElement;
-    titleEl.textContent = title || "Trailer";
+    titleEl.textContent = title || T("library.trailer.trailer");
     stageEl.querySelector("iframe")?.remove();
     const frame = document.createElement("iframe");
     Object.assign(frame, { title, src: url, loading: "lazy" });
@@ -88,7 +90,7 @@
     modal.classList.remove("show");
     if (returnFocus?.isConnected) returnFocus.focus({preventScroll:true});
     returnFocus = null;
-    if (titleEl) titleEl.textContent = "Loading trailer";
+    if (titleEl) titleEl.textContent = T("library.trailer.loading");
     const frame = modal.querySelector("iframe");
     if (frame) {
       try { frame.src = "about:blank"; } catch {}

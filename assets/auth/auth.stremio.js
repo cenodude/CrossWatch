@@ -2,6 +2,8 @@
 // CrossWatch - Stremio Auth UI
 // Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 (function () {
+  const T = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.t?.(key, vars) ?? key;
+  const TH = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.html?.(key, vars) ?? key;
   if (window._stremioAuthPatched) return;
   window._stremioAuthPatched = true;
 
@@ -31,18 +33,18 @@
   function setConn(ok, msg) {
     connected = !!ok;
     syncConnectLocked();
-    return Shared.setStatus("stremio_msg", ok, msg || (ok ? "Connected" : "Not connected"));
+    return Shared.setStatus("stremio_msg", ok, msg || (ok ? T("connections.auth.connected") : T("connections.auth.notConnected")));
   }
 
   function friendlyError(data) {
     const reason = txt(data?.reason || data?.error);
     switch (reason) {
-      case "missing_credentials": return "Enter your Stremio email and password";
-      case "invalid_credentials": return "Stremio rejected the credentials";
-      case "unreachable": return "Stremio API is unreachable";
-      case "service_unavailable": return "Stremio API is unavailable";
-      case "invalid_response": return "Stremio returned an unexpected response";
-      default: return txt(data?.error) || "Stremio connection failed";
+      case "missing_credentials": return T("connections.auth.gen.enterEmailPassword", {provider: "Stremio"});
+      case "invalid_credentials": return T("connections.auth.gen.rejectedCreds", {provider: "Stremio"});
+      case "unreachable": return T("connections.auth.gen.apiUnreachable", {provider: "Stremio"});
+      case "service_unavailable": return T("connections.auth.gen.apiUnavailable", {provider: "Stremio"});
+      case "invalid_response": return T("connections.validation.returnedUnexpected", {provider: "Stremio"});
+      default: return txt(data?.error) || T("connections.auth.gen.connectionFailed", {provider: "Stremio"});
     }
   }
 
@@ -74,11 +76,11 @@
     const info = el("stremio_addon_info");
     if (!info) return;
     const parts = [];
-    if (!data.installed) parts.push("Not installed in Stremio yet. If the buttons do not open the install dialog, copy the URL and paste it into Add addon in Stremio.");
-    else if (data.last_event) parts.push("Last playback event " + addonAge(data.age_seconds) + ".");
-    else parts.push("Installed in Stremio, no playback reported yet.");
-    if (!data.watcher_enabled) parts.push("The Watcher is off, so events are ignored.");
-    else if (!data.routes) parts.push("Add a Watcher route with Stremio as the source to start scrobbling.");
+    if (!data.installed) parts.push(T("connections.auth.stremio.notInstalled"));
+    else if (data.last_event) parts.push(T("connections.auth.stremio.lastEvent", {age: addonAge(data.age_seconds)}));
+    else parts.push(T("connections.auth.stremio.installed"));
+    if (!data.watcher_enabled) parts.push(T("connections.auth.stremio.watcherOff"));
+    else if (!data.routes) parts.push(T("connections.auth.stremio.addRoute"));
     info.textContent = parts.join(" ");
   }
 
@@ -99,13 +101,13 @@
         body: JSON.stringify(body),
         cache: "no-store",
       });
-      if (!r.ok || r.data?.ok === false) throw new Error(txt(r.data?.message || r.data?.error) || "Request failed");
+      if (!r.ok || r.data?.ok === false) throw new Error(txt(r.data?.message || r.data?.error) || T("connections.auth.requestFailedShort"));
       renderAddon(r.data || {});
       if (done) note(done);
       try { window.dispatchEvent(new CustomEvent("auth-changed")); } catch {}
       await window.CW?.ProvidersUI?.refreshAuthPresentation?.(true);
     } catch (e) {
-      note("Stremio add-on: " + (e && e.message ? e.message : "request failed"));
+      note(T("connections.auth.stremio.addonError", {error: e && e.message ? e.message : T("connections.auth.stremio.requestFailedLower")}));
     }
   }
 
@@ -114,15 +116,15 @@
       const node = el(id);
       if (node && !node.__wired) { node.addEventListener("click", fn); node.__wired = true; }
     };
-    on("stremio_addon_enable", () => { void updateAddon({ enabled: true }, "Stremio scrobble add-on turned on"); });
+    on("stremio_addon_enable", () => { void updateAddon({ enabled: true }, T("connections.auth.stremio.on")); });
     on("stremio_addon_copy", () => {
-      void Shared.copyText(el("stremio_addon_url")?.value || "", el("stremio_addon_copy"), { copiedText: "Copied", emptyMessage: "No add-on URL yet." });
+      void Shared.copyText(el("stremio_addon_url")?.value || "", el("stremio_addon_copy"), { copiedText: T("connections.auth.copied"), emptyMessage: T("connections.auth.stremio.noUrl") });
     });
     on("stremio_addon_regen", () => {
-      if (window.confirm("Create a new add-on URL? The installed add-on stops working until you install it again.")) void updateAddon({ enabled: true, regenerate: true }, "New Stremio add-on URL created");
+      if (window.confirm(T("connections.auth.stremio.confirmNew"))) void updateAddon({ enabled: true, regenerate: true }, T("connections.auth.stremio.newUrl"));
     });
     on("stremio_addon_disable", () => {
-      if (window.confirm("Turn off the Stremio scrobble add-on? You can then remove it in Stremio.")) void updateAddon({ enabled: false }, "Stremio scrobble add-on turned off");
+      if (window.confirm(T("connections.auth.stremio.confirmOff"))) void updateAddon({ enabled: false }, T("connections.auth.stremio.off"));
     });
     on("stremio_addon_install", (ev) => {
       if ((el("stremio_addon_install")?.getAttribute("href") || "#") === "#") ev.preventDefault();
@@ -139,9 +141,9 @@
       const ok = !!(r.ok && data.connected);
       if (el("stremio_email")) el("stremio_email").value = "";
       if (el("stremio_password")) el("stremio_password").value = "";
-      setConn(ok, ok ? "Stremio connected" : "Not connected");
+      setConn(ok, ok ? T("connections.auth.gen.connected", {provider: "Stremio"}) : T("connections.auth.notConnected"));
     } catch {
-      setConn(false, "Not connected");
+      setConn(false, T("connections.auth.notConnected"));
     }
   }
 
@@ -149,11 +151,11 @@
     const email = txt(el("stremio_email")?.value || "");
     const password = String(el("stremio_password")?.value || "");
     if (!email || !password) {
-      note("Enter your Stremio email and password");
+      note(T("connections.auth.gen.enterEmailPassword", {provider: "Stremio"}));
       return;
     }
     try {
-      setConn(false, "Connecting...");
+      setConn(false, T("connections.auth.connecting"));
       const r = await Shared.fetchJSON(api("/api/stremio/connect"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -162,12 +164,12 @@
       });
       if (!r.ok || r.data?.ok === false) throw new Error(friendlyError(r.data || {}));
       if (el("stremio_password")) el("stremio_password").value = "";
-      setConn(true, "Stremio connected");
-      note("Stremio connected");
+      setConn(true, T("connections.auth.gen.connected", {provider: "Stremio"}));
+      note(T("connections.auth.gen.connected", {provider: "Stremio"}));
       try { window.dispatchEvent(new CustomEvent("auth-changed")); } catch {}
       await window.CW?.ProvidersUI?.refreshAuthPresentation?.(true);
     } catch (e) {
-      const msg = e && e.message ? e.message : "Stremio connection failed";
+      const msg = e && e.message ? e.message : T("connections.auth.gen.connectionFailed", {provider: "Stremio"});
       setConn(false, msg);
       note(msg);
     }
@@ -180,12 +182,12 @@
       if (!r.ok || r.data?.ok === false) throw new Error(r.data?.error || "disconnect_failed");
       if (el("stremio_email")) el("stremio_email").value = "";
       if (el("stremio_password")) el("stremio_password").value = "";
-      setConn(false, "Not connected");
-      note("Stremio disconnected");
+      setConn(false, T("connections.auth.notConnected"));
+      note(T("connections.auth.gen.disconnected", {provider: "Stremio"}));
       try { window.dispatchEvent(new CustomEvent("auth-changed")); } catch {}
       await window.CW?.ProvidersUI?.refreshAuthPresentation?.(true);
     } catch (e) {
-      note("Stremio disconnect failed" + (e && e.message ? ": " + e.message : ""));
+      note(T("connections.auth.gen.disconnectFailed", {provider: "Stremio"}) + (e && e.message ? ": " + e.message : ""));
     }
   }
 

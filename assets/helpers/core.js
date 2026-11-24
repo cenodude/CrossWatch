@@ -3,6 +3,8 @@
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 
 (function () {
+  const T = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.t?.(key, vars) ?? key;
+  const TH = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.html?.(key, vars) ?? key;
   const CW = (window.CW ||= {});
   const API = CW.API || {};
   const DOM = CW.DOM || {};
@@ -635,19 +637,19 @@
     const rep = String(summary?.rep || info?.rep_instance || "");
     const used = Array.isArray(summary?.used) ? summary.used : (Array.isArray(info?.instances_used) ? info.instances_used : []);
 
-    if (Number.isFinite(ok) && Number.isFinite(total) && total > 1) parts.push(`Instances: ${ok}/${total}`);
+    if (Number.isFinite(ok) && Number.isFinite(total) && total > 1) parts.push(T("dashboard.status.instancesShort", { ok, total }));
     if (used.length && (!Number.isFinite(total) || total > 1)) {
-      const labelList = used.slice(0, 4).map((id) => (id === "default" ? "Default" : String(id)));
-      parts.push(`Used: ${labelList.join(", ")}${used.length > 4 ? "…" : ""}`);
+      const labelList = used.slice(0, 4).map((id) => (id === "default" ? T("common.labels.default") : String(id)));
+      parts.push(T("dashboard.status.used", { list: `${labelList.join(", ")}${used.length > 4 ? "…" : ""}` }));
     }
 
     const entries = Object.entries(inst).slice(0, 6).map(([id, value]) => {
-      const label = id === "default" ? "Default" : String(id);
+      const label = id === "default" ? T("common.labels.default") : String(id);
       const connected = !!(value && typeof value === "object" ? value.connected : value);
       return `${label}=${connected ? "OK" : "NO"}`;
     });
     if (entries.length && (!Number.isFinite(total) || total > 1 || entries.length > 1)) parts.push(entries.join(" · "));
-    if (rep && rep !== "default" && (!Number.isFinite(total) || total > 1)) parts.push(`Rep: ${rep}`);
+    if (rep && rep !== "default" && (!Number.isFinite(total) || total > 1)) parts.push(T("dashboard.status.rep", { name: rep }));
 
     return parts.filter(Boolean).join(" · ");
   }
@@ -672,7 +674,7 @@
     let tag = "";
     if (providerKey === "PLEX" && info?.plexpass) {
       const plan = String(info?.subscription?.plan || "").toLowerCase();
-      const label = plan === "lifetime" ? "Plex Pass • Lifetime" : "Plex Pass";
+      const label = plan === "lifetime" ? `Plex Pass • ${T("dashboard.status.lifetime")}` : "Plex Pass";
       tag = `<span class="tag plexpass" title="${label}">${svgCrown()}${label}</span>`;
     } else if (providerKey === "TRAKT" && info?.vip) {
       const type = String(info.vip_type || "vip").toLowerCase();
@@ -690,34 +692,34 @@
     if (providerKey === "MDBLIST") tips.push(...(META.mdblistAccountDetails?.(info) || []));
     if (providerKey === "SIMKL") tips.push(...(META.dailyQuotaDetails?.(info) || []));
     if (providerKey === "WETRAKR" && info && typeof info === "object") {
-      if (info.username) tips.push(`Account: ${info.username}`);
-      if (info.vip || info.plan === "vip") tips.push("Plan: VIP");
-      else if (info.plan === "free") tips.push("Plan: Free");
+      if (info.username) tips.push(T("dashboard.status.account", { name: info.username }));
+      if (info.vip || info.plan === "vip") tips.push(T("dashboard.status.plan", { plan: "VIP" }));
+      else if (info.plan === "free") tips.push(T("dashboard.status.plan", { plan: T("dashboard.status.planFree") }));
       tips.push(...(META.dailyQuotaDetails?.(info) || []));
     }
     if (providerKey === "MOVIEPARADISE" && info && typeof info === "object") {
-      if (info.username) tips.push(`Account: ${info.username}`);
-      if (info.vip || info.plan === "premium") tips.push("Plan: Premium");
-      else if (info.plan === "free") tips.push("Plan: Free");
+      if (info.username) tips.push(T("dashboard.status.account", { name: info.username }));
+      if (info.vip || info.plan === "premium") tips.push(T("dashboard.status.plan", { plan: "Premium" }));
+      else if (info.plan === "free") tips.push(T("dashboard.status.plan", { plan: T("dashboard.status.planFree") }));
     }
     if (providerKey === "TRAKT" && info && typeof info === "object") {
       const limits = info.limits || {};
       const watchlist = limits.watchlist || {};
       const collection = limits.collection || {};
-      tips.push(info.vip ? "VIP account" : "Free account");
+      tips.push(info.vip ? T("dashboard.status.vipAccount") : T("dashboard.status.freeAccount"));
       if (Number.isFinite(+watchlist.used) && Number.isFinite(+watchlist.item_count) && +watchlist.item_count > 0) {
-        tips.push(`Watchlist: ${watchlist.used}/${watchlist.item_count}`);
+        tips.push(T("dashboard.status.watchlistLimit", { used: watchlist.used, total: watchlist.item_count }));
       }
       if (Number.isFinite(+collection.used) && Number.isFinite(+collection.item_count) && +collection.item_count > 0) {
-        tips.push(`Collection: ${collection.used}/${collection.item_count}`);
+        tips.push(T("dashboard.status.collectionLimit", { used: collection.used, total: collection.item_count }));
       }
       if (info.last_limit_error?.feature && info.last_limit_error?.ts) {
-        tips.push(`Last limit: ${info.last_limit_error.feature} @ ${info.last_limit_error.ts}`);
+        tips.push(T("dashboard.status.lastLimit", { feature: info.last_limit_error.feature, time: info.last_limit_error.ts }));
       }
     }
     el.title = tips.filter(Boolean).join(" · ");
 
-    const labelState = stateText === "ok" ? "Connected" : (stateText === "no" ? "Not connected" : "Unknown");
+    const labelState = stateText === "ok" ? TH("common.status.connected") : (stateText === "no" ? TH("common.status.notConnected") : TH("common.status.unknown"));
     el.innerHTML = `${tag}<span class="txt"><span class="dot ${stateText}"></span><span class="name">${providerName}</span><span class="state">· ${labelState}</span></span>`;
   }
 
@@ -843,7 +845,7 @@
     if (!iso) return "—";
     const date = new Date(iso);
     if (Number.isNaN(date.getTime())) return iso;
-    return date.toLocaleString(undefined, { hour12: false });
+    return date.toLocaleString((window.CW?.I18n || window.__cwI18n)?.locale, { hour12: false });
   }
 
   function computeRedirectURI() {
@@ -852,12 +854,12 @@
 
   function flashCopy(btn, ok, msg) {
     if (!btn) {
-      if (!ok) (window.CW?.MobileUI?.notice || window.alert)(msg || "Copy failed");
+      if (!ok) (window.CW?.MobileUI?.notice || window.alert)(msg || T("common.copy.failed"));
       return;
     }
     const previous = btn.textContent;
     btn.disabled = true;
-    btn.textContent = ok ? "Copied ✓" : (msg || "Copy failed");
+    btn.textContent = ok ? T("common.copy.copiedCheck") : (msg || T("common.copy.failed"));
     setTimeout(() => {
       btn.textContent = previous;
       btn.disabled = false;
@@ -877,13 +879,13 @@
       const icon = runButton.querySelector(".cw-sync-action-icon");
       const label = runButton.querySelector(".label");
       if (icon) icon.textContent = running ? "cancel" : "sync";
-      if (label) label.textContent = running ? (pending ? "Cancelling…" : "Cancel") : "Synchronize";
-      runButton.title = running ? "Cancel the running synchronization" : "Run synchronization";
+      if (label) label.textContent = running ? (pending ? T("dashboard.sync.cancelling") : T("common.actions.cancel")) : T("dashboard.sync.run");
+      runButton.title = running ? T("dashboard.sync.cancelRunning") : T("dashboard.sync.runTitle");
       runButton.disabled = running ? pending : !canRun;
       if (window.syncBar?.isWaiting?.() || (window.syncBar?.isRunBusy?.() && !window.syncBar?.isRunning?.())) {
         runButton.disabled = true;
-        if (label) label.textContent = window.syncBar?.isWaiting?.() ? "Waiting" : "Synchronize";
-        runButton.title = window.syncBar?.isWaiting?.() ? "Waiting for your sync pairs" : "Synchronization is already running";
+        if (label) label.textContent = window.syncBar?.isWaiting?.() ? T("dashboard.sync.waiting") : T("dashboard.sync.run");
+        runButton.title = window.syncBar?.isWaiting?.() ? T("dashboard.sync.waitingPairs") : T("dashboard.sync.alreadyRunning");
       }
     }
     byId("cw-sync-split")?.classList.toggle("running", running);
@@ -1097,7 +1099,7 @@
         console.warn("Playlists load/refresh failed:", e);
         const root = byId("page-playlists");
         if (root && !root.children.length) {
-          root.innerHTML = '<div class="cw-page-load-error">Playlists failed to load. Refresh the page and try again.</div>';
+          root.innerHTML = '<div class="cw-page-load-error">' + TH("dashboard.pages.playlistsFailed") + '</div>';
         }
       }
       if (!isCurrentNavigation()) return;
@@ -1113,7 +1115,7 @@
         console.warn("Tracker load failed:", e);
         const root = byId("page-tracker");
         if (root && !root.children.length) {
-          root.innerHTML = '<div class="cw-page-load-error">The tracker failed to load. Refresh the page and try again.</div>';
+          root.innerHTML = '<div class="cw-page-load-error">' + TH("dashboard.pages.trackerFailed") + '</div>';
         }
       }
       return;
@@ -1132,7 +1134,7 @@
       } catch (error) {
         if (!isCurrentNavigation()) return;
         const root = byId("page-backups");
-        if (root) root.innerHTML = '<div class="cw-page-load-error">Backup & Restore failed to load. Refresh the page and try again.</div>';
+        if (root) root.innerHTML = '<div class="cw-page-load-error">' + TH("dashboard.pages.backupsFailed") + '</div>';
         console.error("Backup & Restore failed to load", error);
       }
       return;
@@ -1141,14 +1143,14 @@
     if (tab === "maintenance") {
       try {
         const root = byId("page-maintenance");
-        if (root && !root.querySelector(".cw-maint")) root.innerHTML = '<div class="cw-page-loading" role="status">Loading maintenance tools...</div>';
+        if (root && !root.querySelector(".cw-maint")) root.innerHTML = '<div class="cw-page-loading" role="status">' + TH("dashboard.pages.maintenanceLoading") + '</div>';
         await ensurePageModule("maintenance", "/assets/js/maintenance/index.js", "MaintenancePage");
         if (!isCurrentNavigation()) return;
         await window.MaintenancePage.mount(root);
       } catch (error) {
         if (!isCurrentNavigation()) return;
         const root = byId("page-maintenance");
-        if (root) root.innerHTML = '<div class="cw-page-load-error">Maintenance tools failed to load. Refresh the page and try again.</div>';
+        if (root) root.innerHTML = '<div class="cw-page-load-error">' + TH("dashboard.pages.maintenanceFailed") + '</div>';
         console.error("Maintenance tools failed to load", error);
       }
       return;
@@ -1163,7 +1165,7 @@
         if (!isCurrentNavigation()) return;
         window.ImportExport?.unmount?.();
         const root = byId("page-import_export");
-        if (root) root.innerHTML = '<div class="cw-page-load-error">Import / Export failed to load. Refresh the page and try again.</div>';
+        if (root) root.innerHTML = '<div class="cw-page-load-error">' + TH("dashboard.pages.importExportFailed") + '</div>';
         console.error("Import / Export failed to load", error);
       }
       return;
@@ -1178,7 +1180,7 @@
         if (!isCurrentNavigation()) return;
         window.LogsPage?.unmount?.();
         const root = byId("page-logs");
-        if (root) root.innerHTML = '<div class="cw-page-load-error">Logs failed to load. Refresh the page and try again.</div>';
+        if (root) root.innerHTML = '<div class="cw-page-load-error">' + TH("dashboard.pages.logsFailed") + '</div>';
       }
       return;
     }
@@ -1186,7 +1188,7 @@
     if (tab === "capture_compare") {
       try {
         const root = byId("page-capture_compare");
-        if (root && !root.children.length) root.innerHTML = '<div class="cw-page-loading" role="status">Loading Capture Compare...</div>';
+        if (root && !root.children.length) root.innerHTML = '<div class="cw-page-loading" role="status">' + TH("dashboard.pages.compareLoading") + '</div>';
         await ensurePageModule("capture-compare", "/assets/js/capture-compare/index.js", "CaptureComparePage");
         if (!isCurrentNavigation()) return;
         await window.CaptureComparePage.mount(root);
@@ -1194,7 +1196,7 @@
         if (!isCurrentNavigation()) return;
         window.CaptureComparePage?.unmount?.();
         const root = byId("page-capture_compare");
-        if (root) root.innerHTML = '<div class="cw-page-load-error">Capture Compare failed to load. <a href="#snapshots">Back to Captures</a></div>';
+        if (root) root.innerHTML = '<div class="cw-page-load-error">' + TH("dashboard.pages.compareFailed") + '<a href="#snapshots">' + TH("dashboard.pages.backToCaptures") + '</a></div>';
         console.error("Capture Compare failed to load", error);
       }
       return;
@@ -1204,7 +1206,7 @@
       try {
         const root = byId("page-events");
         if (root && !root.children.length) {
-          root.innerHTML = '<div class="cw-page-loading" role="status">Loading events…</div>';
+          root.innerHTML = '<div class="cw-page-loading" role="status">' + TH("dashboard.pages.eventsLoading") + '</div>';
         }
         await ensurePageModule("events", "/assets/js/events/page.js", "EventsPage");
         if (!isCurrentNavigation()) return;
@@ -1213,7 +1215,7 @@
         if (!isCurrentNavigation()) return;
         window.EventsPage?.unmount?.();
         const root = byId("page-events");
-        if (root) root.innerHTML = '<div class="cw-page-load-error">Events failed to load. Refresh the page and try again.</div>';
+        if (root) root.innerHTML = '<div class="cw-page-load-error">' + TH("dashboard.pages.eventsFailed") + '</div>';
         console.error("Events failed to load", error);
       }
       return;
@@ -1228,7 +1230,7 @@
         if (!isCurrentNavigation()) return;
         const root = byId("page-analyzer");
         window.Analyzer?.unmount?.();
-        if (root) root.innerHTML = '<div class="cw-page-load-error">Analyzer failed to load. Refresh the page and try again.</div>';
+        if (root) root.innerHTML = '<div class="cw-page-load-error">' + TH("dashboard.pages.analyzerFailed") + '</div>';
         console.error("Analyzer failed to load", error);
       }
       return;
@@ -1240,8 +1242,8 @@
         root.setAttribute("aria-busy", "true");
         root.innerHTML = `<div class="cw-root cw-editor-skeleton">
           <div class="cw-topline cw-page-hero cw-page-hero-editor" data-hero-icon="edit_note">
-            <div class="cw-head-copy cw-page-hero-copy"><div class="cw-page-hero-kicker">EDITOR</div><div class="cw-title-row"><div><div class="cw-title cw-page-hero-title">Editor</div><div class="cw-sub cw-page-hero-sub">Edit your current state or playlist endpoints</div></div></div></div>
-            <div class="cw-editor-hero-summary cw-page-hero-actions"><div class="cw-editor-hero-seg"><strong role="status">Loading Editor...</strong><span>Please wait</span></div></div>
+            <div class="cw-head-copy cw-page-hero-copy"><div class="cw-page-hero-kicker">${TH("navigation.pages.editorKicker")}</div><div class="cw-title-row"><div><div class="cw-title cw-page-hero-title">${TH("navigation.pages.editor")}</div><div class="cw-sub cw-page-hero-sub">${TH("library.editor.heroSub")}</div></div></div></div>
+            <div class="cw-editor-hero-summary cw-page-hero-actions"><div class="cw-editor-hero-seg"><strong role="status">${TH("library.editor.loading")}</strong><span>${TH("common.status.pleaseWait")}</span></div></div>
           </div>
           <div class="cw-wrap" aria-hidden="true"><div class="cw-main">
             <div class="cw-controls cw-page-toolbar"><span class="cw-skeleton-bar cw-skeleton-search"></span><span class="cw-skeleton-bar cw-skeleton-action"></span><span class="cw-skeleton-bar cw-skeleton-action"></span></div>
@@ -1274,7 +1276,7 @@
         if (!isCurrentNavigation()) return;
         if (root) {
           root.removeAttribute("aria-busy");
-          root.innerHTML = '<div class="cw-editor-loading" data-editor-load-error><h1>Editor</h1><p role="alert">Could not load the Editor. Please try again.</p><button type="button" class="btn">Try again</button></div>';
+          root.innerHTML = `<div class="cw-editor-loading" data-editor-load-error><h1>${TH("navigation.pages.editor")}</h1><p role="alert">${TH("library.editor.loadFailed")}</p><button type="button" class="btn">${TH("common.actions.tryAgain")}</button></div>`;
           root.querySelector("button").addEventListener("click", () => showTab("editor"));
         }
       }
@@ -1455,14 +1457,15 @@
     collection: "co",
   };
 
-  const SYNC_FEATURE_LABELS = {
-    watchlist: "Watchlist",
-    ratings: "Ratings",
-    history: "History",
-    progress: "Progress",
-    playlists: "Playlists",
-    collection: "Collections",
+  const SYNC_FEATURE_KEYS = {
+    watchlist: "common.media.watchlist",
+    ratings: "profile.ratings.title",
+    history: "profile.history.title",
+    progress: "profile.playback.title",
+    playlists: "navigation.tabs.playlists",
+    collection: "profile.collection.title",
   };
+
 
   function syncFeatureOrder() {
     return ["watchlist", "ratings", "history", "progress", "playlists", "collection"];
@@ -1470,7 +1473,7 @@
 
   function syncFeatureLabel(key) {
     const k = String(key || "").trim().toLowerCase();
-    return SYNC_FEATURE_LABELS[k] || k || "?";
+    return SYNC_FEATURE_KEYS[k] ? T(SYNC_FEATURE_KEYS[k]) : (k || "?");
   }
 
   function enabledPairFeatures(pair) {
@@ -1504,7 +1507,7 @@
   function syncMenuInstanceLabel(provider, instance) {
     const id = String(instance || "default").trim() || "default";
     const label = String(META.instanceLabel?.(provider, id) || id).trim();
-    if (id.toLowerCase() === "default") return label === "Default instance" || label.toLowerCase() === "default" ? "" : label;
+    if (id.toLowerCase() === "default") return label === "Default instance" || label === T("connections.defaultInstance") || label.toLowerCase() === "default" ? "" : label;
     if (label !== id) return label;
     const [parent, ...user] = id.split("~");
     if (user.length) {
@@ -1530,7 +1533,7 @@
   function syncProfilePillHTML(provider, instance) {
     const brand = META.brandInfo?.(provider) || {};
     const name = brand.label || providerLabel(provider);
-    const profile = syncMenuInstanceLabel(provider, instance) || "Default";
+    const profile = syncMenuInstanceLabel(provider, instance) || T("common.labels.default");
     return `<span class="cw-sync-provider" style="--sync-brand:${escapeHtml(brand.tone?.solid || "var(--accent)")}" title="${escapeHtml(`${name} · ${profile}`)}">${brand.icon ? `<img src="${escapeHtml(brand.icon)}" width="16" height="16" alt="${escapeHtml(name)}">` : `<span class="cw-sync-provider-name">${escapeHtml(name)}</span>`}<span class="cw-sync-provider-name">${escapeHtml(profile)}</span></span>`;
   }
 
@@ -1660,7 +1663,7 @@
     const menu = byId("cw-sync-menu");
     if (!menu) return;
     menu.innerHTML = "";
-    const syncAll = buildSyncMenuButton("Sync all", () => {
+    const syncAll = buildSyncMenuButton(T("dashboard.sync.syncAll"), () => {
       cwCloseSyncMenu();
       runSync();
     }, "cw-sync-menu-all");
@@ -1683,7 +1686,7 @@
     if (!runnable.length) {
       const empty = document.createElement("div");
       empty.className = "cw-sync-menu-empty";
-      empty.textContent = "No enabled pairs";
+      empty.textContent = T("dashboard.sync.noEnabledPairs");
       menu.appendChild(empty);
       return;
     }
@@ -1698,7 +1701,7 @@
       button.type = "button";
       button.className = "cw-menu-item";
       button.setAttribute("role", "menuitem");
-      button.setAttribute("aria-label", `Sync: ${pairTitle(pair)}`);
+      button.setAttribute("aria-label", T("dashboard.sync.pairLabel", { pair: pairTitle(pair) }));
       button.innerHTML = `<span class="cw-sync-menu-main"><span class="cw-sync-menu-title">${syncPairRouteHTML(pair)}</span>${syncFeatureDotsHTML(pair)}</span>${modeLabel ? `<span class="cw-sync-menu-meta">${escapeHtml(modeLabel)}</span>` : ""}`;
       button.addEventListener("click", () => {
         cwCloseSyncMenu();
@@ -1709,8 +1712,8 @@
         location.hash = `interactive_sync?pair=${encodeURIComponent(String(pair.id || "").trim())}`;
       });
       review.className = "cw-sync-menu-review";
-      review.title = "Interactive Sync";
-      review.setAttribute("aria-label", `Interactive Sync: ${pairTitle(pair)}`);
+      review.title = T("navigation.pages.interactiveSync");
+      review.setAttribute("aria-label", T("dashboard.sync.interactivePairLabel", { pair: pairTitle(pair) }));
       review.innerHTML = '<span class="material-symbols-rounded" aria-hidden="true">fact_check</span>';
       row.append(button, review);
       menu.appendChild(row);
@@ -1766,8 +1769,8 @@
       button.setAttribute("aria-busy", "false");
       button.classList.remove("glass");
       button.title = button.id === "run"
-        ? (pairId ? "Run synchronization (single pair)" : "Run synchronization")
-        : "Sync options";
+        ? (pairId ? T("dashboard.sync.runSingle") : T("dashboard.sync.runTitle"))
+        : T("dashboard.sync.options");
     });
     try { window.syncBar?.reset?.(); } catch {}
   }
@@ -1787,10 +1790,10 @@
 
   async function runSync(opts) {
     if (!!UI.summary?.running || window.syncBar?.isRunning?.()) {
-      if (opts?.startOnly) return { ok: false, error: "A sync is already running" };
+      if (opts?.startOnly) return { ok: false, error: T("dashboard.sync.alreadyRunningShort") };
       return cancelSync();
     }
-    if (state.busy) return { ok: false, error: "CrossWatch is busy. Try again shortly" };
+    if (state.busy) return { ok: false, error: T("dashboard.sync.busy") };
     try { cwCloseSyncMenu(); } catch {}
 
     let pairId = "";
@@ -1818,16 +1821,16 @@
       try { payload = await response.json(); } catch {}
 
       if (!response.ok || !payload || payload.ok !== true) {
-        setSyncHeader("sync-bad", `Failed to start${payload?.error ? ` – ${payload.error}` : ""}`);
+        setSyncHeader("sync-bad", `${T("dashboard.sync.failedStart")}${payload?.error ? ` – ${payload.error}` : ""}`);
         resetSyncButtons(pairId);
         window.UX?.updateTimeline?.({ start: false, pre: false, post: false, done: false });
-        return { ...payload, ok: false, error: payload?.error || payload?.message || "Failed to start sync" };
+        return { ...payload, ok: false, error: payload?.error || payload?.message || T("dashboard.sync.startFailed") };
       }
 
       if (payload.skipped) {
         const message = payload.skipped === "no_pairs_configured"
-          ? "No pairs configured — skipping sync"
-          : `Sync skipped — ${payload.skipped}`;
+          ? T("dashboard.sync.noPairsSkipped")
+          : T("dashboard.sync.skipped", { reason: payload.skipped });
         setSyncHeader("sync-warn", message);
         resetSyncButtons(pairId);
         window.UX?.updateTimeline?.({ start: false, pre: false, post: false, done: false });
@@ -1835,10 +1838,10 @@
       }
       return payload;
     } catch {
-      setSyncHeader("sync-bad", "Failed to reach server");
+      setSyncHeader("sync-bad", T("dashboard.sync.serverUnreachable"));
       resetSyncButtons(pairId);
       window.UX?.updateTimeline?.({ start: false, pre: false, post: false, done: false });
-      return { ok: false, error: "Failed to reach server" };
+      return { ok: false, error: T("dashboard.sync.serverUnreachable") };
     } finally {
       setBusy(false);
       recomputeRunDisabled();
@@ -1855,13 +1858,13 @@
       const payload = await response.json().catch(() => null);
       if (!response.ok || payload?.ok !== true) {
         state.cancelPending = false;
-        setSyncHeader("sync-warn", payload?.error ? `Cancel failed – ${payload.error}` : "Cancel failed");
+        setSyncHeader("sync-warn", payload?.error ? T("dashboard.sync.cancelFailedReason", { reason: payload.error }) : T("dashboard.sync.cancelFailed"));
       } else {
-        setSyncHeader("sync-warn", "Cancelling — stopping after the current batch…");
+        setSyncHeader("sync-warn", T("dashboard.sync.cancellingBatch"));
       }
     } catch {
       state.cancelPending = false;
-      setSyncHeader("sync-bad", "Failed to reach server");
+      setSyncHeader("sync-bad", T("dashboard.sync.serverUnreachable"));
     } finally {
       recomputeRunDisabled();
     }
@@ -1917,13 +1920,13 @@
     if (!chart || !tip) return;
 
     [
-      [document.querySelector(".bar.week"), "Last Week", "added"],
-      [document.querySelector(".bar.month"), "Last Month", "added"],
-      [document.querySelector(".bar.now"), "Now", "items"],
+      [document.querySelector(".bar.week"), T("dashboard.stats.lastWeek"), "added"],
+      [document.querySelector(".bar.month"), T("dashboard.stats.lastMonth"), "added"],
+      [document.querySelector(".bar.now"), T("dashboard.stats.now"), "items"],
     ].forEach(([el, label, unit]) => {
       if (!el) return;
       const show = (x, y) => {
-        tip.textContent = `${label}: ${el.dataset.v || "0"} ${unit}`;
+        tip.textContent = T(unit === "added" ? "dashboard.stats.tipAdded" : "dashboard.stats.tipItems", { label, count: Number(el.dataset.v || 0) });
         tip.style.left = `${x}px`;
         tip.style.top = `${y}px`;
         tip.hidden = false;
@@ -1964,14 +1967,14 @@
       try { document.dispatchEvent(new CustomEvent("cw-update-status", { detail: updateDetail })); } catch {}
 
       const versionEl = byId("app-version");
-      if (versionEl) versionEl.textContent = `Version ${current}`;
+      if (versionEl) versionEl.textContent = T("dashboard.update.version", { version: current });
 
       const badge = byId("st-update");
       if (badge) {
         if (hasUpdate && latest) {
           const changed = latest !== (badge.dataset.lastLatest || "");
           badge.classList.add("badge", "upd");
-          badge.innerHTML = `<a href="${url}" target="_blank" rel="noopener" title="Open release page">Update ${latest} available</a>`;
+          badge.innerHTML = `<a href="${url}" target="_blank" rel="noopener" title="${TH("dashboard.update.openRelease")}">${TH("dashboard.update.latestAvailable", { version: latest })}</a>`;
           badge.classList.remove("hidden");
           if (changed) {
             badge.dataset.lastLatest = latest;
@@ -2040,11 +2043,11 @@
     };
     Object.entries(chips).forEach(([id, value]) => setText(id, value ?? "–"));
 
-    if (summary.running) setSyncHeader("sync-warn", summary.cancel_requested ? "Cancelling…" : "Running…");
-    else if (summary.cancelled) setSyncHeader("sync-warn", "Cancelled — partial sync applied");
-    else if (summary.exit_code === 0) setSyncHeader("sync-ok", String(summary.result || "").toUpperCase() === "EQUAL" ? "In sync " : "Synced ");
-    else if (summary.exit_code != null) setSyncHeader("sync-bad", "Attention needed ⚠️");
-    else setSyncHeader("sync-warn", "Idle — run a sync to see results");
+    if (summary.running) setSyncHeader("sync-warn", summary.cancel_requested ? T("dashboard.sync.cancelling") : T("dashboard.sync.running"));
+    else if (summary.cancelled) setSyncHeader("sync-warn", T("dashboard.sync.cancelledPartial"));
+    else if (summary.exit_code === 0) setSyncHeader("sync-ok", String(summary.result || "").toUpperCase() === "EQUAL" ? `${T("dashboard.sync.inSync")} ` : `${T("dashboard.sync.synced")} `);
+    else if (summary.exit_code != null) setSyncHeader("sync-bad", `${T("dashboard.sync.attention")} ⚠️`);
+    else setSyncHeader("sync-warn", T("dashboard.sync.idleHint"));
 
     setText("det-cmd", summary.cmd || "–");
     setText("det-ver", summary.version || "–");
@@ -2064,18 +2067,18 @@
   async function copySummary(btn) {
     const summary = state.currentSummary || UI.summary;
     if (!summary) {
-      flashCopy(btn, false, "No summary yet");
+      flashCopy(btn, false, T("dashboard.details.noSummary"));
       return false;
     }
 
     const lines = [
-      `Status: ${readText("sync-status-text", "—")}`,
-      `Command: ${summary.cmd || "—"}`,
-      `Version: ${summary.version || "—"}`,
-      `Started: ${toLocal(summary.started_at)}`,
-      `Finished: ${toLocal(summary.finished_at)}`,
-      `Duration: ${summary.duration_sec != null ? `${summary.duration_sec}s` : "—"}`,
-      `Exit: ${summary.exit_code != null ? summary.exit_code : "—"}`,
+      T("dashboard.details.copy.status", { value: readText("sync-status-text", "—") }),
+      T("dashboard.details.copy.command", { value: summary.cmd || "—" }),
+      T("dashboard.details.copy.version", { value: summary.version || "—" }),
+      T("dashboard.details.copy.started", { value: toLocal(summary.started_at) }),
+      T("dashboard.details.copy.finished", { value: toLocal(summary.finished_at) }),
+      T("dashboard.details.copy.duration", { value: summary.duration_sec != null ? `${summary.duration_sec}s` : "—" }),
+      T("dashboard.details.copy.exit", { value: summary.exit_code != null ? String(summary.exit_code) : "—" }),
     ];
 
     const ok = (await window.cwCopyText?.(lines.join("\n"))) === true;
@@ -2088,8 +2091,8 @@
       btn.disabled = !!busy;
       btn.classList.toggle("loading", !!busy);
       btn.setAttribute("aria-busy", String(!!busy));
-      btn.setAttribute("aria-label", busy ? "Checking providers" : "Refresh status");
-      btn.title = busy ? "Checking providers…" : "Re-check status";
+      btn.setAttribute("aria-label", busy ? T("dashboard.status.checking") : T("dashboard.status.refresh"));
+      btn.title = busy ? T("dashboard.status.checkingEllipsis") : T("dashboard.status.recheck");
     });
     byId("conn-badges")?.setAttribute("aria-busy", String(!!busy));
     document.querySelectorAll('.cw-hub-refresh-status').forEach(label => { label.hidden = !busy; });
@@ -2174,7 +2177,7 @@
       if (typeof API.Pairs?.delete === "function") await API.Pairs.delete(id);
       else {
         const res = await fetch(`/api/pairs/${encodeURIComponent(id)}`, { method: "DELETE" });
-        if (res.status === 409) (window.CW?.MobileUI?.notice || window.alert)("A sync or database maintenance task is running. Wait for it to finish, then delete the pair again.");
+        if (res.status === 409) (window.CW?.MobileUI?.notice || window.alert)(T("dashboard.sync.deleteBusy"));
         if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
       }
       _invalidatePairsCache();

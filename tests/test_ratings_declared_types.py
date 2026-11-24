@@ -14,6 +14,7 @@ from cw_platform.orchestrator import Orchestrator
 from cw_platform.orchestrator._pairs_oneway import _ratings_filter_index
 from cw_platform.orchestrator._pairs_utils import declared_types_for
 from test_orchestrator_dry_run_no_side_effects import FakeOps, _cfg, _install
+from tests.i18n_source import english_source
 
 NO_SEASONS = {"movies": True, "shows": True, "seasons": False, "episodes": False}
 MOVIE = {"type": "movie", "title": "The Matrix", "year": 1999, "ids": {"tmdb": "603"}, "rating": 8, "rated_at": "2026-10-01T00:00:00Z"}
@@ -141,7 +142,7 @@ def test_every_ratings_adapter_declares_what_the_ui_allows() -> None:
     import re
     from pathlib import Path
 
-    js = Path("assets/js/modals/pair-config/custom-rules.js").read_text(encoding="utf-8")
+    js = english_source(Path("assets/js/modals/pair-config/custom-rules.js").read_text(encoding="utf-8"))
     block = js.split("const RATINGS_TYPE_RULES = {", 1)[1].split("};", 1)[0]
     ui = {name: set(re.findall(r'"(\w+)"', rest)) for name, rest in re.findall(r"(\w+): \{ disable: \[([^\]]*)\] \}", block)}
     names = {"movies", "shows", "seasons", "episodes"}

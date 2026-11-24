@@ -3,6 +3,8 @@
 (function () {
   const NS = (window.CW ||= {});
   const Editor = (NS.Editor ||= {});
+  const T = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.t?.(key, vars) ?? key;
+  const TH = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.html?.(key, vars) ?? key;
 
   function esc(s) {
     return String(s == null ? "" : s).replace(/[&<>"']/g, c => ({
@@ -53,7 +55,7 @@
     }
 
     const sub = root?.querySelector(".cw-sub");
-    if (sub) sub.textContent = "Fix, add or remove what CrossWatch syncs";
+    if (sub) sub.textContent = T("editor.sources.sub");
   }
 
   function addTrackerNotice(root) {
@@ -76,8 +78,8 @@
     if (summary) {
       summary.classList.add("cw-import-summary");
       summary.innerHTML =
-        '<span class="cw-import-title">Debug settings</span>' +
-        '<span class="cw-import-help material-symbol" title="Refreshes the internal sync baseline from the selected provider. Replace rebuilds the selected datasets; Merge keeps existing rows and adds or updates provider rows. Use Tracker import to copy records into your CrossWatch tracker. Provider accounts are not changed." aria-label="Debug settings help">help</span>';
+        '<span class="cw-import-title">' + TH("editor.chrome.debug") + '</span>' +
+        '<span class="cw-import-help material-symbol" title="' + TH("editor.chrome.debugHelp") + '" aria-label="' + TH("editor.chrome.debugHelpLabel") + '">help</span>';
     }
 
     const body = summary ? summary.nextElementSibling : null;
@@ -108,9 +110,9 @@
       field.append(text, el);
     };
 
-    wrapField(ctx.importProviderSel, "Provider");
-    wrapField(ctx.importInstanceSel, "Profile");
-    wrapField(ctx.importModeSel, "Mode");
+    wrapField(ctx.importProviderSel, T("editor.sources.provider"));
+    wrapField(ctx.importInstanceSel, T("editor.chrome.profile"));
+    wrapField(ctx.importModeSel, T("editor.chrome.mode"));
 
     const featureWrap = document.createElement("div");
     featureWrap.className = "cw-import-features";
@@ -151,27 +153,27 @@
     const summary = document.createElement("summary");
     summary.className = "cw-import-summary";
     summary.innerHTML =
-      '<span class="cw-import-title">Policy backup</span>' +
-      '<span class="cw-import-help material-symbol" title="Exports or imports the local Current State policy JSON used by manual baseline edits and block rules. It does not change provider accounts." aria-label="Policy backup help">help</span>';
+      '<span class="cw-import-title">' + TH("editor.chrome.policy") + '</span>' +
+      '<span class="cw-import-help material-symbol" title="' + TH("editor.chrome.policyHelp") + '" aria-label="' + TH("editor.chrome.policyHelpLabel") + '">help</span>';
 
     const body = document.createElement("div");
     body.className = "cw-policy-body";
 
     const copy = document.createElement("div");
     copy.className = "cw-policy-copy";
-    copy.textContent = "Export or import the local Current State policy as JSON.";
+    copy.textContent = T("editor.chrome.policyCopy");
 
     const actions = document.createElement("div");
     actions.className = "cw-policy-actions";
 
     const exportAction = document.createElement("div");
     exportAction.className = "cw-policy-action";
-    exportAction.innerHTML = "<span>Export</span>";
+    exportAction.innerHTML = "<span>" + TH("editor.chrome.export") + "</span>";
     if (stateDownloadBtn) exportAction.append(stateDownloadBtn);
 
     const importAction = document.createElement("div");
     importAction.className = "cw-policy-action";
-    importAction.innerHTML = "<span>Import</span>";
+    importAction.innerHTML = "<span>" + TH("editor.chrome.import") + "</span>";
     if (stateUploadBtn) importAction.append(stateUploadBtn);
     if (stateUploadInput) importAction.append(stateUploadInput);
 
@@ -198,21 +200,21 @@
       btn.title = label;
     };
 
-    setButtonIcon(ctx.addBtn, "add", "Add row");
-    setButtonIcon(ctx.saveBtn, "check", "Save changes");
+    setButtonIcon(ctx.addBtn, "add", T("editor.chrome.addRow"));
+    setButtonIcon(ctx.saveBtn, "check", T("editor.chrome.save"));
     if (ctx.addBtn && !document.getElementById("cw-saved-mappings")) {
       const button = document.createElement("button");
       button.id = "cw-saved-mappings";
       button.type = "button";
       button.className = "cw-btn";
-      setButtonIcon(button, "compare_arrows", "Mapping");
+      setButtonIcon(button, "compare_arrows", T("editor.chrome.mapping"));
       ctx.addBtn.before(button);
       button.addEventListener("click", async () => {
         button.disabled = true;
         try {
           const view = await import(`/assets/js/editor/saved-mappings.js?v=${encodeURIComponent(window.APP_VERSION || "1")}`);
           view.open(button, ctx.mappingEditor);
-        } catch { ctx.setStatus?.("Could not open saved mappings. Please try again."); }
+        } catch { ctx.setStatus?.(T("editor.chrome.openFailed")); }
         finally { button.disabled = false; }
       });
     }
@@ -229,12 +231,12 @@
         head.className = "cw-type-filter-head";
         const title = document.createElement("div");
         title.className = "field-label";
-        title.textContent = label.textContent || "Types";
+        title.textContent = label.textContent || T("editor.chrome.types");
         const clear = document.createElement("button");
         clear.type = "button";
         clear.className = "cw-type-filter-clear";
-        clear.innerHTML = 'Clear <span class="material-symbol" aria-hidden="true">filter_alt</span>';
-        clear.setAttribute("aria-label", "Clear type filters");
+        clear.innerHTML = TH("editor.rowType.clear") + ' <span class="material-symbol" aria-hidden="true">filter_alt</span>';
+        clear.setAttribute("aria-label", T("editor.chrome.clearTypes"));
         clear.addEventListener("click", () => {
           ["movie", "show", "anime", "season", "episode"].forEach(t => {
             ctx.state.typeFilter[t] = true;
@@ -266,7 +268,7 @@
     const trigger = document.createElement('button');
     trigger.type = 'button';
     trigger.className = 'cw-btn cw-editor-tools-toggle';
-    trigger.setAttribute('aria-label', 'More editor options');
+    trigger.setAttribute('aria-label', T("editor.chrome.more"));
     trigger.setAttribute('aria-haspopup', 'dialog');
     trigger.innerHTML = '<span class="material-symbols-rounded" aria-hidden="true">more_horiz</span>';
     const panel = document.createElement('div');
@@ -277,7 +279,7 @@
       panel.replaceChildren();
       const pageSize = root.querySelector('#cw-page-size');
       const label = document.createElement('label');
-      label.textContent = 'Rows per page';
+      label.textContent = T("editor.chrome.rowsPerPage");
       const select = document.createElement('select');
       select.className = 'cw-select';
       select.dataset.cwNativeSelect = 'true';
@@ -290,7 +292,7 @@
       label.append(select);
       panel.append(label);
       let action;
-      for (const [id, title, glyph] of [['cw-advanced-toggle', root.classList.contains('cw-editor-simple') ? 'Advanced view' : 'Simple view', 'tune'], ['cw-columns-btn', 'Columns', 'view_column'], ['cw-saved-mappings', 'Saved mappings', 'compare_arrows'], ['cw-add', 'Add row', 'add']]) {
+      for (const [id, title, glyph] of [['cw-advanced-toggle', root.classList.contains('cw-editor-simple') ? T("editor.chrome.advanced") : T("editor.chrome.simple"), 'tune'], ['cw-columns-btn', T("editor.chrome.columns"), 'view_column'], ['cw-saved-mappings', T("editor.chrome.savedMappings"), 'compare_arrows'], ['cw-add', T("editor.chrome.addRow"), 'add']]) {
         const original = root.querySelector(`#${id}`);
         if (!original || original.classList.contains('cw-advanced-only') && root.classList.contains('cw-editor-simple')) continue;
         const button = document.createElement('button');
@@ -301,7 +303,7 @@
         button.addEventListener('click', () => { action = original; panel.closest('dialog')?.close(); });
         panel.append(button);
       }
-      window.CW.MobileUI.sheet(panel, {title:'Editor options', trigger, onClose:() => {
+      window.CW.MobileUI.sheet(panel, {title:T("editor.chrome.options"), trigger, onClose:() => {
         if (action) window.CW.MobileUI.beforeNavigate().then(() => { if (action.isConnected && !action.disabled) action.click(); });
       }});
     });
@@ -313,7 +315,7 @@
     const details = document.createElement('details');
     details.className = 'cw-editor-filters';
     const summary = document.createElement('summary');
-    summary.textContent = 'Source and filters';
+    summary.textContent = T("editor.chrome.sourceFilters");
     const context = document.createElement('small');
     context.className = 'cw-editor-source-summary';
     summary.append(context);

@@ -5,6 +5,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {readFileSync} from "node:fs";
 import vm from "node:vm";
+import './i18n-vm-setup.mjs';
 
 function modal(name) {
   const source = readFileSync(new URL(`../assets/js/modals/scrobbler-${name}/index.js`, import.meta.url), "utf8")

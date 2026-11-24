@@ -2,6 +2,8 @@
 /* Refactored and expanded API helper with memoization and timeout handling */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 (function(){
+  const T = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.t?.(key, vars) ?? key;
+  const TH = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.html?.(key, vars) ?? key;
   const JSON_HDR = { "Content-Type": "application/json" };
   const NS = (window.CW ||= {});
   const authSetupPending = () => window.cwIsAuthSetupPending?.() === true;
@@ -83,7 +85,7 @@
   async function j(url, opt = {}, ms = 9000){
     const r = await f(url, opt, ms);
     if (r.status === 409 && opt.method === "DELETE" && String(url).startsWith("/api/pairs/")) {
-      (window.CW?.MobileUI?.notice || window.alert)("A sync or database maintenance task is running. Wait for it to finish, then delete the pair again.");
+      (window.CW?.MobileUI?.notice || window.alert)(T("common.api.busyDelete"));
     }
     if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
     const ct = r.headers.get('content-type') || '';

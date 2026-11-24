@@ -2,6 +2,8 @@
 // CrossWatch - Movie Paradise device code authentication UI
 // Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 (function () {
+  const T = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.t?.(key, vars) ?? key;
+  const TH = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.html?.(key, vars) ?? key;
   if (window._movieparadisePatched) return;
   window._movieparadisePatched = true;
 
@@ -38,23 +40,23 @@
     const key = String(code || "").trim();
     if (key === "rate_limited") {
       const seconds = Math.ceil(Number(data.retry_after));
-      if (!Number.isFinite(seconds) || seconds <= 0) return "Movie Paradise is busy - try again later";
-      return "Movie Paradise is busy - try again in " + seconds + "s";
+      if (!Number.isFinite(seconds) || seconds <= 0) return T("connections.auth.gen.busyLater", {provider: "Movie Paradise"});
+      return T("connections.auth.busyIn", {provider: "Movie Paradise", seconds});
     }
     const map = {
-      missing_client_id: "No Movie Paradise app id configured",
-      invalid_client: "Movie Paradise rejected the CrossWatch app id",
-      unauthorized_client: "The CrossWatch Movie Paradise app is inactive",
-      invalid_scope: "The CrossWatch Movie Paradise app is missing a required scope",
-      invalid_grant: "Movie Paradise access expired - connect again",
-      access_denied: "Access was declined in Movie Paradise",
-      answer_lost: "Movie Paradise did not answer in time - restart to get a new code",
-      reconnect_required: "Movie Paradise access expired - connect again",
-      expired_token: "Link code expired",
-      network_error: "Could not reach Movie Paradise",
-      device_start_failed: "Could not start Movie Paradise device login",
+      missing_client_id: T("connections.auth.gen.noAppId", {provider: "Movie Paradise"}),
+      invalid_client: T("connections.auth.gen.rejectedAppId", {provider: "Movie Paradise"}),
+      unauthorized_client: T("connections.auth.gen.appInactive", {provider: "Movie Paradise"}),
+      invalid_scope: T("connections.auth.gen.appScope", {provider: "Movie Paradise"}),
+      invalid_grant: T("connections.auth.gen.accessExpired", {provider: "Movie Paradise"}),
+      access_denied: T("connections.auth.gen.declinedIn", {provider: "Movie Paradise"}),
+      answer_lost: T("connections.auth.gen.noAnswer", {provider: "Movie Paradise"}),
+      reconnect_required: T("connections.auth.gen.accessExpired", {provider: "Movie Paradise"}),
+      expired_token: T("connections.auth.linkExpired"),
+      network_error: T("connections.validation.reachFailed", {provider: "Movie Paradise"}),
+      device_start_failed: T("connections.auth.gen.deviceStartFailedShort", {provider: "Movie Paradise"}),
     };
-    return map[key] || key.replace(/_/g, " ") || "Movie Paradise request failed";
+    return map[key] || key.replace(/_/g, " ") || T("connections.auth.gen.requestFailedShort", {provider: "Movie Paradise"});
   }
 
   function setConn(ok, msg) {
@@ -86,7 +88,7 @@
     const t = el("movieparadise_qc_timer"); if (!t) return;
     const left = Math.max(0, Math.round((mpQcDeadline - Date.now()) / 1000));
     const mm = Math.floor(left / 60), ss = String(left % 60).padStart(2, "0");
-    t.textContent = left > 0 ? ("Expires in " + mm + ":" + ss) : "";
+    t.textContent = left > 0 ? T("connections.auth.expiresIn", {time: mm + ":" + ss}) : "";
   }
 
   function mpQcStop() {
@@ -100,14 +102,14 @@
     if (mpQcTimer) { clearInterval(mpQcTimer); mpQcTimer = null; }
     stopPoll();
     mpQcDeadline = 0;
-    const st = el("movieparadise_qc_status"); if (st) st.textContent = "Link code expired. Restart to try again.";
+    const st = el("movieparadise_qc_status"); if (st) st.textContent = T("connections.auth.codeExpiredRestart");
     const t = el("movieparadise_qc_timer"); if (t) t.textContent = "";
     mpQcShowRestart();
   }
 
   function mpQcShowCode(code, deadlineMs) {
     const codeEl = el("movieparadise_qc_code"); if (codeEl) codeEl.textContent = code || "----–----";
-    const st = el("movieparadise_qc_status"); if (st) st.textContent = "Waiting for approval…";
+    const st = el("movieparadise_qc_status"); if (st) st.textContent = T("connections.auth.waitingApprovalEllipsis");
     mpQcDeadline = Number(deadlineMs) || (Date.now() + 600000);
     mpQcSetState(true);
     mpQcUpdateTimer();
@@ -118,11 +120,11 @@
   async function mpQcCopy(btn) {
     const code = cleanCode(el("movieparadise_qc_code") && el("movieparadise_qc_code").textContent);
     if (!code || /^-+$/.test(code)) return;
-    const ok = await Shared.copyText(code, null, { failureMessage: "Copy failed" });
+    const ok = await Shared.copyText(code, null, { failureMessage: T("connections.auth.copyFailed") });
     if (!ok || !btn) return;
-    btn.classList.add("copied"); btn.innerHTML = MP_ICON_CHECK; btn.title = "Copied!";
+    btn.classList.add("copied"); btn.innerHTML = MP_ICON_CHECK; btn.title = T("connections.auth.copiedBang");
     if (mpQcCopyRevert) clearTimeout(mpQcCopyRevert);
-    mpQcCopyRevert = setTimeout(function () { btn.classList.remove("copied"); btn.innerHTML = MP_ICON_COPY; btn.title = "Copy code"; }, 1400);
+    mpQcCopyRevert = setTimeout(function () { btn.classList.remove("copied"); btn.innerHTML = MP_ICON_COPY; btn.title = T("connections.auth.copyCode"); }, 1400);
   }
 
   function ensureMovieParadiseInstanceUI() {
@@ -144,15 +146,15 @@
           startPoll(data.pending.interval);
         }
       }
-      let msg = ok ? (data.username ? "Connected as " + data.username : "Connected") : "Not connected";
-      if (data.reconnect_required) msg = "Movie Paradise access expired - connect again";
-      if (data.pending && !data.connected) msg = "Waiting for Movie Paradise approval";
+      let msg = ok ? (data.username ? T("connections.auth.connectedAs", {name: data.username}) : T("connections.auth.connected")) : T("connections.auth.notConnected");
+      if (data.reconnect_required) msg = T("connections.auth.gen.accessExpired", {provider: "Movie Paradise"});
+      if (data.pending && !data.connected) msg = T("connections.auth.gen.waitingApproval", {provider: "Movie Paradise"});
       setConn(data.pending && !data.connected ? false : ok, msg);
       if (ok) { try { mpQcStop(); } catch (_) {} }
-      if (showToast) note(ok ? "Movie Paradise verified" : "Movie Paradise not connected");
+      if (showToast) note(ok ? T("connections.auth.gen.verified", {provider: "Movie Paradise"}) : T("connections.auth.gen.notConnected", {provider: "Movie Paradise"}));
     } catch {
-      setConn(false, "Movie Paradise verify failed");
-      if (showToast) note("Movie Paradise verify failed");
+      setConn(false, T("connections.auth.gen.verifyFailedShort", {provider: "Movie Paradise"}));
+      if (showToast) note(T("connections.auth.gen.verifyFailedShort", {provider: "Movie Paradise"}));
     }
   }
 
@@ -170,7 +172,7 @@
       maxTotalMs: 660000,
       onAuthorized: async () => {
         try { mpQcStop(); } catch (_) {}
-        note("Movie Paradise connected");
+        note(T("connections.auth.gen.connected", {provider: "Movie Paradise"}));
         try { window.invalidateConfigCache?.(); } catch {}
         try { window.dispatchEvent(new CustomEvent("auth-changed")); } catch {}
         await hydrate();
@@ -215,7 +217,7 @@
     const startBtn = el("movieparadise_device_start");
     if (startBtn) { startBtn.disabled = true; startBtn.classList.add("busy"); }
 
-    const win = Shared.openWaitWindow("Movie Paradise", "Requesting a Movie Paradise code...", "MOVIEPARADISE");
+    const win = Shared.openWaitWindow("Movie Paradise", T("connections.auth.gen.requestingCode", {provider: "Movie Paradise"}), "MOVIEPARADISE");
     try {
       const r = await Shared.fetchJSON(mpApi("/api/movieparadise/device/start"), {
         method: "POST",
@@ -232,22 +234,22 @@
 
       const helpEl = el("movieparadise_qc_help");
       if (helpEl) helpEl.textContent = win
-        ? "Opening " + VERIFY_LABEL + " - enter this code there and approve CrossWatch."
-        : "Open " + VERIFY_LABEL + " and enter this code to approve CrossWatch.";
+        ? T("connections.auth.openingVerify", {url: VERIFY_LABEL})
+        : T("connections.auth.openVerify", {url: VERIFY_LABEL});
 
       mpQcShowCode(code, deadline);
-      setConn(false, "Waiting for approval");
+      setConn(false, T("connections.auth.waitingForApproval"));
       startPoll(data.interval);
 
       if (!Shared.showWaitCode(win, { key: "MOVIEPARADISE", label: "Movie Paradise", code, url })) {
-        note("Popup blocked - open " + VERIFY_LABEL + " and enter the code.");
+        note(T("connections.auth.popupVerify", {url: VERIFY_LABEL}));
       }
     } catch (e) {
       try { if (win && !win.closed) win.close(); } catch (_) {}
       try { mpQcStop(); } catch (_) {}
       const msg = e && e.message ? e.message : String(e);
       setConn(false, msg);
-      note("Movie Paradise device login failed: " + msg);
+      note(T("connections.auth.deviceFailed", {provider: "Movie Paradise", error: msg}));
     } finally {
       mpStarting = false;
       if (startBtn) { startBtn.disabled = false; startBtn.classList.remove("busy"); }
@@ -257,7 +259,7 @@
   async function onCancel() {
     try { mpQcStop(); } catch (_) {}
     try { await Shared.fetchJSON(mpApi("/api/movieparadise/device/cancel"), { method: "POST" }); } catch (_) {}
-    setConn(false, "Not connected");
+    setConn(false, T("connections.auth.notConnected"));
   }
 
   async function onDisc() {
@@ -268,12 +270,12 @@
       if (!r.ok || (r.data && r.data.ok === false)) throw new Error("disconnect_failed");
       const codeEl = el("movieparadise_qc_code"); if (codeEl) codeEl.textContent = "----–----";
       setConn(false);
-      note("Movie Paradise disconnected");
+      note(T("connections.auth.gen.disconnected", {provider: "Movie Paradise"}));
       try { window.invalidateConfigCache?.(); } catch {}
       try { window.dispatchEvent(new CustomEvent("auth-changed")); } catch {}
       await hydrate();
     } catch {
-      note("Movie Paradise disconnect failed");
+      note(T("connections.auth.gen.disconnectFailed", {provider: "Movie Paradise"}));
     }
   }
 

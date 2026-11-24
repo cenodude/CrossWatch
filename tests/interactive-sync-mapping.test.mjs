@@ -6,6 +6,11 @@ import assert from "node:assert/strict";
 import {readFileSync} from "node:fs";
 import vm from "node:vm";
 import {mappingAppliesToRow, candidateConflict, changeSummary, correctedItem, correctedEpisode, movieDraft, mappingGroups, sameSeason, seriesTitle} from "../assets/js/interactive-sync-mapping.js";
+import './i18n-vm-setup.mjs';
+import {englishI18n} from './i18n-test-helper.mjs';
+
+globalThis.window ??= {};
+globalThis.window.__cwI18n ??= englishI18n();
 
 test("status conflicts show actual labels and default to leaving both sides unchanged", () => {
   const source = readFileSync(new URL("../assets/js/interactive-sync.js", import.meta.url), "utf8");
@@ -593,7 +598,7 @@ test("Review footer explains the one-time dry run confirmation", () => {
   context.session.counts.selected=1;
   context.session.dry_run=false;
   vm.runInContext("render();",context);
-  assert.match(context.host.innerHTML,/1 changes selected/);
+  assert.match(context.host.innerHTML,/1 change selected/);
   assert.doesNotMatch(context.host.innerHTML,/data-action="apply" disabled/);
 });
 

@@ -56,7 +56,7 @@ def test_utc_history_reuses_cached_months(monkeypatch):
 
 
 def test_preferences_survive_config_roundtrip(monkeypatch, tmp_path):
-    prefs = {"playing_card": False, "quick_add": False, "timezone": "Europe/Amsterdam", "time_format": "24h"}
+    prefs = {"playing_card": False, "quick_add": False, "timezone": "Europe/Amsterdam", "time_format": "24h", "language": "nl"}
     admin = _roundtrip_app_auth_root(monkeypatch, tmp_path, {"preferences": prefs})
     assert admin["preferences"] == prefs
     managed_path = tmp_path / "managed"
@@ -82,7 +82,7 @@ def test_partial_preference_update_preserves_other_settings_and_users(monkeypatc
     monkeypatch.setattr(profileAPI, "_audit", lambda *args, **kwargs: None)
     result = profileAPI.api_profile_update(_request("/api/profile"), {"preferences": {"timezone": "Europe/Amsterdam"}})
     prefs = _json_body(result)["user"]["preferences"]
-    assert prefs == {"playing_card": True, "quick_add": False, "timezone": "Europe/Amsterdam", "time_format": "12h"}
+    assert prefs == {"playing_card": True, "quick_add": False, "timezone": "Europe/Amsterdam", "time_format": "12h", "language": "en"}
     saved = config_base.load_config()["app_auth"]["users"]
     assert saved["alice"]["preferences"] == prefs
     assert saved["bob"] == before

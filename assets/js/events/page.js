@@ -53,7 +53,7 @@ for (const name of ['cw:overview-profile-changed', 'cw:auth-state-changed']) {
     EventsPage.unmount();
     if (root && document.documentElement.dataset.tab === 'events') {
       EventsPage.mount(root).catch(() => {
-        root.innerHTML = '<div class="cw-page-load-error">Events failed to load. Refresh the page and try again.</div>';
+        root.innerHTML = `<div class="cw-page-load-error">${(window.CW?.I18n || window.__cwI18n)?.html?.("events.pageLoadFailed") ?? "Events failed to load. Refresh the page and try again."}</div>`;
       });
     }
   });

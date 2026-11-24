@@ -2,6 +2,9 @@
 /* CrossWatch - Inline pair status mapping draft controls. */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 
+const I18N = () => globalThis.window?.CW?.I18n || globalThis.window?.__cwI18n;
+const T = (key, vars) => I18N()?.t?.(key, vars) ?? key;
+const TH = (key, vars) => I18N()?.html?.(key, vars) ?? key;
 const esc = value => String(value ?? "").replace(/[&<>"']/g, char => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[char]));
 const clone = value => JSON.parse(JSON.stringify(value));
 const meta = (state, provider) => state.providers?.find(row => row.name.toLowerCase() === String(provider).toLowerCase());
@@ -85,36 +88,36 @@ export function mountStatusMapping(host, state) {
     const targetName = meta(state, reverse ? state.src : state.dst).label || (reverse ? state.src : state.dst);
     host.innerHTML = `<section class="cw-status-mapping cw-page-status-mapping" data-enabled="${active}" aria-labelledby="cx-status-title">
       <div class="cw-status-heading">
-        <h3 id="cx-status-title"><span class="material-symbols-rounded" aria-hidden="true">tune</span>Status mapping <span class="pill">Beta</span></h3>
-        <label class="cw-status-toggle"><span>${active ? "On" : "Off"}</span><input type="checkbox" class="cw-checkbox" data-status-optin aria-label="Enable status syncing" ${active ? "checked" : ""}><span class="cw-status-track" aria-hidden="true"></span></label>
+        <h3 id="cx-status-title"><span class="material-symbols-rounded" aria-hidden="true">tune</span>${TH("pairs.statusMap.title")} <span class="pill">${TH("pairs.statusMap.beta")}</span></h3>
+        <label class="cw-status-toggle"><span>${active ? T("pairs.statusMap.on") : T("pairs.statusMap.off")}</span><input type="checkbox" class="cw-checkbox" data-status-optin aria-label="${TH("pairs.statusMap.enable")}" ${active ? "checked" : ""}><span class="cw-status-track" aria-hidden="true"></span></label>
       </div>
       <details class="cw-status-editor" ${expanded ? "open" : ""}>
-        <summary>Configure mappings<span class="material-symbols-rounded" aria-hidden="true">expand_more</span></summary>
+        <summary>${TH("pairs.statusMap.configure")}<span class="material-symbols-rounded" aria-hidden="true">expand_more</span></summary>
         <div class="cw-status-body">
-          ${!history.enable ? '<div class="cw-status-notice"><span>History is off</span><button type="button" data-status-history>History settings<span aria-hidden="true"> &rarr;</span></button></div>' : ""}
+          ${!history.enable ? '<div class="cw-status-notice"><span>' + TH("pairs.statusMap.historyOff") + '</span><button type="button" data-status-history>' + TH("pairs.statusMap.historySettings") + '<span aria-hidden="true"> &rarr;</span></button></div>' : ""}
           ${[...new Set([state.src, state.dst].map(provider => meta(state, provider)?.capabilities?.status_mapping?.notice).filter(Boolean))].map(text => `<div class="cw-status-notice"><span>${esc(text)}</span></div>`).join("")}
           <div class="cw-status-selectors">
-            <select data-status-direction aria-label="Status direction"><option value="a_to_b" ${!reverse ? "selected" : ""}>${esc(title(state,"src"))} &rarr; ${esc(title(state,"dst"))}</option>${twoWay(state) ? `<option value="b_to_a" ${reverse ? "selected" : ""}>${esc(title(state,"dst"))} &rarr; ${esc(title(state,"src"))}</option>` : ""}</select>
-            <div class="cw-status-media" role="group" aria-label="Title type">${["shows", "movies"].map(kind => `<button type="button" data-status-media="${kind}" aria-pressed="${media === kind}">${kind === "shows" ? "Shows" : "Movies"}</button>`).join("")}</div>
+            <select data-status-direction aria-label="${TH("pairs.statusMap.direction")}"><option value="a_to_b" ${!reverse ? "selected" : ""}>${esc(title(state,"src"))} &rarr; ${esc(title(state,"dst"))}</option>${twoWay(state) ? `<option value="b_to_a" ${reverse ? "selected" : ""}>${esc(title(state,"dst"))} &rarr; ${esc(title(state,"src"))}</option>` : ""}</select>
+            <div class="cw-status-media" role="group" aria-label="${TH("pairs.statusMap.titleType")}">${["shows", "movies"].map(kind => `<button type="button" data-status-media="${kind}" aria-pressed="${media === kind}">${kind === "shows" ? TH("pairs.statusMap.shows") : TH("pairs.statusMap.movies")}</button>`).join("")}</div>
           </div>
           <div class="cw-status-map-rows">
-            <div class="cw-status-columns" aria-hidden="true"><span>Source status</span><span></span><span>${esc(targetName)} status</span></div>
+            <div class="cw-status-columns" aria-hidden="true"><span>${TH("pairs.statusMap.sourceStatus")}</span><span></span><span>${TH("pairs.statusMap.targetStatus", {name: targetName})}</span></div>
             ${Object.entries(rows).map(([status, rule]) => `<div class="cw-status-map-row" data-included="${rule.include}">
               <label><input type="checkbox" data-status-include="${esc(status)}" ${rule.include ? "checked" : ""}>${esc(labels[status] || status)}</label>
               <span class="cw-status-arrow" aria-hidden="true">&rarr;</span>
-              <div class="cw-status-target"><select data-status-target="${esc(status)}" aria-label="Map ${esc(labels[status] || status)} to" ${rule.include ? "" : "disabled"}>${writable.map(value => `<option value="${esc(value)}" ${rule.target === value ? "selected" : ""}>${esc(target.labels[value] || value)}</option>`).join("")}</select>
-              ${rule.include && target.media?.[media]?.effects?.[rule.target] ? `<details class="cw-status-info"><summary aria-label="Details for ${esc(labels[status] || status)}"><span class="material-symbols-rounded" aria-hidden="true">info</span></summary><p>${esc(target.media[media].effects[rule.target])}</p></details>` : ""}</div>
-            </div>`).join("") || '<p class="cw-status-empty">No supported mappings for these titles.</p>'}
+              <div class="cw-status-target"><select data-status-target="${esc(status)}" aria-label="${TH("pairs.statusMap.mapTo", {name: labels[status] || status})}" ${rule.include ? "" : "disabled"}>${writable.map(value => `<option value="${esc(value)}" ${rule.target === value ? "selected" : ""}>${esc(target.labels[value] || value)}</option>`).join("")}</select>
+              ${rule.include && target.media?.[media]?.effects?.[rule.target] ? `<details class="cw-status-info"><summary aria-label="${TH("pairs.statusMap.detailsFor", {name: labels[status] || status})}"><span class="material-symbols-rounded" aria-hidden="true">info</span></summary><p>${esc(target.media[media].effects[rule.target])}</p></details>` : ""}</div>
+            </div>`).join("") || '<p class="cw-status-empty">' + TH("pairs.statusMap.noSupported") + '</p>'}
           </div>
           <footer class="cw-status-footer">
-            <label class="cw-status-conflict">Conflicts<select data-status-conflict aria-label="Status conflict policy"><option value="leave_unchanged">Leave unchanged</option><option value="prefer_a">Prefer ${esc(title(state,"src"))}</option>${twoWay(state) ? `<option value="prefer_b">Prefer ${esc(title(state,"dst"))}</option>` : ""}</select></label>
-            <div class="cw-status-actions"><button type="button" data-status-reset><span class="material-symbols-rounded" aria-hidden="true">restart_alt</span>Reset defaults</button></div>
+            <label class="cw-status-conflict">${TH("pairs.statusMap.conflicts")}<select data-status-conflict aria-label="${TH("pairs.statusMap.conflictPolicy")}"><option value="leave_unchanged">${TH("pairs.statusMap.leave")}</option><option value="prefer_a">${TH("pairs.statusMap.prefer", {name: title(state,"src")})}</option>${twoWay(state) ? `<option value="prefer_b">${TH("pairs.statusMap.prefer", {name: title(state,"dst")})}</option>` : ""}</select></label>
+            <div class="cw-status-actions"><button type="button" data-status-reset><span class="material-symbols-rounded" aria-hidden="true">restart_alt</span>${TH("pairs.statusMap.reset")}</button></div>
           </footer>
-          <details class="cw-status-help"><summary>How it works</summary><div>
-            <p>This is the same switch as Status mapping in History options. History must be enabled for these rules to run.</p>
-            <p>Planned stays managed by Watchlist. Excluded statuses stay unchanged. Mappings never delete titles or create watched plays.</p>
+          <details class="cw-status-help"><summary>${TH("pairs.statusMap.how")}</summary><div>
+            <p>${TH("pairs.statusMap.help1")}</p>
+            <p>${TH("pairs.statusMap.help2")}</p>
             ${!writable.includes("completed") && target.media?.[media]?.effects?.completed ? `<p>${esc(target.media[media].effects.completed)}</p>` : ""}
-            <p>Rules apply to this pair only. Reset defaults applies to the selected direction and title type, and resets the conflict preference.</p>
+            <p>${TH("pairs.statusMap.help3")}</p>
           </div></details>
         </div>
       </details>

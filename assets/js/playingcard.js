@@ -2,6 +2,8 @@
 /* CrossWatch - Now Playing card driver (scrobble variant of the shared Playing Card) */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 (() => {
+  const T = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.t?.(key, vars) ?? key;
+  const TH = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.html?.(key, vars) ?? key;
   if (window.__PLAYING_CARD_INIT__) return;
   window.__PLAYING_CARD_INIT__ = 1;
 
@@ -101,14 +103,14 @@
       const webhook = ["plextrakt", "embytrakt", "jellyfintrakt"].includes(s);
       const base = webhook ? s.slice(0, -5) : s;
       const label = PM.label(base);
-      if (label && label !== "?") return webhook ? `${label} webhook` : label;
+      if (label && label !== "?") return webhook ? T("library.playing.webhook", {name: label}) : label;
     }
     if (s === "plex") return "PLEX";
     if (s === "emby") return "EMBY";
     if (s === "jellyfin") return "Jellyfin";
     if (s === "plextrakt") return "PLEX webhook";
     if (s === "embytrakt") return "EMBY webhook";
-    if (s === "jellyfintrakt") return "Jellyfin webhook";
+    if (s === "jellyfintrakt") return T("library.playing.jellyfinWebhook");
     return String(src || "");
   };
 
@@ -116,18 +118,18 @@
     const label = String(friendly || "").trim();
     if (label) return label;
     const raw = String(value || "").trim();
-    if (!raw || raw.toLowerCase() === "default") return "Default";
+    if (!raw || raw.toLowerCase() === "default") return T("library.playing.default");
     return raw;
   };
 
   const mediaTypeLabel = (p) => {
     const mediaType = String(p?.media_type || p?.type || "").toLowerCase();
-    return mediaType === "movie" ? "Movie" : mediaType === "episode" ? "Episode" : mediaType ? mediaType.toUpperCase() : "TV";
+    return mediaType === "movie" ? T("library.playing.movie") : mediaType === "episode" ? T("library.playing.episode") : mediaType ? mediaType.toUpperCase() : "TV";
   };
 
   const statusText = (state, since = "") => {
     const st = String(state || "").toLowerCase();
-    let label = st === "paused" ? "Paused" : st === "buffering" ? "Buffering..." : st === "stopped" ? "Stopped" : "Now Playing";
+    let label = st === "paused" ? T("library.playing.paused") : st === "buffering" ? T("library.playing.buffering") : st === "stopped" ? T("library.playing.stopped") : T("library.playing.nowPlayingCaps");
     if (since) label += `\n${since}`;
     return label;
   };
@@ -256,7 +258,7 @@
     id: "playing-detail",
     variant: "scrobble",
     tabScope: "main",
-    label: "Now playing",
+    label: T("library.playing.nowPlaying"),
     onClose: () => {
       CARD.dismissed = true;
       hide(false);
@@ -303,7 +305,7 @@
     if (!routes.length) return [{
       id: `source:${rawSource}:${p.provider_instance || "default"}`,
       kind: webhook ? "webhook" : "watcher",
-      source: sourceLabel(provider) || "Unknown source",
+      source: sourceLabel(provider) || T("library.playing.unknownSource"),
       sourceLabel: instanceLabel(p.provider_instance, p.provider_instance_label),
     }];
     return routes.map(route => ({
@@ -329,7 +331,7 @@
     let remaining = "";
     if (totalMs > 0) {
       const remainingStr = formatTime(Math.max(0, totalMs - totalMs * (pct / 100)));
-      remaining = remainingStr ? `${remainingStr} left` : "";
+      remaining = remainingStr ? T("library.playing.left", {time: remainingStr}) : "";
     }
     const elapsedTotal = totalMs > 0 ? `${formatTime(totalMs * pct / 100) || "0:00"} / ${formatTime(totalMs)}` : "";
     return { pct, remaining, elapsedTotal };
@@ -445,7 +447,7 @@
       selectedRouteId: CARD.selectedRouteId,
       heading: !isMovie && p.season !== null && p.season !== undefined && p.episode
         ? `S${String(p.season).padStart(2, "0")} E${String(p.episode).padStart(2, "0")}` : mediaTypeLabel(p),
-      title: p.title || "Now Playing",
+      title: p.title || T("library.playing.nowPlayingCaps"),
       year: p.year || "",
       isMovie,
       chips,

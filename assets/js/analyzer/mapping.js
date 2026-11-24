@@ -2,6 +2,9 @@
 /* CrossWatch - Analyzer entry point to the shared mapping workspace */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 
+const I18N = () => globalThis.window?.CW?.I18n || globalThis.window?.__cwI18n;
+const T = (key, vars) => I18N()?.t?.(key, vars) ?? key;
+const TH = (key, vars) => I18N()?.html?.(key, vars) ?? key;
 async function loadStyles() {
   if (document.querySelector('link[href*="/assets/css/interactive-sync.css"]')) return;
   const link = document.createElement('link');
@@ -23,7 +26,7 @@ export async function openAnalyzerMapping({reference, signal, onSaved, onClose, 
       body:JSON.stringify({...reference, version, action, ...extra}),
     });
     const data = await response.json();
-    if (!response.ok || data.ok === false) throw new Error(data.detail || data.error || 'Could not load mapping.');
+    if (!response.ok || data.ok === false) throw new Error(data.detail || data.error || T("analyzer.mapping.loadFailed"));
     return data;
   };
   const [data, module, groups] = await Promise.all([

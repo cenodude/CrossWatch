@@ -7,6 +7,7 @@ import sqlite3
 from pathlib import Path
 
 import pytest
+from tests.i18n_source import english_source
 
 
 def _runs_db(rows: list[tuple[str, int, str, int, int]]) -> sqlite3.Connection:
@@ -48,7 +49,7 @@ def test_cancelled_run_is_not_a_successful_sync(monkeypatch):
 
 def test_settings_overview_drops_the_activity_card():
     api = Path("api/insightAPI.py").read_text("utf-8")
-    js = Path("assets/js/settings-insight.js").read_text("utf-8")
+    js = english_source(Path("assets/js/settings-insight.js").read_text("utf-8"))
 
     assert "recent_activity" not in api
     assert '"last_sync_at": last_sync_at' in api
@@ -58,7 +59,7 @@ def test_settings_overview_drops_the_activity_card():
 
 
 def test_events_profile_chip_refreshes_after_profiles_load():
-    js = Path("assets/js/events/index.js").read_text("utf-8")
+    js = english_source(Path("assets/js/events/index.js").read_text("utf-8"))
     block = js[js.index('const data = await fjson("/api/user-profiles"'):]
     block = block[:block.index("} catch {}")]
 
@@ -68,7 +69,7 @@ def test_events_profile_chip_refreshes_after_profiles_load():
 
 
 def test_advanced_plan_off_is_visible():
-    js = Path("assets/js/scheduler.js").read_text("utf-8")
+    js = english_source(Path("assets/js/scheduler.js").read_text("utf-8"))
 
     assert '$("#schAdv")?.classList.toggle("is-plan-off", !_advEnabled);' in js
     assert '"Not running, advanced plan is off"' in js

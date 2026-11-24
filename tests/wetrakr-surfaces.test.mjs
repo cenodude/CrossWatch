@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import {readFileSync, existsSync} from 'node:fs';
 import vm from 'node:vm';
 import {correctedItem} from '../assets/js/interactive-sync-mapping.js';
+import './i18n-vm-setup.mjs';
 
 const read = path => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
 

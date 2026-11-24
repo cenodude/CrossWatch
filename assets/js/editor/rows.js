@@ -3,6 +3,8 @@
 (function () {
   const NS = (window.CW ||= {});
   const Editor = (NS.Editor ||= {});
+  const T = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.t?.(key, vars) ?? key;
+  const TH = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.html?.(key, vars) ?? key;
 
   function cloneRaw(raw) {
     try {
@@ -96,10 +98,10 @@
   }
 
   function statusForRow(row, snapshot) {
-    if (!snapshot) return {label: "—", hint: "Choose a provider instance to see its current status."};
-    if (snapshot.loading) return {label: "Loading…", hint: "Reading current provider statuses."};
-    if (snapshot.error) return {label: "Unavailable", hint: "Could not read statuses. Refresh Editor to retry."};
-    if (!snapshot.data?.supported) return {label: "—", hint: "This provider does not supply title statuses."};
+    if (!snapshot) return {label: "—", hint: T("editor.status.choose")};
+    if (snapshot.loading) return {label: T("editor.status.loading"), hint: T("editor.status.reading")};
+    if (snapshot.error) return {label: T("editor.status.unavailable"), hint: T("editor.status.readFailed")};
+    if (!snapshot.data?.supported) return {label: "—", hint: T("editor.status.unsupported")};
     const type = row.raw?.type || row.type;
     const media = type === "movie" ? "movies" : ["show", "anime", "season", "episode"].includes(type) ? "shows" : "";
     const ids = ["season", "episode"].includes(type) ? row.raw?.show_ids || {} : row.raw?.ids || {};
@@ -109,8 +111,8 @@
       return shared.length > 0 && shared.every(key => String(ids[key]) === String(record.ids[key]));
     });
     const status = matches.length === 1 ? matches[0].status : null;
-    const label = ({planned: "Planned", watching: "Watching", on_hold: "On hold", dropped: "Dropped", completed: "Completed"})[status];
-    return {label: label || "Unknown", hint: label ? `Current ${media === "shows" ? "show" : "movie"} status from the selected provider. Read-only.` : "No unambiguous status was returned for this title."};
+    const label = ["planned", "watching", "on_hold", "dropped", "completed"].includes(status) ? T(`editor.status.${status}`) : "";
+    return {label: label || T("editor.status.unknown"), hint: label ? T(media === "shows" ? "editor.status.currentShow" : "editor.status.currentMovie") : T("editor.status.ambiguous")};
   }
 
   Editor.Rows = {

@@ -23,6 +23,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Resp
 
 from cw_platform.config_base import CONFIG as CONFIG_DIR, load_config, save_config, update_config as _atomic_update_config
 from cw_platform.access_policy import clean_managed_permissions
+from cw_platform import i18n
 from cw_platform.profile_preferences import clean_user_preferences
 from cw_platform.event_archive.audit import record_audit
 from cw_platform.notification_store import forget_user as forget_notification_state
@@ -1060,10 +1061,11 @@ def _rate_limit_reset(request: Request) -> None:
     _LOGIN_FAILS.pop(ip, None)
 
 
-def _login_error_payload(*, error: str, attempts: int, retry_after: int = 0) -> dict[str, Any]:
+def _login_error_payload(*, error: str, attempts: int, retry_after: int = 0, code: str = "") -> dict[str, Any]:
     return {
         "ok": False,
         "error": error,
+        **({"code": code} if code else {}),
         "attempts": attempts,
         "retry_after": max(0, int(retry_after or 0)),
         "show_help_banner": attempts >= 3,
@@ -1358,6 +1360,12 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;opacity:.28;b
 .cw-field input{width:100%;min-height:52px;padding:0 16px;border:1px solid rgba(255,255,255,.10);border-radius:18px;background:rgba(2,8,19,.76);color:var(--cw-text);font:inherit;box-shadow:inset 0 1px 0 rgba(255,255,255,.03);transition:border-color .18s ease, box-shadow .18s ease, background .18s ease, transform .18s ease}
 .cw-field input:focus{outline:none;transform:translateY(-1px);border-color:var(--cw-border-strong);background:rgba(4,10,22,.94);box-shadow:0 0 0 4px rgba(140,109,255,.14), inset 0 1px 0 rgba(255,255,255,.04)}
 .cw-totp-hidden{display:none!important}
+.cw-login-language{display:flex;flex-wrap:wrap;align-items:center;justify-content:flex-end;gap:8px;color:var(--cw-soft);font-size:12px}
+.cw-login-language label{font-weight:800;text-transform:uppercase;letter-spacing:.08em}
+.cw-login-language select{min-height:34px;padding:0 10px;border:1px solid rgba(255,255,255,.10);border-radius:12px;background:rgba(2,8,19,.76);color:var(--cw-text);font:inherit;color-scheme:dark}
+.cw-login-language option{background:#0b1220;color:var(--cw-text)}
+.cw-login-language-status:empty{display:none}
+.cw-login-language-status{flex-basis:100%;text-align:right}
 .cw-remember{display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border:1px solid rgba(255,255,255,.08);border-radius:16px;background:rgba(255,255,255,.03);color:var(--cw-soft)}
 .cw-remember input{width:18px;height:18px;margin-top:2px;flex:0 0 auto;accent-color:var(--cw-accent)}
 .cw-remember b{display:block;color:var(--cw-text);font-size:13px}
@@ -1440,7 +1448,13 @@ def _oidc_button_html(label: str, icon: str) -> str:
     return f'<button class="btn cw-sso-btn cw-oidc-btn{" has-icon" if svg else ""}" id="go-oidc" type="button">{svg}<span>{html_lib.escape(label or "OIDC")}</span></button>'
 
 
-def _login_html(*, plex_sso_available: bool = False, oidc_available: bool = False, oidc_label: str = "OIDC", oidc_icon: str = "") -> str:
+def _login_html(*, plex_sso_available: bool = False, oidc_available: bool = False, oidc_label: str = "OIDC", oidc_icon: str = "", language: str = i18n.DEFAULT_LANGUAGE) -> str:
+    from ui_frontend import _asset_version_token
+
+    lang = i18n.clean_language(language)
+    T = lambda key, **values: i18n.h(lang, key, values)
+    i18n_head = i18n.head_tags(lang, _asset_version_token())
+    language_options = i18n.language_options_html(lang)
     sso = ""
     if plex_sso_available:
         sso += '<button class="btn cw-sso-btn cw-plex-btn" id="go-plex" type="button"><span>Plex</span></button>'
@@ -1448,14 +1462,15 @@ def _login_html(*, plex_sso_available: bool = False, oidc_available: bool = Fals
         sso += _oidc_button_html(oidc_label, oidc_icon)
     if sso:
         sso = (
-            '<div class="cw-sso"><div class="cw-sso-sep"><span>or continue with</span></div>'
+            f'<div class="cw-sso"><div class="cw-sso-sep"><span>{T("auth.login.orContinue")}</span></div>'
             f'<div class="cw-sso-row">{sso}</div>'
             '</div>'
         )
     return f"""<!doctype html>
-<html lang="en"><head>
+<html lang="{lang}"><head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Sign in | CrossWatch</title>
+  <title>{T("auth.login.pageTitle")} | CrossWatch</title>
+  {i18n_head}
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
   <link rel="stylesheet" href="/assets/crosswatch.css">
   <link rel="stylesheet" href="/assets/themes/tokens.css">
@@ -1465,12 +1480,12 @@ def _login_html(*, plex_sso_available: bool = False, oidc_available: bool = Fals
   <div class="cw-login-shell">
     <section class="cw-hero" aria-hidden="true">
       <div class="cw-mark"><img src="/assets/img/CROSSWATCH.svg" alt=""><span class="cw-wordmark">CrossWatch<span class="brand-dot" aria-hidden="true">.</span></span></div>
-      <h1>Sign in to your sync hub</h1>
+      <h1>{T("auth.login.heroTitle")}</h1>
       <div class="cw-metrics">
         <a class="cw-help-link" href="https://wiki.crosswatch.app/" target="_blank" rel="noopener noreferrer">
           <span class="cw-help-copy">
-            <span class="cw-help-kicker">Documentation</span>
-            <span class="cw-help-sub">Setup guides and troubleshooting help.</span>
+            <span class="cw-help-kicker">{T("auth.login.docs")}</span>
+            <span class="cw-help-sub">{T("auth.login.docsHint")}</span>
           </span>
           <span class="cw-help-icon" aria-hidden="true">
             <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" stroke="currentColor" stroke-width="1.8">
@@ -1481,8 +1496,8 @@ def _login_html(*, plex_sso_available: bool = False, oidc_available: bool = Fals
         </a>
         <a class="cw-help-link cw-discord-link" href="https://discord.gg/uA9vFUr9M" target="_blank" rel="noopener noreferrer">
           <span class="cw-help-copy">
-            <span class="cw-help-kicker">Community</span>
-            <span class="cw-help-sub">Chat with other users on Discord.</span>
+            <span class="cw-help-kicker">{T("auth.login.community")}</span>
+            <span class="cw-help-sub">{T("auth.login.communityHint")}</span>
           </span>
           <span class="cw-help-icon" aria-hidden="true">
             <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M20.317 4.37a19.79 19.79 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.865-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.74 19.74 0 0 0 3.677 4.37a.07.07 0 0 0-.032.028C.533 9.046-.32 13.58.099 18.058a.082.082 0 0 0 .031.056 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028c.462-.63.874-1.295 1.226-1.994a.076.076 0 0 0-.041-.106 13.1 13.1 0 0 1-1.872-.892.077.077 0 0 1-.008-.128c.126-.094.252-.192.372-.292a.074.074 0 0 1 .078-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 0 1 .078.009c.12.1.246.199.373.293a.077.077 0 0 1-.006.128 12.3 12.3 0 0 1-1.873.891.077.077 0 0 0-.041.107c.36.698.772 1.363 1.225 1.993a.076.076 0 0 0 .084.029 19.84 19.84 0 0 0 6.002-3.03.077.077 0 0 0 .032-.055c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.029zM8.02 15.331c-1.183 0-2.157-1.086-2.157-2.419 0-1.333.956-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.332-.956 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.086-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.332-.946 2.418-2.157 2.418z"/></svg>
@@ -1492,26 +1507,33 @@ def _login_html(*, plex_sso_available: bool = False, oidc_available: bool = Fals
     </section>
     <section class="cw-login">
       <div class="cw-login-head">
-        <div class="cw-login-kicker">Authentication</div>
-        <h2>Welcome back</h2>
-        <p class="sub">Use your local CrossWatch credentials to continue.</p>
+        <div class="cw-login-kicker">{T("auth.login.kicker")}</div>
+        <h2>{T("auth.login.welcome")}</h2>
+        <p class="sub">{T("auth.login.intro")}</p>
       </div>
+      <div class="cw-login-language"><label for="cw-login-language">{T("common.language.label")}</label><select id="cw-login-language" data-cw-language-select aria-describedby="cw-login-language-status">{language_options}</select><span id="cw-login-language-status" class="cw-login-language-status" data-cw-language-status></span></div>
       <div id="help" class="cw-banner" role="status" aria-live="polite"></div>
       <div id="msg" class="cw-msg" role="alert" aria-live="assertive"></div>
       <form class="cw-form" id="login-form" autocomplete="on">
-        <div class="cw-field"><label for="u">Username</label><input id="u" name="username" autocomplete="username"></div>
-        <div class="cw-field"><label for="p">Password</label><input id="p" name="password" type="password" autocomplete="current-password"></div>
-        <div class="cw-field cw-totp-hidden" id="totp-wrap"><label for="totp">Verification code</label><input id="totp" name="totp" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="one-time-code"></div>
+        <div class="cw-field"><label for="u">{T("auth.login.username")}</label><input id="u" name="username" autocomplete="username"></div>
+        <div class="cw-field"><label for="p">{T("auth.login.password")}</label><input id="p" name="password" type="password" autocomplete="current-password"></div>
+        <div class="cw-field cw-totp-hidden" id="totp-wrap"><label for="totp">{T("auth.login.verificationCode")}</label><input id="totp" name="totp" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="one-time-code"></div>
         <label class="cw-remember" for="remember">
           <input id="remember" name="remember" type="checkbox">
-          <span><b>Remember me</b><span>Keep this browser signed in for up to {DEFAULT_REMEMBER_ME_DAYS} days.</span></span>
+          <span><b>{T("auth.login.remember")}</b><span>{T("auth.login.rememberHint", count=DEFAULT_REMEMBER_ME_DAYS)}</span></span>
         </label>
-        <div class="cw-actions"><button class="btn acc" id="go" type="submit">Sign in</button>{sso}</div>
+        <div class="cw-actions"><button class="btn acc" id="go" type="submit">{T("auth.login.signIn")}</button>{sso}</div>
       </form>
     </section>
   </div>
   <script>
     const $=(id)=>document.getElementById(id);
+    const T=(key,vars)=>window.CW.I18n.t(key,vars);
+    const errorText=(data,fallback)=>{{
+      const key=data&&data.code?'auth.errors.'+data.code:'';
+      if(key&&window.CW.I18n.has(key)) return T(key,{{seconds:Number(data.retry_after)||0}});
+      return (data&&data.error)||fallback;
+    }};
     const msg=$('msg');
     const help=$('help');
     const btn=$('go');
@@ -1540,14 +1562,22 @@ def _login_html(*, plex_sso_available: bool = False, oidc_available: bool = Fals
     function setHelp(data){{
       const url=(data&&data.forgot_help_url)||'https://wiki.crosswatch.app/';
       const on=!!(data&&data.show_help_banner);
-      help.innerHTML=on?`Forget username/password? Visit <a href="${{url}}" target="_blank" rel="noopener noreferrer">${{url}}</a>`:'';
+      help.replaceChildren();
+      if(on){{
+        const link=document.createElement('a');
+        link.href=url;
+        link.target='_blank';
+        link.rel='noopener noreferrer';
+        link.textContent=url;
+        help.append(T('auth.login.forgotHelp')+' ',link);
+      }}
       help.classList.toggle('show',on);
     }}
     function set2fa(on){{
       needs2fa=!!on;
       const wrap=$('totp-wrap');
       if(wrap) wrap.classList.toggle('cw-totp-hidden',!needs2fa);
-      btn.textContent=needs2fa?'Verify':'Sign in';
+      btn.textContent=needs2fa?T('auth.login.verify'):T('auth.login.signIn');
       if(needs2fa) setTimeout(()=>{{ try{{$('totp')?.focus();}}catch(e){{}} }},0);
     }}
     async function finishPlex2fa(){{
@@ -1556,7 +1586,7 @@ def _login_html(*, plex_sso_available: bool = False, oidc_available: bool = Fals
       const code=$('totp')?.value.trim()||'';
       btn.disabled=true;
       if(plexBtn) plexBtn.disabled=true;
-      btn.textContent='Verifying...';
+      btn.textContent=T('auth.login.verifying');
       try{{
         const r=await fetch('/api/app-auth/plex/check',{{method:'POST',headers:{{'Content-Type':'application/json'}},credentials:'same-origin',body:JSON.stringify({{state:plex2faState,totp_code:code}})}});
         const data=await r.json().catch(()=>null);
@@ -1566,8 +1596,8 @@ def _login_html(*, plex_sso_available: bool = False, oidc_available: bool = Fals
             if(data.state) plex2faState=data.state;
           }}
           setHelp(data);
-          const base=(data && data.error) ? data.error : ('Plex sign-in failed ('+r.status+')');
-          const retry=(data && Number.isFinite(data.retry_after) && data.retry_after>0) ? ` Login paused for ${{data.retry_after}}s.` : '';
+          const base=errorText(data,T('auth.login.plexFailedStatus',{{status:String(r.status)}}));
+          const retry=(data && !data.code && Number.isFinite(data.retry_after) && data.retry_after>0) ? ' '+T('auth.login.paused',{{seconds:data.retry_after}}) : '';
           setMsg(base + retry);
           return true;
         }}
@@ -1576,13 +1606,13 @@ def _login_html(*, plex_sso_available: bool = False, oidc_available: bool = Fals
         location.href = nextUrl(data);
         return true;
       }}catch(e){{
-        setMsg('Plex sign-in failed');
+        setMsg(T('auth.login.plexFailed'));
         return true;
       }}finally{{
         btn.disabled=false;
         if(plexBtn) plexBtn.disabled=false;
-        btn.textContent=needs2fa?'Verify':'Sign in';
-        setBtnLabel(plexBtn, plex2faState?'Verify':'Plex');
+        btn.textContent=needs2fa?T('auth.login.verify'):T('auth.login.signIn');
+        setBtnLabel(plexBtn, plex2faState?T('auth.login.verify'):'Plex');
       }}
     }}
     async function login(){{
@@ -1596,7 +1626,7 @@ def _login_html(*, plex_sso_available: bool = False, oidc_available: bool = Fals
       const code=$('totp')?.value.trim()||'';
       const remember=$('remember')?.checked===true;
       btn.disabled=true;
-      btn.textContent=needs2fa?'Verifying...':'Signing in...';
+      btn.textContent=needs2fa?T('auth.login.verifying'):T('auth.login.signingIn');
       try{{
         const r=await fetch('/api/app-auth/login',{{method:'POST',headers:{{'Content-Type':'application/json'}},credentials:'same-origin',body:JSON.stringify({{username:u,password:p,totp_code:code,remember_me:remember}})}});
         const data=await r.json().catch(()=>null);
@@ -1605,18 +1635,18 @@ def _login_html(*, plex_sso_available: bool = False, oidc_available: bool = Fals
             set2fa(true);
           }}
           setHelp(data);
-          const base=(data && data.error) ? data.error : ('Login failed ('+r.status+')');
-          const retry=(data && Number.isFinite(data.retry_after) && data.retry_after>0) ? ` Login paused for ${{data.retry_after}}s.` : '';
+          const base=errorText(data,T('auth.login.failedStatus',{{status:String(r.status)}}));
+          const retry=(data && !data.code && Number.isFinite(data.retry_after) && data.retry_after>0) ? ' '+T('auth.login.paused',{{seconds:data.retry_after}}) : '';
           setMsg(base + retry);
           return;
         }}
         setHelp(null);
         location.href = nextUrl(data);
       }}catch(e){{
-        setMsg('Login failed');
+        setMsg(T('auth.login.failed'));
       }}finally{{
         btn.disabled=false;
-        btn.textContent=needs2fa?'Verify':'Sign in';
+        btn.textContent=needs2fa?T('auth.login.verify'):T('auth.login.signIn');
       }}
     }}
     async function startPlex(){{
@@ -1628,14 +1658,14 @@ def _login_html(*, plex_sso_available: bool = False, oidc_available: bool = Fals
       const popup=window.open('about:blank','cw_plex_auth','width=620,height=760,popup=yes');
       if(plexBtn){{
         plexBtn.disabled=true;
-        setBtnLabel(plexBtn,'Waiting...');
+        setBtnLabel(plexBtn,T('auth.login.waiting'));
       }}
       try{{
         const r=await fetch('/api/app-auth/plex/start',{{method:'POST',headers:{{'Content-Type':'application/json'}},credentials:'same-origin',body:JSON.stringify({{remember_me:remember}})}});
         const data=await r.json().catch(()=>null);
         if(!r.ok || !data || !data.ok || !data.state || !data.auth_url){{
           if(popup && !popup.closed) popup.close();
-          setMsg((data&&data.error)||('Plex sign-in failed ('+r.status+')'));
+          setMsg(errorText(data,T('auth.login.plexFailedStatus',{{status:String(r.status)}})));
           return;
         }}
         if(popup && !popup.closed) popup.location.href=data.auth_url;
@@ -1651,10 +1681,10 @@ def _login_html(*, plex_sso_available: bool = False, oidc_available: bool = Fals
               plex2faState=pd.state||data.state;
               set2fa(true);
               setHelp(pd);
-              setMsg(pd.error||'Verification code required');
+              setMsg(errorText(pd,T('auth.errors.verification_required')));
               return;
             }}
-            setMsg((pd&&pd.error)||('Plex sign-in failed ('+pr.status+')'));
+            setMsg(errorText(pd,T('auth.login.plexFailedStatus',{{status:String(pr.status)}})));
             return;
           }}
           if(popup && !popup.closed) popup.close();
@@ -1663,12 +1693,12 @@ def _login_html(*, plex_sso_available: bool = False, oidc_available: bool = Fals
         }}
       }}catch(e){{
         if(popup && !popup.closed) popup.close();
-        setMsg('Plex sign-in failed');
+        setMsg(T('auth.login.plexFailed'));
       }}finally{{
         plexPolling=false;
         if(plexBtn){{
           plexBtn.disabled=false;
-          setBtnLabel(plexBtn, plex2faState?'Verify':'Plex');
+          setBtnLabel(plexBtn, plex2faState?T('auth.login.verify'):'Plex');
         }}
       }}
     }}
@@ -1751,7 +1781,7 @@ def api_login(request: Request, payload: dict[str, Any] = Body(...)) -> JSONResp
     a = _cfg_auth(cfg)
     remember_me = bool(payload.get("remember_me"))
     if not auth_required(cfg):
-        return JSONResponse({"ok": False, "error": "Authentication is not configured"}, status_code=400)
+        return JSONResponse({"ok": False, "error": "Authentication is not configured", "code": "auth_not_configured"}, status_code=400)
 
     ok_rl, retry = _rate_limit_ok(req)
     if not ok_rl:
@@ -1759,7 +1789,7 @@ def api_login(request: Request, payload: dict[str, Any] = Body(...)) -> JSONResp
         u = str(payload.get("username") or "").strip()
         _audit(req, "login_blocked", status="blocked", message=f"Login blocked for {u or 'unknown'} by rate limit", fields={"username": u, "retry_after": retry, "attempts": st["n"]})
         return JSONResponse(
-            _login_error_payload(error=f"Try again in {retry}s", attempts=st["n"], retry_after=retry),
+            _login_error_payload(error=f"Try again in {retry}s", attempts=st["n"], retry_after=retry, code="rate_limited"),
             status_code=429,
             headers={"Cache-Control": "no-store"},
         )
@@ -1773,7 +1803,7 @@ def api_login(request: Request, payload: dict[str, Any] = Body(...)) -> JSONResp
         msg = f"Too many failed attempts. Try again in {st['retry_after']}s" if st["retry_after"] > 0 else "Invalid credentials"
         _audit(req, "login_failed", status="failed", message=f"Login failed for {u or 'unknown'}", fields={"username": u, "attempts": st["n"], "retry_after": st["retry_after"]})
         return JSONResponse(
-            _login_error_payload(error=msg, attempts=st["n"], retry_after=st["retry_after"]),
+            _login_error_payload(error=msg, attempts=st["n"], retry_after=st["retry_after"], code="too_many_attempts" if st["retry_after"] > 0 else "invalid_credentials"),
             status_code=status,
             headers={"Cache-Control": "no-store"},
         )
@@ -1788,7 +1818,7 @@ def api_login(request: Request, payload: dict[str, Any] = Body(...)) -> JSONResp
         if not str(raw_code or "").strip():
             _audit(req, "2fa_required", actor=user, status="blocked", message=f"Two-factor verification required for {user.get('username') or 'user'}", target_type="user", target_id=user.get("id"))
             return JSONResponse(
-                {"ok": False, "error": "Verification code required", "requires_2fa": True},
+                {"ok": False, "error": "Verification code required", "code": "verification_required", "requires_2fa": True},
                 status_code=401,
                 headers={"Cache-Control": "no-store"},
             )
@@ -1799,7 +1829,7 @@ def api_login(request: Request, payload: dict[str, Any] = Body(...)) -> JSONResp
             st = _rate_limit_fail(req)
             status = 429 if st["retry_after"] > 0 else 401
             msg = f"Too many failed attempts. Try again in {st['retry_after']}s" if st["retry_after"] > 0 else "Invalid verification code"
-            body = _login_error_payload(error=msg, attempts=st["n"], retry_after=st["retry_after"])
+            body = _login_error_payload(error=msg, attempts=st["n"], retry_after=st["retry_after"], code="too_many_attempts" if st["retry_after"] > 0 else "invalid_verification_code")
             body["requires_2fa"] = True
             _audit(req, "2fa_failed", actor=user, status="failed", message=f"Two-factor verification failed for {user.get('username') or 'user'}", target_type="user", target_id=user.get("id"), fields={"attempts": st["n"], "retry_after": st["retry_after"]})
             return JSONResponse(body, status_code=status, headers={"Cache-Control": "no-store"})
@@ -1833,7 +1863,7 @@ def api_login(request: Request, payload: dict[str, Any] = Body(...)) -> JSONResp
     except ValueError:
         st = _rate_limit_fail(req)
         return JSONResponse(
-            _login_error_payload(error="Invalid credentials", attempts=st["n"], retry_after=st["retry_after"]),
+            _login_error_payload(error="Invalid credentials", attempts=st["n"], retry_after=st["retry_after"], code="invalid_credentials"),
             status_code=401,
             headers={"Cache-Control": "no-store"},
         )
@@ -2515,7 +2545,7 @@ def register_app_auth(app) -> None:
         _LOG.exception("OIDC routes failed to register - OIDC sign-in will be unavailable")
 
     @app.get("/login", include_in_schema=False, tags=["ui"])
-    def ui_login() -> Response:
+    def ui_login(request: Request) -> Response:
         cfg = load_config()
         if not auth_required(cfg):
             return RedirectResponse(url="/", status_code=302)
@@ -2535,7 +2565,7 @@ def register_app_auth(app) -> None:
             oidc_available = False
             oidc_label = "OIDC"
             oidc_icon = ""
-        return HTMLResponse(_login_html(plex_sso_available=plex_sso_available, oidc_available=oidc_available, oidc_label=oidc_label, oidc_icon=oidc_icon), headers={"Cache-Control": "no-store"})
+        return HTMLResponse(_login_html(plex_sso_available=plex_sso_available, oidc_available=oidc_available, oidc_label=oidc_label, oidc_icon=oidc_icon, language=i18n.cookie_language(request)), headers={"Cache-Control": "no-store"})
 
     @app.get("/logout", include_in_schema=False, tags=["ui"])
     def ui_logout(request: Request) -> Response:

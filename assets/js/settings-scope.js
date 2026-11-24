@@ -2,6 +2,8 @@
 /* CrossWatch - Settings scope while viewing as a profile */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 (function (w, d) {
+  const T = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.t?.(key, vars) ?? key;
+  const TH = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.html?.(key, vars) ?? key;
   const NS = (w.CW ||= {});
   if (NS.SettingsScope) return;
 
@@ -83,10 +85,10 @@
     banner.innerHTML = `
       <span class="material-symbols-rounded cw-view-as-banner-icon" aria-hidden="true">visibility</span>
       <span class="cw-view-as-banner-copy">
-        <strong>Viewing as ${esc(state.label)}</strong>
-        <span>Settings only show what belongs to ${esc(state.label)}. New pairs, routes and webhooks are added to ${esc(state.label)}.</span>
+        <strong>${TH("settings.scope.viewingAs", {name: state.label})}</strong>
+        <span>${TH("settings.scope.onlyShows", {name: state.label})}</span>
       </span>
-      <button type="button" class="cw-view-as-banner-stop" data-cw-view-as-stop>Stop viewing as</button>`;
+      <button type="button" class="cw-view-as-banner-stop" data-cw-view-as-stop>${TH("settings.scope.stopViewing")}</button>`;
     if (!existing) firstPane.parentElement.insertBefore(banner, firstPane);
   }
 

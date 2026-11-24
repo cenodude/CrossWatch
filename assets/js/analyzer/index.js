@@ -2,24 +2,27 @@
 /* CrossWatch - Sync Analyzer Page */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 
+const I18N = () => globalThis.window?.CW?.I18n || globalThis.window?.__cwI18n;
+const T = (key, vars) => I18N()?.t?.(key, vars) ?? key;
+const TH = (key, vars) => I18N()?.html?.(key, vars) ?? key;
 const FEATURES = ["history", "watchlist", "ratings", "progress", "collection"];
 const VIEWS = {
-  missing: { title: "Snapshot differences", icon: "compare_arrows", description: "Missing items and unmatched watch times in saved snapshots. Review each finding before deciding whether a sync change is needed." },
-  pending: { title: "Pending retries", icon: "pending_actions", description: "Items a previous sync could not match or write. Review the reason before running the pair again." },
-  system: { title: "System health", icon: "monitor_heart", description: "Provider, orchestrator and saved-state diagnostics across CrossWatch, plus findings for the selected pairs." },
-  blocked: { title: "Blocked items", icon: "block", description: "Items held back by saved blocking rules or automatic protections." },
-  all: { title: "All items", icon: "dataset", description: "Browse saved items for the selected pairs. Rating and progress values may differ even when an item exists on both sides." }
+  missing: { title: T("analyzer.views.missing"), icon: "compare_arrows", description: T("analyzer.views.missingHint") },
+  pending: { title: T("analyzer.views.pending"), icon: "pending_actions", description: T("analyzer.views.pendingHint") },
+  system: { title: T("analyzer.views.system"), icon: "monitor_heart", description: T("analyzer.views.systemHint") },
+  blocked: { title: T("analyzer.views.blocked"), icon: "block", description: T("analyzer.views.blockedHint") },
+  all: { title: T("analyzer.views.all"), icon: "dataset", description: T("analyzer.views.allHint") }
 };
 const esc = value => String(value ?? "").replace(/[&<>"']/g, char => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]);
 const icon = name => `<span class="material-symbols-rounded${name === "progress_activity" ? " an-spinner" : ""}" aria-hidden="true">${name}</span>`;
-const aiAsk = question => `<button type="button" class="an-button an-ai-ask" data-ai-analyze data-ai-question="${esc(question)}" title="Ask the assistant about this finding">${icon("auto_awesome")}<span>Explain with AI</span></button>`;
+const aiAsk = question => `<button type="button" class="an-button an-ai-ask" data-ai-analyze data-ai-question="${esc(question)}" title="${TH("analyzer.askAi")}">${icon("auto_awesome")}<span>${TH("analyzer.explainAi")}</span></button>`;
 const array = value => Array.isArray(value) ? value : [];
 const human = value => String(value || "").replace(/[_-]+/g, " ").replace(/^./, c => c.toUpperCase());
 const severity = row => row.severity === "error" ? "error" : ["warn", "warning"].includes(row.severity) ? "warn" : "info";
 const identity = row => `${row.pair_id || ""}::${row.provider || ""}::${row.feature || ""}::${row.key || ""}`;
 const label = row => {
   const item = row.item || row;
-  const title = row.title || row.item_title || item.title || row.series_title || item.series_title || row.message || row.key || array(row.keys)[0] || "Untitled item";
+  const title = row.title || row.item_title || item.title || row.series_title || item.series_title || row.message || row.key || array(row.keys)[0] || T("analyzer.untitled");
   const season = row.season ?? item.season;
   const episode = row.episode ?? item.episode;
   if ((row.item_type || item.type) === "episode" && season != null && episode != null) return `${row.series_title || item.series_title || title} · S${String(season).padStart(2, "0")}E${String(episode).padStart(2, "0")}`;
@@ -30,14 +33,14 @@ const unique = rows => [...new Map(rows.map(row => [JSON.stringify(row), row])).
 export function matchDetailsHTML(row, hints = []) {
   const entries = unique([row, ...array(hints)].filter(entry => array(entry?.match_details?.candidates).length).map(entry => ({ provider: String(entry.provider || "").trim().toUpperCase().replace(/@DEFAULT$/, ""), details: entry.match_details })));
   const ids = item => ["ids", "show_ids"].flatMap(field => Object.entries(item?.[field] || {}).map(([key, value]) => `${field === "show_ids" ? "show " : ""}${key}:${value}`)).join(" / ");
-  return entries.map(({ provider, details }) => `<details class="an-match-details"><summary>Possible matches from previous attempt${provider ? ` (${esc(provider)})` : ""}: ${esc(details.candidate_count)}</summary><ul>${array(details.candidates).slice(0, 10).map(item => `<li>${esc([item.type, item.local_id, item.title, item.year].filter(Boolean).join(" / "))}<p>${esc(ids(item))}${item.season != null && item.episode != null ? ` / S${esc(item.season)}E${esc(item.episode)}` : ""}</p></li>`).join("")}</ul>${details.truncated || details.candidates.length > 10 ? "<p>Only the first candidates are shown.</p>" : ""}</details>`).join("");
+  return entries.map(({ provider, details }) => `<details class="an-match-details"><summary>${TH("analyzer.prevMatches")}${provider ? ` (${esc(provider)})` : ""}: ${esc(details.candidate_count)}</summary><ul>${array(details.candidates).slice(0, 10).map(item => `<li>${esc([item.type, item.local_id, item.title, item.year].filter(Boolean).join(" / "))}<p>${esc(ids(item))}${item.season != null && item.episode != null ? ` / S${esc(item.season)}E${esc(item.episode)}` : ""}</p></li>`).join("")}</ul>${details.truncated || details.candidates.length > 10 ? "<p>" + TH("analyzer.firstCandidates") + "</p>" : ""}</details>`).join("");
 }
 
 export function mappingRowActions(row, index) {
   const rules = array(row.saved_mappings);
   const canEdit = row.key && FEATURES.includes(row.feature) && !array(row.watch_time_differences).length && !array(row.episode_groups).length && (row.type !== "missing_peer" || array(row.targets).length === 1);
-  const action = rules.length ? "Edit mapping" : "Add mapping";
-  const edit = canEdit ? `<button type="button" class="an-icon-button" data-edit-mapping="${index}" title="${action}" aria-label="${action} for ${esc(label(row))}">${icon(rules.length ? "edit" : "add_link")}</button>` : "";
+  const action = rules.length ? T("analyzer.editMapping") : T("analyzer.addMapping");
+  const edit = canEdit ? `<button type="button" class="an-icon-button" data-edit-mapping="${index}" title="${action}" aria-label="${TH("analyzer.actionFor", {action, name: label(row)})}">${icon(rules.length ? "edit" : "add_link")}</button>` : "";
   return edit + rules.map((rule, ruleIndex) => {
     const scope = rule.pair_id ? "this pair" : "all pairs using this source instance";
     const name = rule.corrected?.title || rule.key;
@@ -49,17 +52,17 @@ export function savedMappingText(row) {
   return array(row.saved_mappings).map(rule => {
     const item = rule.corrected || {};
     const ids = Object.entries(item.show_ids || item.ids || {}).map(([key, value]) => key.toUpperCase() + " " + value).join(" · ");
-    return "Mapping saved → " + [item.series_title || item.title || rule.key, ids].filter(Boolean).join(" · ") + (rule.scope === "pair" ? " (this pair)" : " (shared)");
+    return `${T("analyzer.mappingSaved")} → ` + [item.series_title || item.title || rule.key, ids].filter(Boolean).join(" · ") + ` ${T(rule.scope === "pair" ? "analyzer.thisPairParen" : "analyzer.sharedParen")}`;
   }).join("; ");
 }
 
 export function episodeGroupLabel(row) {
   const groups = array(row.episode_groups);
   if (!groups.length) return "";
-  if (groups.some(group => group.status === "held")) return "Episode group held";
-  if (groups.some(group => group.status === "waiting")) return "Waiting for remaining parts";
-  if (groups.some(group => group.status === "pending")) return "Grouped watches missing";
-  return "Episode group matched";
+  if (groups.some(group => group.status === "held")) return T("analyzer.groupHeld");
+  if (groups.some(group => group.status === "waiting")) return T("analyzer.groupWaiting");
+  if (groups.some(group => group.status === "pending")) return T("analyzer.groupMissing");
+  return T("analyzer.groupMatched");
 }
 export function watchDifferenceLabel(row, providerName = String) {
   const differences = array(row.watch_time_differences);
@@ -67,29 +70,29 @@ export function watchDifferenceLabel(row, providerName = String) {
   const groupTargets = new Set(array(row.episode_groups).map(group => group.target));
   const cloudTargets = new Set(array(row.cloud_confirmed_targets));
   const missing = array(row.targets).filter(target => !timeTargets.has(target) && !groupTargets.has(target) && !cloudTargets.has(target));
-  return [cloudTargets.size && `Recently watched in Plex cloud (${[...cloudTargets].map(providerName).join(", ")}); absent from server snapshot`, episodeGroupLabel(row), differences.length && `Watch time differs at ${[...timeTargets].map(providerName).join(", ")}`,
-    missing.length && `Missing at ${missing.map(providerName).join(", ")}`].filter(Boolean).join("; ") || "Missing at destination";
+  return [cloudTargets.size && T("analyzer.cloudRecent", {providers: [...cloudTargets].map(providerName).join(", ")}), episodeGroupLabel(row), differences.length && T("analyzer.timeDiffersAt", {providers: [...timeTargets].map(providerName).join(", ")}),
+    missing.length && T("analyzer.missingAt", {providers: missing.map(providerName).join(", ")})].filter(Boolean).join("; ") || T("analyzer.missingDestination");
 }
 export function retryLabel(row) {
-  return row.retry_blocked ? "Automatic retries blocked" : "Pending retry";
+  return row.retry_blocked ? T("analyzer.retryBlocked") : T("analyzer.pendingRetry");
 }
 export function nextStepText(row) {
-  const blocked = row.retry_blocked ? "Automatic retries are blocked after repeated failures. Resolve the cause before clearing the retry block. " : "";
-  if (array(row.episode_groups).length) return blocked + "Review the group's watched-part counts and any hold reason. Manage this rule in Editor → Mappings & blocks → Episode groups. Incomplete separate parts must all be watched before the combined episode can be added.";
-  if (array(row.watch_time_differences).length) return blocked + "Compare the recorded watch times and playback history. Matching IDs do not establish whether these are the same playback or separate watches. A mapping edit does not correct the watch time.";
-  return blocked + "Review the provider's reported reason and the pair's sync rules. Correct the mapping only if the item was identified incorrectly.";
+  const blocked = row.retry_blocked ? T("analyzer.blockedHint") : "";
+  if (array(row.episode_groups).length) return blocked + T("analyzer.nextGroup");
+  if (array(row.watch_time_differences).length) return blocked + T("analyzer.nextTime");
+  return blocked + T("analyzer.nextDefault");
 }
 export function watchDifferenceDetails(differences, providerName = String) {
   return array(differences).map(entry => {
     const seconds = Math.abs(Number(entry.difference_seconds));
     const duration = `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
-    return `<div class="an-detail-reasons"><h4>Watch time differs</h4><p>${esc(providerName(entry.source))}: ${esc(entry.source_watched_at)}</p><p>${esc(providerName(entry.target))} (closest recorded watch): ${esc(entry.target_watched_at)}</p><p>Difference: ${esc(duration)}. Times are shown with their recorded time zone.</p><p>${esc(entry.message)}</p></div>`;
+    return `<div class="an-detail-reasons"><h4>${TH("analyzer.timeDiffers")}</h4><p>${esc(providerName(entry.source))}: ${esc(entry.source_watched_at)}</p><p>${esc(providerName(entry.target))} ${TH("analyzer.closest")}: ${esc(entry.target_watched_at)}</p><p>${TH("analyzer.difference", {duration})}</p><p>${esc(entry.message)}</p></div>`;
   }).join("");
 }
 const affectedLabels = row => [
-  ...array(row.affected_items).map(value => [value.label || value.key, value.reason, value.attempts != null && `Attempts: ${value.attempts}`].filter(Boolean).join(" · ")),
-  ...array(row.extra_source_titles || row.extra_source).map(value => `Only at source: ${value}`),
-  ...array(row.extra_target_titles || row.extra_target).map(value => `Only at destination: ${value}`)
+  ...array(row.affected_items).map(value => [value.label || value.key, value.reason, value.attempts != null && T("analyzer.attempts", {count: String(value.attempts)})].filter(Boolean).join(" · ")),
+  ...array(row.extra_source_titles || row.extra_source).map(value => T("analyzer.onlySource", {value})),
+  ...array(row.extra_target_titles || row.extra_target).map(value => T("analyzer.onlyDestination", {value}))
 ];
 export function groupSnapshotGaps(gaps) {
   const groups = new Map();
@@ -139,10 +142,10 @@ const requestJSON = async (url, signal) => {
   const timer = setTimeout(abort, 120000);
   try {
     const response = await fetch(url, { signal: controller.signal, cache: "no-store" });
-    if (!response.ok) throw new Error(`Request failed (${response.status}).`);
+    if (!response.ok) throw new Error(T("analyzer.requestFailed", {status: String(response.status)}));
     return await response.json();
   } catch (error) {
-    if (controller.signal.aborted && !signal.aborted) throw new Error("The request timed out. Please try again.");
+    if (controller.signal.aborted && !signal.aborted) throw new Error(T("analyzer.timeout"));
     throw error;
   } finally {
     clearTimeout(timer);
@@ -195,37 +198,37 @@ const Analyzer = {
     mountedHost = host;
     mountedContext = contextKey();
     root.innerHTML = `
-      <a class="an-back" href="#main">${icon("arrow_back")}Main</a>
+      <a class="an-back" href="#main">${icon("arrow_back")}${TH("navigation.tabs.main")}</a>
       <header class="an-header">
-        <div><div class="an-eyebrow">SYNC INSIGHTS</div><h1>Sync Analyzer</h1></div>
-        <button class="an-button an-primary" id="an-run" type="button">${icon("refresh")}<span>Analyze</span></button>
+        <div><div class="an-eyebrow">${TH("analyzer.kicker")}</div><h1>${TH("analyzer.title")}</h1></div>
+        <button class="an-button an-primary" id="an-run" type="button">${icon("refresh")}<span>${TH("analyzer.analyze")}</span></button>
       </header>
       <div id="an-progress" class="an-progress" role="status" aria-live="polite" hidden></div>
       <div id="an-alerts"></div>
       <p id="an-mapping-notice" class="an-mapping-notice" role="status" hidden></p>
-      <section class="an-scope-bar" aria-label="Analysis scope">
-        <label for="an-pair">Sync pair<select id="an-pair" disabled><option>Loading pairs…</option></select></label>
-        <div class="an-snapshot">${icon("schedule")}<div><strong>Saved snapshots</strong><span id="an-snapshot-time">Run a sync to update provider data.</span></div></div>
+      <section class="an-scope-bar" aria-label="${TH("analyzer.scope")}">
+        <label for="an-pair">${TH("analyzer.syncPair")}<select id="an-pair" disabled><option>${TH("analyzer.loadingPairs")}</option></select></label>
+        <div class="an-snapshot">${icon("schedule")}<div><strong>${TH("analyzer.savedSnapshots")}</strong><span id="an-snapshot-time">${TH("analyzer.runSync")}</span></div></div>
       </section>
       <details id="an-scope-notes" class="an-scope-notes" hidden></details>
-      <nav class="an-tabs" aria-label="Analyzer views">${Object.entries(VIEWS).map(([key, view]) => `<button type="button" class="an-tab" data-view="${key}" aria-pressed="${key === "missing"}">${icon(view.icon)}<span>${view.title}</span><span class="an-count" data-count="${key}">—</span></button>`).join("")}</nav>
-      <label class="cw-page-mobile-view" for="an-mobile-view"><span>View</span><select id="an-mobile-view">${Object.entries(VIEWS).map(([key, view]) => `<option value="${key}">${view.title}</option>`).join("")}</select></label>
+      <nav class="an-tabs" aria-label="${TH("analyzer.views.label")}">${Object.entries(VIEWS).map(([key, view]) => `<button type="button" class="an-tab" data-view="${key}" aria-pressed="${key === "missing"}">${icon(view.icon)}<span>${view.title}</span><span class="an-count" data-count="${key}">—</span></button>`).join("")}</nav>
+      <label class="cw-page-mobile-view" for="an-mobile-view"><span>${TH("analyzer.view")}</span><select id="an-mobile-view">${Object.entries(VIEWS).map(([key, view]) => `<option value="${key}">${view.title}</option>`).join("")}</select></label>
       <section class="an-results" aria-labelledby="an-view-title">
         <div class="an-results-heading"><div><h2 id="an-view-title"></h2><p id="an-view-description"></p></div><span id="an-checked" class="an-muted"></span></div>
         <div class="an-toolbar">
-          <label class="an-search">${icon("search")}<input id="an-search" type="search" maxlength="300" aria-label="Search Analyzer results" placeholder="Search titles, IDs, providers or reasons"></label>
-          <button type="button" class="an-button an-mobile-filters" id="an-mobile-filters" aria-label="Filters and sorting" aria-expanded="false" aria-controls="an-filter-options">${icon("tune")}</button>
+          <label class="an-search">${icon("search")}<input id="an-search" type="search" maxlength="300" aria-label="${TH("analyzer.searchLabel")}" placeholder="${TH("analyzer.searchPlaceholder")}"></label>
+          <button type="button" class="an-button an-mobile-filters" id="an-mobile-filters" aria-label="${TH("analyzer.filtersSorting")}" aria-expanded="false" aria-controls="an-filter-options">${icon("tune")}</button>
           <div id="an-filter-options" class="an-filter-options">
-          <label class="an-filter">Feature<select id="an-feature"><option value="">All features</option>${FEATURES.map(f => `<option value="${f}">${human(f)}</option>`).join("")}</select></label>
-          <label class="an-filter" id="an-severity-wrap" hidden>Severity<select id="an-severity"><option value="">All severities</option><option value="error">Errors</option><option value="warn">Warnings</option><option value="info">Information</option></select></label>
-          <label class="an-filter">Sort<select id="an-sort"><option value="title">Title A–Z</option><option value="title-desc">Title Z–A</option><option value="provider">Provider</option><option value="feature">Feature</option></select></label>
-          <button type="button" class="an-button an-clear" id="an-clear" hidden>Clear filters</button>
+          <label class="an-filter">${TH("analyzer.feature")}<select id="an-feature"><option value="">${TH("analyzer.allFeatures")}</option>${FEATURES.map(f => `<option value="${f}">${human(f)}</option>`).join("")}</select></label>
+          <label class="an-filter" id="an-severity-wrap" hidden>${TH("analyzer.severity")}<select id="an-severity"><option value="">${TH("analyzer.allSeverities")}</option><option value="error">${TH("analyzer.errors")}</option><option value="warn">${TH("analyzer.warnings")}</option><option value="info">${TH("analyzer.information")}</option></select></label>
+          <label class="an-filter">${TH("analyzer.sort")}<select id="an-sort"><option value="title">${TH("analyzer.titleAz")}</option><option value="title-desc">${TH("analyzer.titleZa")}</option><option value="provider">${TH("analyzer.provider")}</option><option value="feature">${TH("analyzer.feature")}</option></select></label>
+          <button type="button" class="an-button an-clear" id="an-clear" hidden>${TH("analyzer.clearFilters")}</button>
           </div>
         </div>
-        <div class="an-list-meta"><span id="an-result-count" role="status" aria-live="polite"></span><label>Per page<select id="an-page-size" aria-label="Items per page"><option>25</option><option selected>50</option><option>100</option><option>250</option></select></label></div>
+        <div class="an-list-meta"><span id="an-result-count" role="status" aria-live="polite"></span><label>${TH("analyzer.perPage")}<select id="an-page-size" aria-label="${TH("analyzer.itemsPerPage")}"><option>25</option><option selected>50</option><option>100</option><option>250</option></select></label></div>
         <div id="an-workspace" class="an-workspace">
-          <div class="an-list-column"><div id="an-list"></div><nav id="an-pagination" class="an-pagination" aria-label="Result pages"></nav></div>
-          <aside id="an-detail" class="an-detail" aria-label="Item details" tabindex="-1" hidden></aside>
+          <div class="an-list-column"><div id="an-list"></div><nav id="an-pagination" class="an-pagination" aria-label="${TH("analyzer.resultPages")}"></nav></div>
+          <aside id="an-detail" class="an-detail" aria-label="${TH("analyzer.itemDetails")}" tabindex="-1" hidden></aside>
         </div>
       </section>`;
     const $ = selector => root.querySelector(selector);
@@ -233,7 +236,7 @@ const Analyzer = {
     $("#an-mobile-filters").addEventListener("click", event => {
       const button = event.currentTarget;
       if (window.CW?.MobileUI?.mobile()) {
-        window.CW.MobileUI.sheet($("#an-filter-options"), {trigger:button, title:'Filters and sorting'});
+        window.CW.MobileUI.sheet($("#an-filter-options"), {trigger:button, title:T("analyzer.filtersSorting")});
         return;
       }
       button.setAttribute("aria-expanded", String(button.getAttribute("aria-expanded") !== "true"));
@@ -327,7 +330,7 @@ const Analyzer = {
       const [target, target_instance] = String(row.target || "").split("@");
       return window.CW?.syncProfileRouteHTML?.(pair || { source, source_instance, target, target_instance }) || `${esc(providerName(row.source))} → ${esc(providerName(row.target))}`;
     };
-    const gapNote = row => `${esc(row.features.map(human).join(", "))}: no saved snapshot ${row.missing.length > 1 ? "on either side" : `for ${endpointPill(row.missing[0])}`}`;
+    const gapNote = row => `${esc(row.features.map(human).join(", "))}: ${row.missing.length > 1 ? TH("analyzer.noSnapshotEither") : `${TH("analyzer.noSnapshotFor")} ${endpointPill(row.missing[0])}`}`;
     const rowPairName = row => {
       const pair = pairs.find(pair => pair.id === row.pair_id);
       return pair ? pairName(pair) : row.pair_id || "";
@@ -349,12 +352,12 @@ const Analyzer = {
     function updateProgress() {
       const tasks = [];
       const elapsed = started => `${Math.floor((Date.now() - started) / 60000)}m ${Math.floor((Date.now() - started) / 1000) % 60}s`;
-      if (analysisState === "loading") tasks.push(`Checking saved items · ${elapsed(analysisStarted)}`);
-      if (systemState === "loading") tasks.push(`Checking system health · ${elapsed(systemStarted)}`);
+      if (analysisState === "loading") tasks.push(`${T("analyzer.checkingItems")} · ${elapsed(analysisStarted)}`);
+      if (systemState === "loading") tasks.push(`${T("analyzer.checkingSystem")} · ${elapsed(systemStarted)}`);
       $("#an-progress").hidden = !tasks.length;
       $("#an-progress").innerHTML = `${icon("progress_activity")}<span>${tasks.map(esc).join('<span class="an-progress-sep">/</span>')}</span>`;
       $("#an-run").disabled = !!tasks.length;
-      $("#an-run span:last-child").textContent = tasks.length ? "Analyzing…" : "Analyze";
+      $("#an-run span:last-child").textContent = tasks.length ? T("analyzer.analyzing") : T("analyzer.analyze");
     }
     const progressTimer = setInterval(updateProgress, 1000);
     function renderStatus() {
@@ -362,26 +365,26 @@ const Analyzer = {
       const { errors, warnings } = groups;
       const counts = { missing: analysisState === "ready" ? missingIndex.size : null, pending: analysisState === "ready" ? pending.length : null, blocked: analysisState === "ready" ? groups.blocked.length : null, system: ["ready", "restricted"].includes(systemState) ? findings.length : null, all: allTotal };
       for (const [key, count] of Object.entries(counts)) {
-        $(`[data-count="${key}"]`).textContent = count == null ? "—" : count.toLocaleString();
+        $(`[data-count="${key}"]`).textContent = count == null ? "—" : count.toLocaleString(I18N()?.locale);
         $(`[data-view="${key}"]`).setAttribute("aria-pressed", String(view === key));
-        $(`#an-mobile-view option[value="${key}"]`).textContent = `${VIEWS[key].title}${count == null ? "" : ` (${count.toLocaleString()})`}`;
+        $(`#an-mobile-view option[value="${key}"]`).textContent = `${VIEWS[key].title}${count == null ? "" : ` (${count.toLocaleString(I18N()?.locale)})`}`;
       }
       $("#an-mobile-view").value = view;
       $('[data-view="system"]').classList.toggle("has-errors", errors > 0 || systemState === "error");
       const alerts = [];
       const gaps = groupSnapshotGaps(snapshotGaps);
-      if (analysisState === "ready" && gaps.length) alerts.push(`<div class="an-notice" role="status">${icon("info")}<div><strong>Some pair comparisons are unavailable</strong><p>Run the affected pair to read both providers. An unread snapshot is not treated as an empty library.</p>${gaps.slice(0, 5).map(row => `<p class="an-route-note">${routeHTML(row)}<span>${gapNote(row)}</span></p>`).join("")}${gaps.length > 5 ? `<p>${gaps.length - 5} more ${gaps.length === 6 ? "comparison needs" : "comparisons need"} snapshot data.</p>` : ""}</div></div>`);
-      if (analysisState === "error") alerts.push(`<div class="an-notice an-error" role="alert">${icon("error")}<div><strong>Item analysis could not finish</strong><p>${esc(analysisError)}</p></div><button type="button" class="an-button" data-retry="analysis">Retry</button></div>`);
-      if (systemState === "error") alerts.push(`<div class="an-notice an-error" role="alert">${icon("error")}<div><strong>System health could not be checked</strong><p>${esc(systemError)} The result is unknown.</p></div><button type="button" class="an-button" data-retry="system">Retry</button></div>`);
-      if (errors || warnings) alerts.push(`<div class="an-notice ${errors ? "an-error" : "an-warning"}">${icon(errors ? "error" : "warning")}<div><strong>${errors ? `${errors} system failure${errors === 1 ? "" : "s"}` : `${warnings} system warning${warnings === 1 ? "" : "s"}`} need${(errors || warnings) === 1 ? "s" : ""} attention</strong><p>${errors && warnings ? `${warnings} warning${warnings === 1 ? "" : "s"} also found. ` : ""}Review provider and saved-state diagnostics.</p></div><button type="button" class="an-button" data-open-system>View findings</button></div>`);
+      if (analysisState === "ready" && gaps.length) alerts.push(`<div class="an-notice" role="status">${icon("info")}<div><strong>${TH("analyzer.gapsTitle")}</strong><p>${TH("analyzer.gapsHint")}</p>${gaps.slice(0, 5).map(row => `<p class="an-route-note">${routeHTML(row)}<span>${gapNote(row)}</span></p>`).join("")}${gaps.length > 5 ? `<p>${TH("analyzer.moreGaps", {count: gaps.length - 5})}</p>` : ""}</div></div>`);
+      if (analysisState === "error") alerts.push(`<div class="an-notice an-error" role="alert">${icon("error")}<div><strong>${TH("analyzer.analysisFailed")}</strong><p>${esc(analysisError)}</p></div><button type="button" class="an-button" data-retry="analysis">${TH("analyzer.retry")}</button></div>`);
+      if (systemState === "error") alerts.push(`<div class="an-notice an-error" role="alert">${icon("error")}<div><strong>${TH("analyzer.systemFailed")}</strong><p>${esc(systemError)} ${TH("analyzer.resultUnknown")}</p></div><button type="button" class="an-button" data-retry="system">${TH("analyzer.retry")}</button></div>`);
+      if (errors || warnings) alerts.push(`<div class="an-notice ${errors ? "an-error" : "an-warning"}">${icon(errors ? "error" : "warning")}<div><strong>${TH(errors ? "analyzer.failuresAttention" : "analyzer.warningsAttention", {count: errors || warnings})}</strong><p>${errors && warnings ? `${TH("analyzer.alsoWarnings", {count: warnings})} ` : ""}${TH("analyzer.reviewDiagnostics")}</p></div><button type="button" class="an-button" data-open-system>${TH("analyzer.viewFindings")}</button></div>`);
       $("#an-alerts").innerHTML = alerts.join("");
-      $("#an-checked").textContent = checked ? `Analyzed ${checked}` : "";
+      $("#an-checked").textContent = checked ? T("analyzer.analyzedAt", {time: checked}) : "";
       updateProgress();
     }
     function updateSnapshot() {
       const ids = $("#an-pair").value ? [$("#an-pair").value] : pairs.map(p => p.id);
       const times = ids.map(id => Number(activity[id] || 0) / 1000000).filter(Boolean);
-      $("#an-snapshot-time").textContent = times.length ? `Last sync ${new Date(Math.max(...times)).toLocaleString()}` : "No sync time available. Run a sync to update provider data.";
+      $("#an-snapshot-time").textContent = times.length ? T("analyzer.lastSync", {time: new Date(Math.max(...times)).toLocaleString(I18N()?.locale)}) : T("analyzer.noSyncTime");
     }
     function renderView() {
       $("#an-view-title").textContent = VIEWS[view].title;
@@ -391,7 +394,7 @@ const Analyzer = {
       $("#an-clear").hidden = !($("#an-search").value || $("#an-feature").value || $("#an-severity").value);
       const excluded = exclusions.reduce((sum, row) => sum + Number(row.excluded_total || 0), 0);
       $("#an-scope-notes").hidden = !excluded;
-      $("#an-scope-notes").innerHTML = `<summary>${excluded.toLocaleString()} items excluded by the pair's sync rules</summary>${exclusions.map(row => `<p class="an-route-note">${routeHTML(row)}<span>${esc(human(row.feature))}: ${Number(row.excluded_total || 0).toLocaleString()} excluded${row.excluded_types ? ` · Types: ${esc(Object.keys(row.excluded_types).join(", "))}` : ""}${row.excluded_libraries ? ` · Libraries: ${esc(Object.keys(row.excluded_libraries).join(", "))}` : ""}${row.excluded_anime_only ? ` · Anime-only sync: ${Number(row.excluded_anime_only).toLocaleString()}` : ""}${row.excluded_dropped ? ` · Dropped shows: ${Number(row.excluded_dropped).toLocaleString()}` : ""}${row.excluded_rewatch_reset ? ` · Before a rewatch reset: ${Number(row.excluded_rewatch_reset).toLocaleString()}` : ""}</span></p>`).join("")}`;
+      $("#an-scope-notes").innerHTML = `<summary>${TH("analyzer.excludedSummary", {count: excluded})}</summary>${exclusions.map(row => `<p class="an-route-note">${routeHTML(row)}<span>${esc(human(row.feature))}: ${TH("analyzer.ex.excluded", {count: Number(row.excluded_total || 0)})}${row.excluded_types ? ` · ${TH("analyzer.ex.types")}: ${esc(Object.keys(row.excluded_types).join(", "))}` : ""}${row.excluded_libraries ? ` · ${TH("analyzer.ex.libraries")}: ${esc(Object.keys(row.excluded_libraries).join(", "))}` : ""}${row.excluded_anime_only ? ` · ${TH("analyzer.ex.animeOnly")}: ${Number(row.excluded_anime_only).toLocaleString(I18N()?.locale)}` : ""}${row.excluded_dropped ? ` · ${TH("analyzer.ex.dropped")}: ${Number(row.excluded_dropped).toLocaleString(I18N()?.locale)}` : ""}${row.excluded_rewatch_reset ? ` · ${TH("analyzer.ex.rewatchReset")}: ${Number(row.excluded_rewatch_reset).toLocaleString(I18N()?.locale)}` : ""}</span></p>`).join("")}`;
       renderStatus();
     }
     function emptyState(title, message, symbol = "search_off") {
@@ -400,8 +403,8 @@ const Analyzer = {
     function pagination() {
       const pages = Math.max(1, Math.ceil(total / pageSize));
       const current = Math.floor(offset / pageSize) + 1;
-      $("#an-result-count").textContent = pageLoading ? "Loading results…" : total ? `${(offset + 1).toLocaleString()}–${Math.min(offset + currentRows.length, total).toLocaleString()} of ${total.toLocaleString()} ${isDiagnostic() ? (total === 1 ? "finding" : "findings") : (total === 1 ? "item" : "items")}` : "0 results";
-      $("#an-pagination").innerHTML = `<button type="button" class="an-button" data-page="0" ${pageLoading || current === 1 ? "disabled" : ""}>${icon("first_page")}<span>First</span></button><button type="button" class="an-button" aria-label="Previous page" data-page="${offset - pageSize}" ${pageLoading || current === 1 ? "disabled" : ""}>${icon("chevron_left")}<span>Previous</span></button><label>Page <input type="number" id="an-page-number" aria-label="Page number" min="1" max="${pages}" value="${current}" ${pageLoading ? "disabled" : ""}> of ${pages.toLocaleString()}</label><button type="button" class="an-button" aria-label="Next page" data-page="${offset + pageSize}" ${pageLoading || current >= pages ? "disabled" : ""}><span>Next</span>${icon("chevron_right")}</button><button type="button" class="an-button" data-page="${(pages - 1) * pageSize}" ${pageLoading || current >= pages ? "disabled" : ""}><span>Last</span>${icon("last_page")}</button>`;
+      $("#an-result-count").textContent = pageLoading ? T("analyzer.loadingResults") : total ? T(isDiagnostic() ? "analyzer.rangeFindings" : "analyzer.rangeItems", {start: offset + 1, end: Math.min(offset + currentRows.length, total), count: total}) : T("analyzer.zeroResults");
+      $("#an-pagination").innerHTML = `<button type="button" class="an-button" data-page="0" ${pageLoading || current === 1 ? "disabled" : ""}>${icon("first_page")}<span>${TH("analyzer.first")}</span></button><button type="button" class="an-button" aria-label="${TH("analyzer.previousPage")}" data-page="${offset - pageSize}" ${pageLoading || current === 1 ? "disabled" : ""}>${icon("chevron_left")}<span>${TH("analyzer.previous")}</span></button><label>${TH("analyzer.page")} <input type="number" id="an-page-number" aria-label="${TH("analyzer.pageNumber")}" min="1" max="${pages}" value="${current}" ${pageLoading ? "disabled" : ""}> ${TH("analyzer.ofPages", {pages})}</label><button type="button" class="an-button" aria-label="${TH("analyzer.nextPage")}" data-page="${offset + pageSize}" ${pageLoading || current >= pages ? "disabled" : ""}><span>${TH("analyzer.next")}</span>${icon("chevron_right")}</button><button type="button" class="an-button" data-page="${(pages - 1) * pageSize}" ${pageLoading || current >= pages ? "disabled" : ""}><span>${TH("analyzer.last")}</span>${icon("last_page")}</button>`;
     }
     function renderList() {
       renderView();
@@ -414,29 +417,29 @@ const Analyzer = {
       }
       $("#an-workspace").classList.toggle("has-detail", !$("#an-detail").hidden);
       if (pageLoading) {
-        $("#an-list").innerHTML = emptyState("Loading items", "Reading the selected page of saved data…", "progress_activity");
+        $("#an-list").innerHTML = emptyState(T("analyzer.loadingItems"), T("analyzer.readingPage"), "progress_activity");
         return;
       }
       if (pageError) {
-        $("#an-list").innerHTML = emptyState("Could not load results", pageError, "error") + '<button class="an-button an-list-retry" type="button" data-retry="page">Retry this page</button>';
+        $("#an-list").innerHTML = emptyState(T("analyzer.resultsFailed"), pageError, "error") + '<button class="an-button an-list-retry" type="button" data-retry="page">' + TH("analyzer.retryPage") + '</button>';
         return;
       }
       if (!currentRows.length) {
-        let title = "No matching results", message = "Try another search or clear the filters.", symbol = "search_off";
+        let title = T("analyzer.noMatching"), message = T("analyzer.tryAnother"), symbol = "search_off";
         if (!$("#an-search").value && !$("#an-feature").value && !$("#an-severity").value) {
           const loading = view === "system" ? systemState === "loading" : analysisState === "loading";
           const failed = view === "system" ? systemState === "error" : analysisState === "error";
-          title = loading ? "Analysis in progress" : failed ? "Results unavailable" : ({ missing: "No snapshot differences found", pending: "No pending retries", blocked: "No blocked items", system: "No system findings", all: "No saved items" })[view];
-          message = loading ? "Results will appear here as the checks finish." : failed ? "Retry the failed check using the message above." : view === "system" && systemState === "restricted" ? "Global system diagnostics are available to administrators. Pair findings remain visible here." : view === "missing" ? "No missing items or unmatched watch times were found in the saved snapshots for these pairs." : "There is nothing to review in this view for the current scope.";
+          title = loading ? T("analyzer.inProgress") : failed ? T("analyzer.unavailable") : ({ missing: T("analyzer.empty.missing"), pending: T("analyzer.empty.pending"), blocked: T("analyzer.empty.blocked"), system: T("analyzer.empty.system"), all: T("analyzer.empty.all") })[view];
+          message = loading ? T("analyzer.resultsAppear") : failed ? T("analyzer.retryFailed") : view === "system" && systemState === "restricted" ? T("analyzer.adminOnly") : view === "missing" ? T("analyzer.noneMissing") : T("analyzer.nothing");
           symbol = loading ? "progress_activity" : failed ? "error" : "check_circle";
           if (!loading && !failed && view === "missing" && snapshotGaps.length) {
-            title = "Comparison incomplete";
-            message = "No missing items were found where both snapshots are available. Run the affected pairs to check the remaining comparisons.";
+            title = T("analyzer.incomplete");
+            message = T("analyzer.incompleteHint");
             symbol = "info";
           }
           if (!loading && !failed && view !== "system" && !pairs.length) {
-            title = "No active sync pairs";
-            message = "Create or enable a pair in Synchronization, then run it to create saved snapshots.";
+            title = T("analyzer.noPairs");
+            message = T("analyzer.noPairsHint");
             symbol = "compare_arrows";
           }
         }
@@ -448,19 +451,19 @@ const Analyzer = {
         return;
       }
       const editable = ["pending", "missing"].includes(view) && window.CW?.AuthState?.read?.().permissions?.write !== false;
-      $("#an-list").innerHTML = `<div class="an-table-scroll"><table class="an-table" role="table"><thead><tr><th scope="col">Item</th><th scope="col">Provider</th><th scope="col">Feature</th><th scope="col">Finding</th>${editable ? '<th scope="col" class="an-mapping-column" aria-label="Edit mapping"></th>' : ''}</tr></thead><tbody>${currentRows.map((row, index) => {
+      $("#an-list").innerHTML = `<div class="an-table-scroll"><table class="an-table" role="table"><thead><tr><th scope="col">${TH("analyzer.item")}</th><th scope="col">${TH("analyzer.provider")}</th><th scope="col">${TH("analyzer.feature")}</th><th scope="col">${TH("analyzer.finding")}</th>${editable ? '<th scope="col" class="an-mapping-column" aria-label="' + TH("analyzer.editMapping") + '"></th>' : ''}</tr></thead><tbody>${currentRows.map((row, index) => {
         const mismatch = missingIndex.get(identity(row));
-        const finding = view === "pending" ? retryLabel(row) : row.type === "missing_peer" || mismatch ? watchDifferenceLabel(mismatch || row, providerName) : episodeGroupLabel(row) || (blockedIndex.has(identity(row)) ? "Blocked" : "No presence issue");
-        return `<tr data-row="${index}" class="${selected === row ? "is-selected" : ""}"><td><button type="button" class="an-item-button" data-row="${index}" aria-pressed="${selected === row}"><strong>${esc(label(row))}</strong><span>${esc([human(row.item_type || row.item?.type || (row.type === "missing_peer" ? "" : row.type)), row.year || row.item?.year].filter(Boolean).join(" · "))}</span></button></td><td data-label="Provider">${esc(providerName(row.provider))}${rowPairName(row) ? `<span class="an-pair-label">${esc(rowPairName(row))}</span>` : ""}</td><td data-label="Feature"><span class="an-feature-badge">${esc(human(row.feature))}</span></td><td data-label="Finding"><span class="an-result-badge ${mismatch || row.type === "missing_peer" ? "an-warn-text" : ""}">${esc(finding)}</span>${savedMappingText(row) ? `<span class="an-pair-label">${esc(savedMappingText(row))}</span>` : ""}</td>${editable ? `<td class="an-mapping-column">${mappingRowActions(row, index)}${row.retry_blocked && row.key ? `<button type="button" class="an-icon-button" data-release="${index}" title="Release retry block" aria-label="Release retry block for ${esc(label(row))}">${icon("lock_open")}</button>` : ''}</td>` : ''}</tr>`;
+        const finding = view === "pending" ? retryLabel(row) : row.type === "missing_peer" || mismatch ? watchDifferenceLabel(mismatch || row, providerName) : episodeGroupLabel(row) || (blockedIndex.has(identity(row)) ? T("analyzer.blocked") : T("analyzer.noPresenceIssue"));
+        return `<tr data-row="${index}" class="${selected === row ? "is-selected" : ""}"><td><button type="button" class="an-item-button" data-row="${index}" aria-pressed="${selected === row}"><strong>${esc(label(row))}</strong><span>${esc([human(row.item_type || row.item?.type || (row.type === "missing_peer" ? "" : row.type)), row.year || row.item?.year].filter(Boolean).join(" · "))}</span></button></td><td data-label="Provider">${esc(providerName(row.provider))}${rowPairName(row) ? `<span class="an-pair-label">${esc(rowPairName(row))}</span>` : ""}</td><td data-label="Feature"><span class="an-feature-badge">${esc(human(row.feature))}</span></td><td data-label="Finding"><span class="an-result-badge ${mismatch || row.type === "missing_peer" ? "an-warn-text" : ""}">${esc(finding)}</span>${savedMappingText(row) ? `<span class="an-pair-label">${esc(savedMappingText(row))}</span>` : ""}</td>${editable ? `<td class="an-mapping-column">${mappingRowActions(row, index)}${row.retry_blocked && row.key ? `<button type="button" class="an-icon-button" data-release="${index}" title="${TH("analyzer.releaseRetryBlock")}" aria-label="Release retry block for ${esc(label(row))}">${icon("lock_open")}</button>` : ''}</td>` : ''}</tr>`;
       }).join("")}</tbody></table></div>`;
     }
     function renderFinding(row, index) {
       const sev = severity(row);
-      const title = row.title || row.message || human(row.type) || "Diagnostic finding";
+      const title = row.title || row.message || human(row.type) || T("analyzer.diagnostic");
       const context = [providerName(row.provider || row.source), row.feature && human(row.feature), row.category && human(row.category)].filter(Boolean).join(" · ");
       const detail = [rowPairName(row) && `Sync pair: ${rowPairName(row)}`, row.message && row.message !== title ? row.message : "", row.item_title, row.key && `Key: ${row.key}`, row.module && `Module: ${row.module}`, row.path && `Path: ${row.path}`, row.error, row.reason, row.count != null && `Items affected: ${row.count}`, row.source && row.target && `${row.source} → ${row.target}`, row.show_delta && `Shows: ${row.show_delta.source} at source / ${row.show_delta.target} at destination`, row.show_gap && `Source-only shows: ${row.show_gap.source_only}; destination-only shows: ${row.show_gap.target_only}`, row.missing?.length && `Missing IDs: ${row.missing.join(", ")}`, row.id_name && `ID field: ${row.id_name} (${row.id_value ?? ""})`, row.watermark_key && `Watermark: ${row.watermark_key}`, row.value != null && `Value: ${row.value}`].filter(Boolean);
       const items = affectedLabels(row);
-      return `<article class="an-finding an-severity-${sev}"><div class="an-finding-icon">${icon(sev === "error" ? "error" : sev === "warn" ? "warning" : "info")}</div><div class="an-finding-content"><div class="an-finding-top"><span class="an-severity-badge">${sev === "error" ? "Error" : sev === "warn" ? "Warning" : "Information"}</span><span>${esc(context)}</span></div><h3>${esc(title)}</h3>${detail.map(value => `<p>${esc(value)}</p>`).join("")}${items.length ? `<details class="an-affected"><summary>Affected items (${Number(row.count) > items.length ? `showing ${items.length.toLocaleString()} of ${Number(row.count).toLocaleString()}` : items.length.toLocaleString()})</summary><ul>${items.slice(0, 25).map(value => `<li>${esc(value)}</li>`).join("")}</ul>${items.length > 25 ? `<button type="button" class="an-button" data-more="${index}" data-shown="25">Show more</button>` : ""}</details>` : ""}${row.type === "history_episode_identity_conflict" && window.CW?.AuthState?.read?.().permissions?.write !== false ? array(row.shows).map((show, at) => `<button type="button" class="an-button" data-fix-numbering="${index}" data-show="${at}">Fix matching${show.title ? ` · ${esc(show.title)}` : ""}</button>`).join("") : ""}${row.type === "blocked_manual" && row.block && window.CW?.AuthState?.read?.().permissions?.write !== false ? `<button type="button" class="an-button" data-release="${index}">${icon(row.block.mapping_key ? "link_off" : "lock_open")}<span>${row.block.mapping_key ? "Remove mapping" : "Release block"}</span></button>` : ""}${sev === "error" || sev === "warn" ? aiAsk(`Explain this CrossWatch system health finding: ${title}.${context ? ` ${context}.` : ""}${detail.filter(Boolean).slice(0, 4).map(value => ` ${value}.`).join("")} Why is this happening and how do I fix it?`) : ""}<span class="an-finding-code">${esc(row.type)}</span></div></article>`;
+      return `<article class="an-finding an-severity-${sev}"><div class="an-finding-icon">${icon(sev === "error" ? "error" : sev === "warn" ? "warning" : "info")}</div><div class="an-finding-content"><div class="an-finding-top"><span class="an-severity-badge">${TH(sev === "error" ? "analyzer.sev.error" : sev === "warn" ? "analyzer.sev.warning" : "analyzer.sev.info")}</span><span>${esc(context)}</span></div><h3>${esc(title)}</h3>${detail.map(value => `<p>${esc(value)}</p>`).join("")}${items.length ? `<details class="an-affected"><summary>${Number(row.count) > items.length ? TH("analyzer.affectedOf", {shown: items.length, total: Number(row.count)}) : TH("analyzer.affected", {count: items.length})}</summary><ul>${items.slice(0, 25).map(value => `<li>${esc(value)}</li>`).join("")}</ul>${items.length > 25 ? `<button type="button" class="an-button" data-more="${index}" data-shown="25">${TH("analyzer.showMore")}</button>` : ""}</details>` : ""}${row.type === "history_episode_identity_conflict" && window.CW?.AuthState?.read?.().permissions?.write !== false ? array(row.shows).map((show, at) => `<button type="button" class="an-button" data-fix-numbering="${index}" data-show="${at}">${TH("analyzer.fixMatching")}${show.title ? ` · ${esc(show.title)}` : ""}</button>`).join("") : ""}${row.type === "blocked_manual" && row.block && window.CW?.AuthState?.read?.().permissions?.write !== false ? `<button type="button" class="an-button" data-release="${index}">${icon(row.block.mapping_key ? "link_off" : "lock_open")}<span>${TH(row.block.mapping_key ? "analyzer.removeMapping" : "analyzer.releaseBlock")}</span></button>` : ""}${sev === "error" || sev === "warn" ? aiAsk(`Explain this CrossWatch system health finding: ${title}.${context ? ` ${context}.` : ""}${detail.filter(Boolean).slice(0, 4).map(value => ` ${value}.`).join("")} Why is this happening and how do I fix it?`) : ""}<span class="an-finding-code">${esc(row.type)}</span></div></article>`;
     }
     function filterRows() {
       return filterResults(sourceRows(), {
@@ -552,15 +555,15 @@ const Analyzer = {
         const ids = Object.entries(row.ids || row.item?.ids || {});
         const provider = providerName(row.provider);
         const diagnosis = { ...row, ...mismatch, ...detail, retry_blocked: row.retry_blocked || mismatch?.retry_blocked || array(detail.hints).some(hint => hint.kind === "blackbox") };
-        const presence = view === "pending" ? retryLabel(row) : blockedIndex.has(identity(row)) ? "Blocked by a saved rule" : mismatch ? watchDifferenceLabel(diagnosis, providerName) : episodeGroupLabel(diagnosis) || "Present in the saved snapshot";
+        const presence = view === "pending" ? retryLabel(row) : blockedIndex.has(identity(row)) ? T("analyzer.blockedRule") : mismatch ? watchDifferenceLabel(diagnosis, providerName) : episodeGroupLabel(diagnosis) || T("analyzer.presentSnapshot");
         const limitNotes = targets.map(target => {
           const provider = status.providers?.[String(target).split("@")[0]];
           const key = row.feature === "collection" ? "collection" : "watchlist";
           const limit = ["watchlist", "collection"].includes(row.feature) ? provider?.limits?.[key] : null;
-          return limit && limit.item_count > 0 && limit.used >= limit.item_count ? `${providerName(target)} ${human(key)} limit reached (${limit.used}/${limit.item_count}). Free up space or review the provider account limit.` : "";
+          return limit && limit.item_count > 0 && limit.used >= limit.item_count ? T("analyzer.limitReached", {provider: providerName(target), feature: human(key), used: String(limit.used), total: String(limit.item_count)}) : "";
         }).filter(Boolean);
         const ask = view !== "all" || mismatch ? aiAsk(`Explain this analyzer finding for ${label(row)} (${[human(row.feature), provider, rowPairName(row) && `sync pair ${rowPairName(row)}`, row.key && `key ${row.key}`].filter(Boolean).join(", ")}): ${presence}.${reasons.slice(0, 3).map(value => ` ${value}.`).join("")} Why is this happening and what should I do?`) : "";
-        $("#an-detail").innerHTML = `<div class="an-detail-heading"><span class="an-eyebrow">ITEM DETAILS</span><button type="button" class="an-icon-button" id="an-close-detail" aria-label="Close item details">${icon("close")}<span class="an-mobile-back">Back to results</span></button></div><h3>${esc(label(row))}</h3><p class="an-detail-meta">${esc([provider, human(row.feature), row.year || row.item?.year].filter(Boolean).join(" · "))}</p>${rowPairName(row) ? `<p class="an-detail-meta">Sync pair: ${esc(rowPairName(row))}</p>` : ""}<div class="an-detail-status">${icon(mismatch || view === "pending" ? "info" : "check_circle")}<strong>${esc(presence)}</strong></div>${reasons.length || limitNotes.length ? `<div class="an-detail-reasons"><h4>What happened</h4>${[...limitNotes, ...reasons].map(reason => `<p>${esc(reason)}</p>`).join("")}</div>` : mismatch ? '<p class="an-muted">CrossWatch found this item in the source snapshot but could not confirm it at the destination.</p>' : ""}${matchDetailsHTML(row, detail.hints)}${savedMappingText(row) ? `<div class="an-detail-reasons"><h4>Saved mapping</h4><p>${esc(savedMappingText(row))}</p><p>This correction is saved. Run the pair again to apply it; the snapshot finding reflects the last sync.</p></div>` : ""}${watchDifferenceDetails(diagnosis.watch_time_differences, providerName)}${error ? `<p class="an-detail-error" role="alert">${esc(error)}</p><button type="button" class="an-button" id="an-retry-detail">Retry details</button>` : ""}${mismatch || view === "pending" ? `<div class="an-next-step"><h4>Next step</h4><p>${esc(nextStepText(diagnosis))}</p></div>` : ""}${ids.length ? `<details class="an-identifiers"><summary>Item IDs (${ids.length})</summary><dl>${ids.map(([key, value]) => `<div><dt>${esc(key)}</dt><dd>${esc(value)}</dd></div>`).join("")}</dl></details>` : ""}${row.key ? `<p class="an-item-key">${esc(row.key)}</p>` : ""}${ask}`;
+        $("#an-detail").innerHTML = `<div class="an-detail-heading"><span class="an-eyebrow">${TH("analyzer.detailsKicker")}</span><button type="button" class="an-icon-button" id="an-close-detail" aria-label="${TH("analyzer.closeDetails")}">${icon("close")}<span class="an-mobile-back">${TH("analyzer.backResults")}</span></button></div><h3>${esc(label(row))}</h3><p class="an-detail-meta">${esc([provider, human(row.feature), row.year || row.item?.year].filter(Boolean).join(" · "))}</p>${rowPairName(row) ? `<p class="an-detail-meta">${TH("analyzer.syncPairValue", {name: rowPairName(row)})}</p>` : ""}<div class="an-detail-status">${icon(mismatch || view === "pending" ? "info" : "check_circle")}<strong>${esc(presence)}</strong></div>${reasons.length || limitNotes.length ? `<div class="an-detail-reasons"><h4>${TH("analyzer.whatHappened")}</h4>${[...limitNotes, ...reasons].map(reason => `<p>${esc(reason)}</p>`).join("")}</div>` : mismatch ? '<p class="an-muted">' + TH("analyzer.notConfirmed") + '</p>' : ""}${matchDetailsHTML(row, detail.hints)}${savedMappingText(row) ? `<div class="an-detail-reasons"><h4>${TH("analyzer.savedMapping")}</h4><p>${esc(savedMappingText(row))}</p><p>${TH("analyzer.savedMappingHint")}</p></div>` : ""}${watchDifferenceDetails(diagnosis.watch_time_differences, providerName)}${error ? `<p class="an-detail-error" role="alert">${esc(error)}</p><button type="button" class="an-button" id="an-retry-detail">${TH("analyzer.retryDetails")}</button>` : ""}${mismatch || view === "pending" ? `<div class="an-next-step"><h4>${TH("analyzer.nextStep")}</h4><p>${esc(nextStepText(diagnosis))}</p></div>` : ""}${ids.length ? `<details class="an-identifiers"><summary>${TH("analyzer.itemIds", {count: ids.length})}</summary><dl>${ids.map(([key, value]) => `<div><dt>${esc(key)}</dt><dd>${esc(value)}</dd></div>`).join("")}</dl></details>` : ""}${row.key ? `<p class="an-item-key">${esc(row.key)}</p>` : ""}${ask}`;
       };
       render(detailCache.get(identity(row)));
       if (!mismatch || detailCache.has(identity(row))) return;
@@ -572,7 +575,7 @@ const Analyzer = {
         detailCache.set(identity(row), detail);
         render(detail);
       } catch (error) {
-        if (!controller.signal.aborted) render({}, `Could not load the explanation: ${error.message}`);
+        if (!controller.signal.aborted) render({}, T("analyzer.explainFailed", {error: error.message}));
       }
     }
     async function analyzeItems() {
@@ -622,7 +625,7 @@ const Analyzer = {
         status = liveStatus || {};
         allTotal = Number(snapshot.total || 0);
         analysisState = "ready";
-        checked = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+        checked = new Date().toLocaleTimeString(I18N()?.locale || [], { hour: "2-digit", minute: "2-digit" });
         refreshResults();
       } catch (error) {
         if (controller.signal.aborted || lifetime.signal.aborted) return;
@@ -668,8 +671,8 @@ const Analyzer = {
       const pairId = row.pair_id || $("#an-pair").value;
       const notice = $("#an-mapping-notice");
       notice.hidden = false;
-      if (!pairId) { notice.textContent = "Select a sync pair before editing this mapping."; return; }
-      notice.textContent = "Opening mapping…";
+      if (!pairId) { notice.textContent = T("analyzer.selectPairEdit"); return; }
+      notice.textContent = T("analyzer.openingMapping");
       const controller = mappingController = new AbortController();
       button.disabled = true;
       const finish = () => {
@@ -691,7 +694,7 @@ const Analyzer = {
             if (!lifetime.signal.aborted) {
               analyzeItems();
               notice.hidden = false;
-              notice.textContent = "Mapping removed. Future syncs will use the remaining rules.";
+              notice.textContent = T("analyzer.mappingRemoved");
             }
           },
           onSaved: () => {
@@ -699,17 +702,17 @@ const Analyzer = {
             if (!lifetime.signal.aborted) analyzeItems();
             if (!lifetime.signal.aborted) {
               notice.hidden = false;
-              notice.textContent = "Mapping saved. Run the pair again to sync this item, then analyze to update the results.";
+              notice.textContent = T("analyzer.mappingSavedRun");
               if (row.retry_blocked) {
                 savedRow = { ...row, pair_id: pairId };
-                notice.innerHTML = `Mapping saved. Automatic retries are still blocked for this item. <button type="button" class="an-button" data-release-saved>${icon("lock_open")}<span>Release retry block</span></button>`;
+                notice.innerHTML = `${TH("analyzer.savedStillBlocked")} <button type="button" class="an-button" data-release-saved>${icon("lock_open")}<span>${TH("analyzer.releaseRetry")}</span></button>`;
               }
             }
           },
         });
         if (!controller.signal.aborted) notice.hidden = true;
       } catch (error) {
-        if (!controller.signal.aborted) notice.textContent = error.message || "Could not open mapping. Try again.";
+        if (!controller.signal.aborted) notice.textContent = error.message || T("analyzer.openMappingFailed");
         finish();
       }
     }
@@ -719,18 +722,18 @@ const Analyzer = {
       if (!rule) return;
       const scope = rule.pair_id ? "this pair" : "all pairs using this source instance";
       const name = rule.corrected?.title || rule.key;
-      if (!(await (window.CW?.MobileUI?.ask || window.confirm)(`Remove the saved mapping for ${name} from ${scope}? Its automatic original-item block will also be removed. Other mappings may apply again. This does not undo synced media changes.`))) return;
+      if (!(await (window.CW?.MobileUI?.ask || window.confirm)(T("analyzer.removeConfirm", {name, scope})))) return;
       const notice = $("#an-mapping-notice");
       releasing = true; button.disabled = true;
       try {
         const identity = {...Object.fromEntries(["provider", "instance", "feature", "key", "pair_id"].map(key => [key, rule[key]])), entry_type:"mapping"};
         const response = await fetch("/api/editor/mappings/delete", {method:"POST", credentials:"same-origin", headers:{"Content-Type":"application/json"}, body:JSON.stringify(identity)});
         const data = await response.json();
-        if (!response.ok || data.ok === false) throw new Error(typeof data.detail === "string" ? data.detail : "Could not remove mapping.");
+        if (!response.ok || data.ok === false) throw new Error(typeof data.detail === "string" ? data.detail : T("analyzer.removeFailed"));
         if (!lifetime.signal.aborted) {
           await analyzeItems();
           notice.hidden = false;
-          notice.textContent = "Mapping removed. Future syncs will use the remaining rules.";
+          notice.textContent = T("analyzer.mappingRemoved");
         }
       } catch (error) {
         if (!lifetime.signal.aborted) { notice.hidden = false; notice.textContent = error.message; }
@@ -742,11 +745,11 @@ const Analyzer = {
       const pairId = row.pair_id || $("#an-pair").value;
       const notice = $("#an-mapping-notice");
       notice.hidden = false;
-      if (!pairId) { notice.textContent = "Select a sync pair before releasing this item."; return; }
-      if (rule && row.block?.mapping_key && !(await (window.CW?.MobileUI?.ask || window.confirm)("Remove the saved mapping for this item?\n\nThis undoes the correction and lifts the block on the original item."))) { notice.hidden = true; return; }
+      if (!pairId) { notice.textContent = T("analyzer.selectPairRelease"); return; }
+      if (rule && row.block?.mapping_key && !(await (window.CW?.MobileUI?.ask || window.confirm)(T("analyzer.removeItemConfirm")))) { notice.hidden = true; return; }
       releasing = true;
       button.disabled = true;
-      notice.textContent = "Releasing…";
+      notice.textContent = T("analyzer.releasing");
       try {
         const response = await fetch("/api/analyzer/release", {
           method: "POST", credentials: "same-origin", cache: "no-store",
@@ -755,14 +758,14 @@ const Analyzer = {
           body: JSON.stringify({ pair_id: pairId, provider: row.provider, feature: row.feature, key: row.key, kind: rule ? "rule" : "retry" }),
         });
         const data = await response.json().catch(() => ({}));
-        if (!response.ok || data.ok === false) throw new Error(data.detail || data.error || "Could not release this item.");
+        if (!response.ok || data.ok === false) throw new Error(data.detail || data.error || T("analyzer.releaseFailed"));
         savedRow = null;
-        notice.textContent = data.released === "mapping" ? "Mapping removed. Run the pair again to sync the original item."
-          : data.released === "rule" ? "Block released. Run the pair again to sync this item."
-          : "Retry block released. Run the pair again to retry this item. It is blocked again if the same failure repeats.";
+        notice.textContent = data.released === "mapping" ? T("analyzer.releasedMapping")
+          : data.released === "rule" ? T("analyzer.releasedRule")
+          : T("analyzer.releasedRetry");
         await analyzeItems();
       } catch (error) {
-        if (!lifetime.signal.aborted) notice.textContent = error.message || "Could not release this item. Try again.";
+        if (!lifetime.signal.aborted) notice.textContent = error.message || T("analyzer.releaseFailedRetry");
         if (button.isConnected) button.disabled = false;
       } finally {
         releasing = false;
@@ -798,7 +801,7 @@ const Analyzer = {
       } catch (error) {
         if (lifetime.signal.aborted || sequence !== scopeSequence) return;
         analysisState = "error";
-        analysisError = `Could not load sync pairs. ${error.message}`;
+        analysisError = T("analyzer.pairsFailed", {error: error.message});
         renderList();
       }
     }
@@ -884,7 +887,7 @@ for (const name of ["cw:overview-profile-changed", "cw:auth-state-changed"]) {
     Analyzer.unmount();
     if (document.documentElement.dataset.tab !== "analyzer") return;
     Analyzer.mount(host).catch(() => {
-      host.innerHTML = '<div class="cw-page-load-error">Analyzer failed to load. Refresh the page and try again.</div>';
+      host.innerHTML = `<div class="cw-page-load-error">${TH("analyzer.pageLoadFailed")}</div>`;
     });
   });
 }

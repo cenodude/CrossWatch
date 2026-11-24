@@ -2,6 +2,8 @@
 // CrossWatch - Kitsu account authentication UI
 // Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 (function () {
+  const T = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.t?.(key, vars) ?? key;
+  const TH = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.html?.(key, vars) ?? key;
   if (window._kitsuAuthPatched) return;
   window._kitsuAuthPatched = true;
   const Shared = window.CW.AuthShared;
@@ -28,10 +30,10 @@
     for (const id of ["kitsu_enable_mapping", "kitsu_dismiss_mapping"]) {
       if (el(id)) el(id).disabled = mappingBusy;
     }
-    if (el("kitsu_enable_mapping")) el("kitsu_enable_mapping").textContent = mappingBusy ? "Enabling..." : "Enable Anime ID Mapping";
+    if (el("kitsu_enable_mapping")) el("kitsu_enable_mapping").textContent = mappingBusy ? T("connections.auth.kitsu.enabling") : T("connections.auth.enableMapping");
     const state = el("kitsu_mapping_recommendation_state");
     if (state) {
-      state.textContent = mappingBusy ? "Downloading mapping database if needed..." : error;
+      state.textContent = mappingBusy ? T("connections.auth.downloadingMapping") : error;
       state.classList.toggle("hidden", !mappingBusy && !error);
     }
   }
@@ -42,11 +44,11 @@
     try {
       const r = await Shared.fetchJSON("/api/anime-mapping/status", { cache: "no-store" });
       if (current !== mappingRequest) return;
-      if (!r.ok) throw new Error("Could not check Anime ID Mapping status");
-      mappingStatus = { ...r.data, error: r.data?.error ? r.data.message || "Could not load Anime ID Mapping" : "" };
+      if (!r.ok) throw new Error(T("connections.auth.checkMappingFailed"));
+      mappingStatus = { ...r.data, error: r.data?.error ? r.data.message || T("connections.auth.loadMappingFailed") : "" };
     } catch (error) {
       if (current !== mappingRequest) return;
-      mappingStatus = { ...mappingStatus, error: error.message || "Could not check Anime ID Mapping status" };
+      mappingStatus = { ...mappingStatus, error: error.message || T("connections.auth.checkMappingFailed") };
     }
     renderMappingRecommendation();
   }
@@ -59,7 +61,7 @@
     try {
       const r = await Shared.fetchJSON("/api/anime-mapping/settings", { method: "POST", cache: "no-store",
         headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled: true }) });
-      if (!r.ok || r.data?.ok === false) throw new Error(r.data?.message || r.data?.error || "Could not enable Anime ID Mapping");
+      if (!r.ok || r.data?.ok === false) throw new Error(r.data?.message || r.data?.error || T("connections.auth.enableMappingFailed"));
       const cfg = window.CW?.Cache?.getCfg?.() || window._cfgCache || {};
       cfg.anime_mapping = r.data?.anime_mapping || { ...cfg.anime_mapping, enabled: true };
       window._cfgCache = cfg;
@@ -67,9 +69,9 @@
       mappingStatus = { ...r.data?.status, enabled: true, error: r.data?.bootstrap_error || "" };
       try { window.cwAnimeMappingRenderStatus?.(mappingStatus); } catch {}
       try { await window.cwAnimeMappingRefreshStatus?.(); } catch {}
-      Shared.notify(mappingStatus.error || "Anime ID Mapping enabled");
+      Shared.notify(mappingStatus.error || T("connections.auth.mappingEnabled"));
     } catch (error) {
-      mappingStatus = { ...mappingStatus, error: error.message || "Could not enable Anime ID Mapping" };
+      mappingStatus = { ...mappingStatus, error: error.message || T("connections.auth.enableMappingFailed") };
     } finally {
       mappingBusy = false;
       renderMappingRecommendation();
@@ -88,7 +90,7 @@
   function setConn(ok, message) {
     connected = !!ok;
     Shared.setConnectLocked("kitsu_connect", ok);
-    Shared.setStatus("kitsu_msg", ok, message || (ok ? "Connected" : "Not connected"));
+    Shared.setStatus("kitsu_msg", ok, message || (ok ? T("connections.auth.connected") : T("connections.auth.notConnected")));
     renderMappingRecommendation();
     if (connected) void refreshMappingRecommendation();
   }
@@ -100,21 +102,21 @@
     profile.ensureUI(() => { void hydrate(); });
     clearCredentials();
     const staged = pending.get(profile.getInstance());
-    if (staged) { setConn(true, "Connected - save settings to apply"); return; }
+    if (staged) { setConn(true, T("connections.auth.connectedSave")); return; }
     try {
       const r = await Shared.fetchJSON(profile.api("/api/kitsu/status"), { cache: "no-store" });
-      if (current === generation) setConn(!!r.data?.connected, r.data?.reauth_required ? "Reconnect Kitsu" : undefined);
+      if (current === generation) setConn(!!r.data?.connected, r.data?.reauth_required ? T("connections.auth.kitsu.reconnect") : undefined);
     } catch { if (current === generation) setConn(false); }
   }
 
   async function connect() {
     const username = String(el("kitsu_username")?.value || "").trim();
     let password = String(el("kitsu_password")?.value || "");
-    if (!username || !password) { Shared.notify("Enter your Kitsu email or username and password"); return; }
+    if (!username || !password) { Shared.notify(T("connections.auth.kitsu.enterCreds")); return; }
     const instance = profile.getInstance();
     const current = ++generation;
     const url = profile.api("/api/kitsu/connect");
-    setConn(false, "Connecting...");
+    setConn(false, T("connections.auth.connecting"));
     try {
       const request = Shared.fetchJSON(url, { method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ username, password }), cache: "no-store" });
@@ -122,12 +124,12 @@
       clearCredentials();
       const r = await request;
       if (current !== generation || instance !== profile.getInstance()) return;
-      if (!r.ok || !r.data?.ok) throw new Error(r.data?.error || "Kitsu connection failed");
+      if (!r.ok || !r.data?.ok) throw new Error(r.data?.error || T("connections.auth.kitsu.failed"));
       if (r.data.saved) { pending.delete(instance); setConn(true); return; }
       pending.set(instance, r.data.connection);
-      setConn(true, "Connected - save settings to apply");
+      setConn(true, T("connections.auth.connectedSave"));
     } catch (error) {
-      if (current === generation) setConn(false, error.message || "Kitsu connection failed");
+      if (current === generation) setConn(false, error.message || T("connections.auth.kitsu.failed"));
     } finally { password = ""; if (current === generation) clearCredentials(); }
   }
 
@@ -138,7 +140,7 @@
     try {
       const r = await Shared.fetchJSON(profile.api("/api/kitsu/disconnect"), { method: "POST", cache: "no-store" });
       if (Shared.reportProviderUsage(r)) return;
-      if (!r.ok || r.data?.ok === false) throw new Error("Kitsu disconnect failed");
+      if (!r.ok || r.data?.ok === false) throw new Error(T("connections.auth.kitsu.disconnectFailed"));
       setConn(false);
       window.dispatchEvent(new CustomEvent("auth-changed"));
       await window.CW?.ProvidersUI?.refreshAuthPresentation?.(true);

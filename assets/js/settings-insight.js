@@ -3,6 +3,8 @@
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 
 (function (w, d) {
+  const T = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.t?.(key, vars) ?? key;
+  const TH = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.html?.(key, vars) ?? key;
   'use strict';
   if (w.__CW_SETTINGS_INSIGHT_STARTED__) return;
   w.__CW_SETTINGS_INSIGHT_STARTED__ = 1;
@@ -42,7 +44,7 @@
     const n = Number(v);
     if (Number.isFinite(n) && n <= 0) return '—';
     const dt = new Date(Number.isFinite(n) ? (n < 1e10 ? n * 1000 : n) : v);
-    return isNaN(+dt) ? '—' : dt.toLocaleString(undefined, { hour12: false });
+    return isNaN(+dt) ? '—' : dt.toLocaleString((w.CW?.I18n || w.__cwI18n)?.locale, { hour12: false });
   };
 
   function ensureCard() {
@@ -105,21 +107,21 @@
 
   function relTime(epoch) {
     const n = Number(epoch || 0);
-    if (!n) return 'No recent sync yet';
+    if (!n) return T("settings.insight.noRecent");
     if (typeof w.relTimeFromEpoch === 'function') return w.relTimeFromEpoch(n);
     const diff = Math.max(0, Math.floor(Date.now() / 1000) - n);
-    if (diff < 60) return 'just now';
-    if (diff < 3600) return `${Math.floor(diff / 60)} minutes ago`;
-    if (diff < 86400) return `${Math.floor(diff / 3600)} hours ago`;
-    return `${Math.floor(diff / 86400)} days ago`;
+    if (diff < 60) return T("settings.insight.justNow");
+    if (diff < 3600) return T('settings.insight.minutesAgo', {count: Math.floor(diff / 60)});
+    if (diff < 86400) return T('settings.insight.hoursAgo', {count: Math.floor(diff / 3600)});
+    return T('settings.insight.daysAgo', {count: Math.floor(diff / 86400)});
   }
 
   function dateTimeCompact(v) {
-    if (v === undefined || v === null || v === '') return 'Not scheduled';
+    if (v === undefined || v === null || v === '') return T("settings.insight.notScheduled");
     const n = Number(v);
-    if (Number.isFinite(n) && n <= 0) return 'Not scheduled';
+    if (Number.isFinite(n) && n <= 0) return T("settings.insight.notScheduled");
     const dt = new Date(Number.isFinite(n) ? (n < 1e10 ? n * 1000 : n) : v);
-    return isNaN(+dt) ? 'Not scheduled' : dt.toLocaleString(undefined, {
+    return isNaN(+dt) ? T("settings.insight.notScheduled") : dt.toLocaleString((w.CW?.I18n || w.__cwI18n)?.locale, {
       day: '2-digit',
       month: 'short',
       year: 'numeric',
@@ -146,16 +148,18 @@
     const lastEpoch = Math.max(0, Math.floor(Number(data?.last_sync_at || 0))) || 0;
     const watcherOn = !!(scrob.enabled && scrob.sources?.watcher);
     const webhookOn = !!(scrob.enabled && scrob.sources?.webhook);
-    const watcherState = watcherOn ? (scrob.watcher?.alive ? 'Listening' : 'Configured') : 'Inactive';
-    const webhookState = webhookOn ? 'Active' : 'Inactive';
-    const watcherStatusClass = watcherState === 'Listening' ? 'is-good' : 'is-inactive is-warn';
-    const webhookStatusClass = webhookState === 'Active' ? 'is-good' : 'is-inactive is-warn';
+    const watcherKey = watcherOn ? (scrob.watcher?.alive ? 'listening' : 'configured') : 'inactive';
+    const webhookKey = webhookOn ? 'active' : 'inactive';
+    const watcherState = T(`settings.insight.state.${watcherKey}`);
+    const webhookState = T(`settings.insight.state.${webhookKey}`);
+    const watcherStatusClass = watcherKey === 'listening' ? 'is-good' : 'is-inactive is-warn';
+    const webhookStatusClass = webhookKey === 'active' ? 'is-good' : 'is-inactive is-warn';
     const pairHealthText = pairTotal
-      ? `${pairActive} sync pairs active${pairDisabled ? `, ${pairDisabled} disabled` : ''}`
-      : 'No sync pairs configured';
+      ? `${T('settings.insight.pairsActive', {count: pairActive})}${pairDisabled ? `, ${T('settings.insight.disabledN', {n: pairDisabled})}` : ''}`
+      : T("settings.insight.noPairsConfigured");
     const nextPairText = pairTotal
-      ? (pairDisabled ? `${pairActive} active of ${pairTotal} pairs` : plural(pairActive, 'active pair'))
-      : 'No pairs';
+      ? (pairDisabled ? T('settings.insight.activeOf', {active: pairActive, total: pairTotal}) : T('settings.insight.activePairs', {count: pairActive}))
+      : T("settings.insight.noPairs");
     const healthy = providerCount > 0 && metaReady && (pairActive > 0 || scrob.enabled || sched.enabled);
     const ready = {
       auth: providerCount > 0,
@@ -164,37 +168,37 @@
       scheduling: !!(scrob.enabled || sched.enabled)
     };
     const next = !ready.auth
-      ? { target: 'auth', title: 'Connect providers', copy: 'Add your first media server or tracker.' }
+      ? { target: 'auth', title: T("settings.insight.connect"), copy: T("settings.insight.connectSub") }
       : !ready.meta
-        ? { target: 'meta', title: 'Configure metadata', copy: 'Add TMDb Metadata support.' }
+        ? { target: 'meta', title: T("settings.insight.meta"), copy: T("settings.insight.metaSub") }
         : !ready.sync
-          ? { target: 'sync', title: 'Create sync pairs', copy: 'Connect two services with a sync route.' }
+          ? { target: 'sync', title: T("settings.insight.pairs"), copy: T("settings.insight.pairsSub") }
           : !ready.scheduling
-            ? { target: 'scheduling', title: 'Enable automation', copy: 'Turn on scheduling or scrobbler.' }
+            ? { target: 'scheduling', title: T("settings.insight.automation"), copy: T("settings.insight.automationSub") }
             : { target: 'scheduling', title: dateTimeCompact(sched.nextRun), copy: nextPairText };
     return `
       <section class="si-op-card si-health ${healthy ? 'is-health' : 'is-health is-warn'}">
-        <div class="si-op-head"><span class="material-symbols-rounded">${healthy ? 'verified_user' : 'shield'}</span><strong>System health</strong></div>
-        <div class="si-health-main"><span class="si-health-check"><span class="material-symbols-rounded">${healthy ? 'check' : 'priority_high'}</span></span><div class="si-health-title">${healthy ? 'All systems operational' : 'Setup needs attention'}</div></div>
+        <div class="si-op-head"><span class="material-symbols-rounded">${healthy ? 'verified_user' : 'shield'}</span><strong>${TH("settings.insight.health")}</strong></div>
+        <div class="si-health-main"><span class="si-health-check"><span class="material-symbols-rounded">${healthy ? 'check' : 'priority_high'}</span></span><div class="si-health-title">${healthy ? T("settings.insight.operational") : T("settings.insight.attention")}</div></div>
         <div class="si-facts">
-          ${fact('groups', `${providerCount} providers connected`, providerCount > 0)}
+          ${fact('groups', T('settings.insight.providersConnected', {count: providerCount}), providerCount > 0)}
           ${fact('link', pairHealthText, pairActive > 0)}
-          ${fact('description', metaReady ? 'Metadata ready' : 'Metadata not ready', metaReady)}
-          ${fact('schedule', lastEpoch ? `Last successful sync, ${relTime(lastEpoch)}` : 'Last successful sync not available', !!lastEpoch)}
+          ${fact('description', metaReady ? T("settings.insight.metaReady") : T("settings.insight.metaNotReady"), metaReady)}
+          ${fact('schedule', lastEpoch ? T('settings.insight.lastSync', {when: relTime(lastEpoch)}) : T('settings.insight.lastSyncNone'), !!lastEpoch)}
         </div>
       </section>
       <section class="si-op-card">
-        <div class="si-op-head"><span class="material-symbols-rounded">rocket_launch</span><strong>Next action</strong></div>
+        <div class="si-op-head"><span class="material-symbols-rounded">rocket_launch</span><strong>${TH("settings.insight.nextAction")}</strong></div>
         <button type="button" class="si-next-main" data-target="${esc(next.target)}">
           <span class="si-next-icon"><span class="material-symbols-rounded">${healthy ? 'calendar_month' : 'check_circle'}</span></span>
-          <span><span class="si-next-label">${healthy ? 'Next synchronization' : 'Complete setup'}</span><strong class="si-next-time">${esc(next.title)}</strong><small class="si-next-sub">${esc(next.copy)}</small></span>
+          <span><span class="si-next-label">${healthy ? T("settings.insight.nextSync") : T("settings.insight.complete")}</span><strong class="si-next-time">${esc(next.title)}</strong><small class="si-next-sub">${esc(next.copy)}</small></span>
           <span class="material-symbols-rounded si-next-chev" aria-hidden="true">chevron_right</span>
         </button>
         <div class="si-mini-grid">
-          <div class="si-mini-status ${watcherStatusClass}"><span class="material-symbols-rounded">sensors</span><span class="si-mini-copy"><strong>Watcher</strong><small>${esc(watcherState)}</small></span></div>
-          <div class="si-mini-status ${webhookStatusClass}"><span class="material-symbols-rounded">rss_feed</span><span class="si-mini-copy"><strong>Webhook</strong><small>${esc(webhookState)}</small></span></div>
+          <div class="si-mini-status ${watcherStatusClass}"><span class="material-symbols-rounded">sensors</span><span class="si-mini-copy"><strong>${TH("settings.insight.watcher")}</strong><small>${esc(watcherState)}</small></span></div>
+          <div class="si-mini-status ${webhookStatusClass}"><span class="material-symbols-rounded">rss_feed</span><span class="si-mini-copy"><strong>${TH("settings.insight.webhook")}</strong><small>${esc(webhookState)}</small></span></div>
         </div>
-        <button type="button" class="si-action" data-target="scheduling">View schedule <span class="material-symbols-rounded">arrow_forward</span></button>
+        <button type="button" class="si-action" data-target="scheduling">${TH("settings.insight.viewSchedule")} <span class="material-symbols-rounded">arrow_forward</span></button>
       </section>
     `;
   }

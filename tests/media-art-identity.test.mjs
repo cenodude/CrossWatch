@@ -5,6 +5,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import vm from 'node:vm';
+import './i18n-vm-setup.mjs';
 
 const metadataSource = readFileSync(new URL('../assets/helpers/media-meta.js', import.meta.url), 'utf8');
 const dashboardSource = readFileSync(new URL('../assets/js/dashboard-widgets.js', import.meta.url), 'utf8');

@@ -15,6 +15,7 @@ from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Resp
 from starlette.staticfiles import StaticFiles
 from api.versionAPI import CURRENT_VERSION
 from cw_platform.access_policy import clean_managed_permissions, managed_profile_instances, managed_settings_access, provider_display_key, reconnect_connection_keys
+from cw_platform import i18n
 
 __all__ = ["register_assets_and_favicons", "register_ui_root", "get_index_html"]
 
@@ -67,6 +68,14 @@ class _AssetStaticFiles(StaticFiles):
 def register_assets_and_favicons(app: FastAPI, root: Path) -> None:
     assets_dir = root / "assets"
     assets_dir.mkdir(parents=True, exist_ok=True)
+
+    @app.get("/assets/locales/{code}.js", include_in_schema=False, tags=["ui"])
+    def locale_bundle(code: str) -> Response:
+        lang = i18n.language_or_none(code)
+        if lang is None:
+            return Response(status_code=404, content="", media_type="text/javascript", headers={"Cache-Control": "no-store"})
+        return Response(content=i18n.bundle_js(lang), media_type="text/javascript", headers={"Cache-Control": "no-cache"})
+
     app.mount("/assets", _AssetStaticFiles(directory=str(assets_dir)), name="assets")
 
     def asset_response(name: str, fallback: str, media_type: str, **headers: str) -> Response:
@@ -113,7 +122,7 @@ def register_ui_root(app: FastAPI) -> None:
             if perms.get("write") and request.query_params.get("main") != "1":
                 return RedirectResponse(url="/hub", status_code=302)
         include_admin = not (isinstance(user, dict) and user.get("is_admin") is False)
-        return HTMLResponse(get_index_html(include_admin=include_admin, user=user), headers={"Cache-Control": "no-store"})
+        return HTMLResponse(get_index_html(include_admin=include_admin, user=user, language=i18n.request_language(request, user)), headers={"Cache-Control": "no-store"})
 
     @app.get("/hub", include_in_schema=False, tags=["ui"])
     @app.get("/profile", include_in_schema=False, tags=["ui"])
@@ -130,7 +139,8 @@ def register_ui_root(app: FastAPI) -> None:
                 user = None
         if not isinstance(user, dict):
             return RedirectResponse(url="/login", status_code=302)
-        return HTMLResponse(get_hub_html(user=user) if request.url.path == "/hub" else get_profile_html(user=user), headers={"Cache-Control": "no-store"})
+        language = i18n.request_language(request, user)
+        return HTMLResponse(get_hub_html(user=user, language=language) if request.url.path == "/hub" else get_profile_html(user=user, language=language), headers={"Cache-Control": "no-store"})
 
 
 _HELPER_SCRIPTS = (
@@ -217,7 +227,7 @@ _ADMIN_ONLY_MARKERS: tuple[tuple[str, str], ...] = (
 )
 _ASSISTANT_MENU_ITEM = (
     '        <button class="cw-menu-item" type="button" role="menuitem" onclick="window.cwAboutMenuSelect(\'assistant\')">'
-    '<span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">auto_awesome</span><span>Ask CrossWatch</span></button>'
+    '<span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">auto_awesome</span><span>[[t:navigation.aboutMenu.assistant]]</span></button>'
 )
 
 
@@ -296,20 +306,22 @@ def _assert_admin_shell_stripped(html: str, *, settings_panes: set[str] | None =
     raise RuntimeError("managed_user_shell_strip_failed:" + ",".join(sorted(leaked)))
 
 
-def _profile_nav_tab(label: str, href: str, active: bool = False) -> str:
+_NAV_TAB_LABELS = {"main": "navigation.tabs.main", "profile": "navigation.tabs.hub", "snapshots": "navigation.tabs.captures", "playlists": "navigation.tabs.playlists", "tracker": "navigation.tabs.tracker"}
+
+
+def _profile_nav_tab(route: str, href: str, active: bool = False) -> str:
     cls = "tab active" if active else "tab"
-    route = {"Main": "main", "Hub": "profile", "Captures": "snapshots", "Playlists": "playlists", "Tracker": "tracker"}.get(label)
-    tab_id = f' id="tab-{route}"' if route else ""
-    return f"<button{tab_id} class=\"{cls}\" type=\"button\" onclick=\"location.href='{href}'\">{label}</button>"
+    label = _NAV_TAB_LABELS[route]
+    return f"<button id=\"tab-{route}\" class=\"{cls}\" type=\"button\" onclick=\"location.href='{href}'\">[[t:{label}]]</button>"
 
 
 _TOOLS_MENU_ITEMS: tuple[tuple[str, str, str, int], ...] = (
-    ("events", "history", "Events", 0),
-    ("logs", "receipt_long", "Logs", 0),
-    ("editor", "edit_note", "Editor", 1),
-    ("analyzer", "monitoring", "Analyzer", 1),
-    ("import_export", "import_export", "Import / Export", 1),
-    ("backups", "backup", "Backup & Restore", 2),
+    ("events", "history", "navigation.pages.events", 0),
+    ("logs", "receipt_long", "navigation.pages.logs", 0),
+    ("editor", "edit_note", "navigation.pages.editor", 1),
+    ("analyzer", "monitoring", "navigation.pages.analyzer", 1),
+    ("import_export", "import_export", "navigation.pages.importExport", 1),
+    ("backups", "backup", "navigation.pages.backups", 2),
 )
 
 
@@ -324,13 +336,13 @@ def _tools_menu(*, maintenance: bool = True, href_prefix: str = "") -> str:
         group = item_group
         items.append(
             f'<button id="tab-{route}" class="cw-menu-item" type="button" role="menuitem" onclick="window.cwToolsMenuSelect(\'{route}\')">'
-            f'<span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">{icon}</span><span>{label}</span></button>'
+            f'<span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">{icon}</span><span>[[t:{label}]]</span></button>'
         )
     prefix = f' data-href-prefix="{html_lib.escape(href_prefix, quote=True)}"' if href_prefix else ""
     return (
         '<div class="cw-tabmenu" id="tab-tools-menu">'
         '<button id="tab-tools" class="tab" type="button" aria-haspopup="menu" aria-expanded="false" onclick="window.cwToggleToolsMenu(event)">'
-        '<span>Tools</span><span class="tab-caret" aria-hidden="true"></span></button>'
+        '<span>[[t:navigation.tabs.tools]]</span><span class="tab-caret" aria-hidden="true"></span></button>'
         f'<div class="cw-menu hidden" id="cw-tools-menu" role="menu" aria-labelledby="tab-tools"{prefix}>'
         + "".join(items)
         + "</div></div>"
@@ -339,13 +351,13 @@ def _tools_menu(*, maintenance: bool = True, href_prefix: str = "") -> str:
 
 def _profile_bulk_bar(bar_id: str, scope: str) -> str:
     return (
-        f'    <div id="{bar_id}" class="cw-tl-bulk cw-selection-bar" role="group" aria-label="Selected items" hidden>\n'
-        f'      <span class="cw-selection-count" aria-live="polite"><span class="material-symbols-rounded" aria-hidden="true">check_box_outline_blank</span><strong data-{scope}-count>0</strong><span>selected</span></span>\n'
-        f'      <button class="cw-selection-button" type="button" data-{scope}-select="visible"><span class="material-symbols-rounded" aria-hidden="true">visibility</span>Visible</button>\n'
-        f'      <button class="cw-selection-button" type="button" data-{scope}-select="all"><span class="material-symbols-rounded" aria-hidden="true">checklist</span>All results</button>\n'
-        f'      <button class="cw-selection-button" type="button" data-{scope}-select="none"><span class="material-symbols-rounded" aria-hidden="true">close</span>Clear</button>\n'
+        f'    <div id="{bar_id}" class="cw-tl-bulk cw-selection-bar" role="group" aria-label="[[t:common.selection.label]]" hidden>\n'
+        f'      <span class="cw-selection-count" aria-live="polite"><span class="material-symbols-rounded" aria-hidden="true">check_box_outline_blank</span><strong data-{scope}-count>0</strong><span>[[t:common.selection.selected]]</span></span>\n'
+        f'      <button class="cw-selection-button" type="button" data-{scope}-select="visible"><span class="material-symbols-rounded" aria-hidden="true">visibility</span>[[t:common.selection.visible]]</button>\n'
+        f'      <button class="cw-selection-button" type="button" data-{scope}-select="all"><span class="material-symbols-rounded" aria-hidden="true">checklist</span>[[t:common.selection.allResults]]</button>\n'
+        f'      <button class="cw-selection-button" type="button" data-{scope}-select="none"><span class="material-symbols-rounded" aria-hidden="true">close</span>[[t:common.actions.clear]]</button>\n'
         '      <span class="cw-selection-actions">\n'
-        f'        <button class="cw-selection-button is-danger" type="button" data-{scope}-remove><span class="material-symbols-rounded" aria-hidden="true">delete</span>Remove</button>\n'
+        f'        <button class="cw-selection-button is-danger" type="button" data-{scope}-remove><span class="material-symbols-rounded" aria-hidden="true">delete</span>[[t:common.actions.remove]]</button>\n'
         '      </span>\n'
         '    </div>\n'
     )
@@ -356,8 +368,8 @@ def _profile_remove_dialog() -> str:
     <form method="dialog" class="cw-tl-dialog-body">
       <div class="cw-tl-remove-head">
         <span class="cw-tl-remove-icon" aria-hidden="true"><span class="material-symbols-rounded">delete</span></span>
-        <div class="cw-tl-remove-heading"><strong id="profile-remove-title">Remove from providers</strong><small id="profile-remove-sub"></small></div>
-        <button class="cw-tl-remove-x" value="cancel" data-remove-close aria-label="Close" title="Close"><span class="material-symbols-rounded" aria-hidden="true">close</span></button>
+        <div class="cw-tl-remove-heading"><strong id="profile-remove-title">[[t:profile.remove.title]]</strong><small id="profile-remove-sub"></small></div>
+        <button class="cw-tl-remove-x" value="cancel" data-remove-close aria-label="[[t:common.actions.close]]" title="[[t:common.actions.close]]"><span class="material-symbols-rounded" aria-hidden="true">close</span></button>
       </div>
       <div id="profile-remove-targets" class="cw-tl-remove-list" aria-live="polite"></div>
       <div id="profile-remove-note" class="cw-tl-remove-info" hidden>
@@ -367,10 +379,10 @@ def _profile_remove_dialog() -> str:
       <div id="profile-remove-error" class="cw-tl-dialog-error" role="alert"></div>
       <div id="profile-remove-result" class="cw-tl-remove-result" aria-live="polite"></div>
       <div class="cw-tl-dialog-actions">
-        <button class="cw-tl-ghost" type="button" data-remove-all>Select all</button>
+        <button class="cw-tl-ghost" type="button" data-remove-all>[[t:common.selection.selectAll]]</button>
         <span class="cw-tl-spacer"></span>
-        <button class="cw-tl-ghost" value="cancel" data-remove-close>Close</button>
-        <button class="cw-tl-primary cw-tl-remove-submit cw-danger-confirm" type="button" data-remove-submit disabled><span class="material-symbols-rounded" aria-hidden="true">delete</span><span>Remove</span></button>
+        <button class="cw-tl-ghost" value="cancel" data-remove-close>[[t:common.actions.close]]</button>
+        <button class="cw-tl-primary cw-tl-remove-submit cw-danger-confirm" type="button" data-remove-submit disabled><span class="material-symbols-rounded" aria-hidden="true">delete</span><span>[[t:common.actions.remove]]</span></button>
       </div>
     </form>
   </dialog>
@@ -390,32 +402,32 @@ def _profile_timeline_panel(
     timeline: bool = True,
 ) -> str:
     timeline_button = (
-        '          <button class="cw-view-timeline" type="button" data-timeline-toggle title="Show timeline" aria-label="Show timeline" aria-pressed="false"><span class="material-symbols-rounded" aria-hidden="true">timeline</span></button>\n'
+        '          <button class="cw-view-timeline" type="button" data-timeline-toggle title="[[t:profile.records.showTimeline]]" aria-label="[[t:profile.records.showTimeline]]" aria-pressed="false"><span class="material-symbols-rounded" aria-hidden="true">timeline</span></button>\n'
         if timeline else ""
     )
     source_block = ""
-    lede_text = f'<p id="profile-{key}-lede"{" hidden" if not lede else ""}>{lede}</p>'
+    lede_text = f'<p id="profile-{key}-lede"{" hidden" if not lede else ""}>{f"[[t:{lede}]]" if lede else ""}</p>'
     if len(sources) > 1:
         buttons = "\n".join(
             f'      <button class="{"active" if index == 0 else ""}" type="button" role="tab" aria-selected="{"true" if index == 0 else "false"}" data-timeline-source="{value}">\n'
-            f'        <span>{label}</span>\n'
+            f'        <span>[[t:{label}]]</span>\n'
             "      </button>"
             for index, (value, label) in enumerate(sources)
         )
-        source_block = f'    <div class="cw-hub-source-line"><div class="cw-hub-sources" role="tablist" aria-label="{title} source">\n{buttons}\n    </div>{lede_text}</div>\n'
-    scores_block = f'    <div id="profile-{key}-scores" class="cw-hist-scores" aria-label="Filter by score"></div>\n' if scores else ""
-    options = "\n".join(f'          <option value="{value}">{label}</option>' for value, label in coverage)
+        source_block = f'    <div class="cw-hub-source-line"><div class="cw-hub-sources" role="tablist" aria-label="[[t:profile.records.sourceLabel|title@{title}]]">\n{buttons}\n    </div>{lede_text}</div>\n'
+    scores_block = f'    <div id="profile-{key}-scores" class="cw-hist-scores" aria-label="[[t:profile.records.filterByScore]]"></div>\n' if scores else ""
+    options = "\n".join(f'          <option value="{value}">[[t:{label}]]</option>' for value, label in coverage)
     bulk_block = _profile_bulk_bar(f"profile-{key}-bulk", "timeline") if bulk else ""
     default_source = sources[0][0] if sources else ""
     lede_block = "" if source_block else lede_text
-    timeline_block = f'<div id="profile-{key}-timeline" class="cw-hist-timeline" aria-label="{title} per month" hidden></div>'
-    coverage_select = f'<select id="profile-{key}-coverage" class="cw-hist-coverage-select" aria-label="Sync coverage filter">{options}</select>'
-    filter_button = f'<button type="button" class="cw-hub-filter-toggle" data-timeline-filters-toggle aria-controls="profile-{key}-filters" aria-expanded="false">Filters</button>'
-    filter_block = f'<div id="profile-{key}-filters" class="cw-hub-records-filters" hidden><label>Coverage {coverage_select}</label></div>'
+    timeline_block = f'<div id="profile-{key}-timeline" class="cw-hist-timeline" aria-label="[[t:profile.records.perMonth|title@{title}]]" hidden></div>'
+    coverage_select = f'<select id="profile-{key}-coverage" class="cw-hist-coverage-select" aria-label="[[t:profile.records.coverageFilter]]">{options}</select>'
+    filter_button = f'<button type="button" class="cw-hub-filter-toggle" data-timeline-filters-toggle aria-controls="profile-{key}-filters" aria-expanded="false">[[t:common.labels.filters]]</button>'
+    filter_block = f'<div id="profile-{key}-filters" class="cw-hub-records-filters" hidden><label>[[t:profile.records.coverage]] {coverage_select}</label></div>'
     return f"""  <section id="profile-panel-{key}" class="cw-profile-panel cw-timeline-panel cw-hub-records cw-page-panel" data-source="{default_source}" data-coverage="on" data-dated="{"on" if timeline else "off"}">
     <div class="cw-hub-records-head">
       <div class="cw-hub-records-headline">
-        <h2 id="profile-{key}-title">{title}</h2>
+        <h2 id="profile-{key}-title">[[t:{title}]]</h2>
         {lede_block}
       </div>
       <div class="cw-hub-records-tiles" id="profile-{key}-metrics"></div>
@@ -424,27 +436,27 @@ def _profile_timeline_panel(
 {scores_block}    <div class="cw-hub-records-toolbar">
       <label class="cw-hub-records-search">
         <span class="material-symbols-rounded" aria-hidden="true">search</span>
-        <input id="profile-{key}-search" type="search" placeholder="{search}">
+        <input id="profile-{key}-search" type="search" placeholder="[[t:{search}]]">
       </label>
-      <div class="cw-hub-records-chips" id="profile-{key}-types" aria-label="{title} type filters"></div>
+      <div class="cw-hub-records-chips" id="profile-{key}-types" aria-label="[[t:profile.records.typeFilters|title@{title}]]"></div>
       <div class="cw-hub-records-controls">
-        <select id="profile-{key}-provider" aria-label="Provider filter"><option value="">All providers</option></select>
+        <select id="profile-{key}-provider" aria-label="[[t:profile.records.providerFilter]]"><option value="">[[t:profile.records.allProviders]]</option></select>
         {filter_button}
-        <div class="cw-hub-records-views" role="group" aria-label="View mode">
-{timeline_button}          <button class="active" type="button" data-timeline-view="grid" title="Grid view" aria-label="Grid view" aria-pressed="true"><span class="material-symbols-rounded" aria-hidden="true">grid_view</span></button>
-          <button type="button" data-timeline-view="list" title="List view" aria-label="List view" aria-pressed="false"><span class="material-symbols-rounded" aria-hidden="true">view_list</span></button>
+        <div class="cw-hub-records-views" role="group" aria-label="[[t:profile.records.viewMode]]">
+{timeline_button}          <button class="active" type="button" data-timeline-view="grid" title="[[t:profile.records.gridView]]" aria-label="[[t:profile.records.gridView]]" aria-pressed="true"><span class="material-symbols-rounded" aria-hidden="true">grid_view</span></button>
+          <button type="button" data-timeline-view="list" title="[[t:profile.records.listView]]" aria-label="[[t:profile.records.listView]]" aria-pressed="false"><span class="material-symbols-rounded" aria-hidden="true">view_list</span></button>
         </div>
-        <button id="profile-{key}-refresh" class="cw-tl-ghost cw-collection-refresh" type="button" data-timeline-refresh title="Refresh {title}" aria-label="Refresh {title}"><span class="material-symbols-rounded" aria-hidden="true">refresh</span></button>
+        <button id="profile-{key}-refresh" class="cw-tl-ghost cw-collection-refresh" type="button" data-timeline-refresh title="[[t:profile.records.refresh|title@{title}]]" aria-label="[[t:profile.records.refresh|title@{title}]]"><span class="material-symbols-rounded" aria-hidden="true">refresh</span></button>
       </div>
     </div>
     {filter_block}
     {timeline_block}
     <div id="profile-{key}-list" class="cw-hist-list" data-view="grid" aria-live="polite"></div>
     <div id="profile-{key}-footer" class="cw-collection-footer" hidden>
-      <nav id="profile-{key}-pages" class="cw-collection-pages" aria-label="{title} pages"></nav>
+      <nav id="profile-{key}-pages" class="cw-collection-pages" aria-label="[[t:profile.records.pages|title@{title}]]"></nav>
       <div class="cw-collection-summary">
         <span id="profile-{key}-page-label"></span>
-        <select id="profile-{key}-page-size" aria-label="Items per page">
+        <select id="profile-{key}-page-size" aria-label="[[t:profile.records.perPage]]">
           <option value="24">24</option>
           <option value="48">48</option>
           <option value="96">96</option>
@@ -457,11 +469,11 @@ def _profile_timeline_panel(
 def _profile_playback_panel() -> str:
     return """  <section id="profile-panel-playback" class="cw-profile-panel cw-timeline-panel cw-playback-panel cw-hub-records cw-page-panel" data-source="playback">
     <div class="cw-hub-records-head">
-      <h2>Progress</h2>
+      <h2>[[t:profile.playback.title]]</h2>
       <div class="cw-hub-records-tiles" id="profile-playback-metrics"></div>
     </div>
     <div class="cw-hub-progress-summary">
-      <span id="profile-playback-sync" class="cw-play-sync" data-state="ready" aria-live="polite"><span class="cw-play-sync-dot" aria-hidden="true"></span><span>Updated <strong>not yet</strong></span></span>
+      <span id="profile-playback-sync" class="cw-play-sync" data-state="ready" aria-live="polite"><span class="cw-play-sync-dot" aria-hidden="true"></span><span>[[t:profile.playback.updated]] <strong>[[t:profile.playback.notYet]]</strong></span></span>
     </div>
     <div id="profile-playback-status" class="cw-play-status">
       <span id="profile-playback-errors" class="cw-play-issues" role="status" hidden></span>
@@ -469,110 +481,110 @@ def _profile_playback_panel() -> str:
     <div class="cw-hub-records-toolbar">
       <label class="cw-hub-records-search">
         <span class="material-symbols-rounded" aria-hidden="true">search</span>
-        <input id="profile-playback-search" type="search" placeholder="Search playback...">
+        <input id="profile-playback-search" type="search" placeholder="[[t:profile.playback.search]]">
       </label>
-      <div class="cw-hub-records-chips" id="profile-playback-types" aria-label="Playback type filters"></div>
+      <div class="cw-hub-records-chips" id="profile-playback-types" aria-label="[[t:profile.playback.typeFilters]]"></div>
       <div class="cw-hub-records-controls">
         <div class="cw-play-filters">
-          <button id="profile-playback-filters-btn" class="cw-hub-filter-toggle cw-play-filterbtn" type="button" data-playback-filters-toggle aria-expanded="false" aria-haspopup="true" aria-controls="profile-playback-filters-panel" title="Filter playback" aria-label="Filter playback"><span class="material-symbols-rounded" aria-hidden="true">filter_list</span><span>Filters</span><span id="profile-playback-filters-count" class="cw-play-filtercount" aria-live="polite" hidden>0</span></button>
+          <button id="profile-playback-filters-btn" class="cw-hub-filter-toggle cw-play-filterbtn" type="button" data-playback-filters-toggle aria-expanded="false" aria-haspopup="true" aria-controls="profile-playback-filters-panel" title="[[t:profile.playback.filter]]" aria-label="[[t:profile.playback.filter]]"><span class="material-symbols-rounded" aria-hidden="true">filter_list</span><span>[[t:common.labels.filters]]</span><span id="profile-playback-filters-count" class="cw-play-filtercount" aria-live="polite" hidden>0</span></button>
           <div id="profile-playback-filters-panel" class="cw-play-filterpanel" role="group" aria-labelledby="profile-playback-filters-btn" hidden>
-            <label class="cw-play-filterrow"><span>Provider</span>
-              <select id="profile-playback-provider" aria-label="Provider filter"><option value="">All providers</option></select>
+            <label class="cw-play-filterrow"><span>[[t:common.labels.provider]]</span>
+              <select id="profile-playback-provider" aria-label="[[t:profile.records.providerFilter]]"><option value="">[[t:profile.records.allProviders]]</option></select>
             </label>
-            <label class="cw-play-filterrow"><span>Progress</span>
-              <select id="profile-playback-progress" aria-label="Progress filter">
-                <option value="">Any progress</option>
-                <option value="0:24.99">Under 25%</option>
-                <option value="25:50">25 to 50%</option>
-                <option value="50:75">50 to 75%</option>
-                <option value="75:100">Over 75%</option>
-                <option value="90:100">Almost done</option>
+            <label class="cw-play-filterrow"><span>[[t:profile.playback.title]]</span>
+              <select id="profile-playback-progress" aria-label="[[t:profile.playback.progressFilter]]">
+                <option value="">[[t:profile.playback.anyProgress]]</option>
+                <option value="0:24.99">[[t:profile.playback.under25]]</option>
+                <option value="25:50">[[t:profile.playback.range25to50]]</option>
+                <option value="50:75">[[t:profile.playback.range50to75]]</option>
+                <option value="75:100">[[t:profile.playback.over75]]</option>
+                <option value="90:100">[[t:profile.playback.almostDone]]</option>
               </select>
             </label>
-            <label class="cw-play-filterrow"><span>Paused</span>
-              <select id="profile-playback-age" aria-label="Paused filter">
-                <option value="">Any time</option>
-                <option value="today">Today</option>
-                <option value="7d">Last 7 days</option>
-                <option value="30d">Last 30 days</option>
-                <option value="older_30d">Older than 30 days</option>
+            <label class="cw-play-filterrow"><span>[[t:profile.playback.paused]]</span>
+              <select id="profile-playback-age" aria-label="[[t:profile.playback.pausedFilter]]">
+                <option value="">[[t:profile.playback.anyTime]]</option>
+                <option value="today">[[t:common.time.today]]</option>
+                <option value="7d">[[t:common.time.last7Days]]</option>
+                <option value="30d">[[t:common.time.last30Days]]</option>
+                <option value="older_30d">[[t:common.time.olderThan30Days]]</option>
               </select>
             </label>
-            <label class="cw-play-filterrow"><span>Sort</span>
-              <select id="profile-playback-sort" aria-label="Sort">
-                <option value="last_updated">Recently paused</option>
-                <option value="progress_high">Most watched</option>
-                <option value="progress_low">Least watched</option>
-                <option value="remaining_time">Shortest remaining</option>
-                <option value="rating_high">Highest rated</option>
-                <option value="title">Title A-Z</option>
-                <option value="provider">Provider</option>
+            <label class="cw-play-filterrow"><span>[[t:common.labels.sort]]</span>
+              <select id="profile-playback-sort" aria-label="[[t:common.labels.sort]]">
+                <option value="last_updated">[[t:profile.playback.sort.recent]]</option>
+                <option value="progress_high">[[t:profile.playback.sort.mostWatched]]</option>
+                <option value="progress_low">[[t:profile.playback.sort.leastWatched]]</option>
+                <option value="remaining_time">[[t:profile.playback.sort.shortestRemaining]]</option>
+                <option value="rating_high">[[t:profile.playback.sort.highestRated]]</option>
+                <option value="title">[[t:profile.playback.sort.title]]</option>
+                <option value="provider">[[t:common.labels.provider]]</option>
               </select>
             </label>
             <div class="cw-play-filterfoot">
-              <button class="cw-tl-ghost" type="button" data-playback-filters-clear>Clear all</button>
+              <button class="cw-tl-ghost" type="button" data-playback-filters-clear>[[t:common.actions.clearAll]]</button>
             </div>
           </div>
         </div>
-        <div class="cw-hub-records-views" role="group" aria-label="View mode">
-          <button class="cw-view-timeline" type="button" data-playback-timeline title="Show timeline" aria-label="Show timeline" aria-pressed="false"><span class="material-symbols-rounded" aria-hidden="true">timeline</span></button>
-          <button class="active" type="button" data-playback-view="grid" title="Grid view" aria-label="Grid view" aria-pressed="true"><span class="material-symbols-rounded" aria-hidden="true">grid_view</span></button>
-          <button type="button" data-playback-view="list" title="List view" aria-label="List view" aria-pressed="false"><span class="material-symbols-rounded" aria-hidden="true">view_list</span></button>
+        <div class="cw-hub-records-views" role="group" aria-label="[[t:profile.records.viewMode]]">
+          <button class="cw-view-timeline" type="button" data-playback-timeline title="[[t:profile.records.showTimeline]]" aria-label="[[t:profile.records.showTimeline]]" aria-pressed="false"><span class="material-symbols-rounded" aria-hidden="true">timeline</span></button>
+          <button class="active" type="button" data-playback-view="grid" title="[[t:profile.records.gridView]]" aria-label="[[t:profile.records.gridView]]" aria-pressed="true"><span class="material-symbols-rounded" aria-hidden="true">grid_view</span></button>
+          <button type="button" data-playback-view="list" title="[[t:profile.records.listView]]" aria-label="[[t:profile.records.listView]]" aria-pressed="false"><span class="material-symbols-rounded" aria-hidden="true">view_list</span></button>
         </div>
-        <button id="profile-playback-settings" class="cw-hub-filter-toggle cw-play-toolbtn" type="button" data-playback-open-settings hidden title="Choose playback providers" aria-label="Choose playback providers"><span class="material-symbols-rounded" aria-hidden="true">tune</span></button>
-        <button id="profile-playback-refresh" class="cw-hub-filter-toggle cw-play-toolbtn" type="button" data-playback-retry title="Refresh Progress" aria-label="Refresh Progress"><span class="material-symbols-rounded" aria-hidden="true">refresh</span></button>
+        <button id="profile-playback-settings" class="cw-hub-filter-toggle cw-play-toolbtn" type="button" data-playback-open-settings hidden title="[[t:profile.playback.chooseProviders]]" aria-label="[[t:profile.playback.chooseProviders]]"><span class="material-symbols-rounded" aria-hidden="true">tune</span></button>
+        <button id="profile-playback-refresh" class="cw-hub-filter-toggle cw-play-toolbtn" type="button" data-playback-retry title="[[t:profile.playback.refresh]]" aria-label="[[t:profile.playback.refresh]]"><span class="material-symbols-rounded" aria-hidden="true">refresh</span></button>
       </div>
     </div>
-    <div id="profile-playback-timeline" class="cw-hist-timeline" aria-label="Progress per month" hidden></div>
+    <div id="profile-playback-timeline" class="cw-hist-timeline" aria-label="[[t:profile.playback.perMonth]]" hidden></div>
     <div id="profile-playback-list" class="cw-hist-list" data-view="grid" aria-live="polite"></div>
     <div id="profile-playback-footer" class="cw-collection-footer" hidden>
-      <nav id="profile-playback-pages" class="cw-collection-pages" aria-label="Playback pages"></nav>
+      <nav id="profile-playback-pages" class="cw-collection-pages" aria-label="[[t:profile.playback.pages]]"></nav>
       <div class="cw-collection-summary">
         <span id="profile-playback-page-label"></span>
-        <select id="profile-playback-page-size" aria-label="Items per page">
+        <select id="profile-playback-page-size" aria-label="[[t:profile.records.perPage]]">
           <option value="24">24</option>
           <option value="48">48</option>
           <option value="96">96</option>
         </select>
       </div>
     </div>
-    <div id="profile-playback-bulk" class="cw-tl-bulk cw-selection-bar" role="group" aria-label="Selected items" hidden>
-      <span class="cw-selection-count" aria-live="polite"><span class="material-symbols-rounded" aria-hidden="true">check_box_outline_blank</span><strong data-playback-count>0</strong><span>selected</span></span>
-      <button class="cw-selection-button" type="button" data-playback-bulk-select="visible"><span class="material-symbols-rounded" aria-hidden="true">visibility</span>Visible</button>
-      <button class="cw-selection-button" type="button" data-playback-bulk-select="all"><span class="material-symbols-rounded" aria-hidden="true">checklist</span>All results</button>
-      <button class="cw-selection-button" type="button" data-playback-bulk-select="none"><span class="material-symbols-rounded" aria-hidden="true">close</span>Clear</button>
+    <div id="profile-playback-bulk" class="cw-tl-bulk cw-selection-bar" role="group" aria-label="[[t:common.selection.label]]" hidden>
+      <span class="cw-selection-count" aria-live="polite"><span class="material-symbols-rounded" aria-hidden="true">check_box_outline_blank</span><strong data-playback-count>0</strong><span>[[t:common.selection.selected]]</span></span>
+      <button class="cw-selection-button" type="button" data-playback-bulk-select="visible"><span class="material-symbols-rounded" aria-hidden="true">visibility</span>[[t:common.selection.visible]]</button>
+      <button class="cw-selection-button" type="button" data-playback-bulk-select="all"><span class="material-symbols-rounded" aria-hidden="true">checklist</span>[[t:common.selection.allResults]]</button>
+      <button class="cw-selection-button" type="button" data-playback-bulk-select="none"><span class="material-symbols-rounded" aria-hidden="true">close</span>[[t:common.actions.clear]]</button>
       <span class="cw-selection-actions">
-        <button class="cw-selection-button" type="button" data-playback-bulk="update_progress" title="Edit progress"><span class="material-symbols-rounded" aria-hidden="true">edit</span>Edit progress</button>
-        <button class="cw-selection-button is-good" type="button" data-playback-bulk="mark_watched" title="Mark as watched"><span class="material-symbols-rounded" aria-hidden="true">check_circle</span>Mark watched</button>
-        <button class="cw-selection-button is-danger" type="button" data-playback-bulk="remove_progress" title="Remove progress"><span class="material-symbols-rounded" aria-hidden="true">delete</span>Remove</button>
+        <button class="cw-selection-button" type="button" data-playback-bulk="update_progress" title="[[t:profile.playback.edit]]"><span class="material-symbols-rounded" aria-hidden="true">edit</span>[[t:profile.playback.edit]]</button>
+        <button class="cw-selection-button is-good" type="button" data-playback-bulk="mark_watched" title="[[t:profile.playback.markWatchedTitle]]"><span class="material-symbols-rounded" aria-hidden="true">check_circle</span>[[t:profile.playback.markWatched]]</button>
+        <button class="cw-selection-button is-danger" type="button" data-playback-bulk="remove_progress" title="[[t:profile.playback.removeTitle]]"><span class="material-symbols-rounded" aria-hidden="true">delete</span>[[t:common.actions.remove]]</button>
       </span>
     </div>
     <dialog id="profile-playback-edit" class="cw-tl-dialog" aria-labelledby="profile-playback-edit-title">
       <form method="dialog" class="cw-tl-dialog-body">
         <div class="cw-tl-dialog-head">
           <span class="material-symbols-rounded" aria-hidden="true">edit</span>
-          <span><strong id="profile-playback-edit-title">Edit progress</strong><small id="profile-playback-edit-sub"></small></span>
+          <span><strong id="profile-playback-edit-title">[[t:profile.playback.edit]]</strong><small id="profile-playback-edit-sub"></small></span>
         </div>
         <div class="cw-play-edit">
-          <input id="profile-playback-edit-range" type="range" min="2" max="99" step="1" aria-label="Progress">
-          <span class="cw-play-edit-value"><input id="profile-playback-edit-value" type="number" min="2" max="99" step="0.01" aria-label="Progress percent"><span>%</span></span>
+          <input id="profile-playback-edit-range" type="range" min="2" max="99" step="1" aria-label="[[t:profile.playback.title]]">
+          <span class="cw-play-edit-value"><input id="profile-playback-edit-value" type="number" min="2" max="99" step="0.01" aria-label="[[t:profile.playback.percent]]"><span>%</span></span>
         </div>
         <div id="profile-playback-edit-error" class="cw-tl-dialog-error" role="alert"></div>
         <div class="cw-tl-dialog-actions">
-          <button class="cw-tl-ghost" type="button" data-playback-dialog-cancel>Cancel</button>
-          <button class="cw-tl-primary" type="submit">Apply</button>
+          <button class="cw-tl-ghost" type="button" data-playback-dialog-cancel>[[t:common.actions.cancel]]</button>
+          <button class="cw-tl-primary" type="submit">[[t:common.actions.apply]]</button>
         </div>
       </form>
     </dialog>
     <dialog id="profile-playback-providers" class="cw-page-playback-settings" aria-labelledby="profile-playback-providers-title">
       <form method="dialog" class="cw-page-preferences">
-        <header class="pf-head"><div><h2 id="profile-playback-providers-title">Playback settings</h2><p>Choose the instances shown in playback.</p></div><button class="pf-button" type="button" data-playback-dialog-cancel>Close</button></header>
+        <header class="pf-head"><div><h2 id="profile-playback-providers-title">[[t:profile.playback.settings.title]]</h2><p>[[t:profile.playback.settings.intro]]</p></div><button class="pf-button" type="button" data-playback-dialog-cancel>[[t:common.actions.close]]</button></header>
         <div class="pf-body">
-          <label class="pf-grouping"><span><strong>Group matching playback</strong><small id="profile-playback-grouping-help">Matching media in the same profile, with similar progress.</small></span><select id="profile-playback-grouping" class="cw-page-input" aria-describedby="profile-playback-grouping-help"><option value="automatic">Automatic</option><option value="separate">Separate instances</option></select></label>
-          <section class="pf-section"><h3>Included instances</h3><div id="profile-playback-provider-list" class="pf-provider-list"></div></section>
-          <details class="pf-advanced"><summary>Advanced</summary><label class="pf-timeout"><span><strong>Provider timeout</strong><small>Skip providers that take longer to respond.</small></span><span class="pf-timeout-value"><input id="profile-playback-timeout" class="cw-page-input" type="number" min="3" max="60" step="1" aria-label="Timeout in seconds"><span>sec</span></span></label></details>
+          <label class="pf-grouping"><span><strong>[[t:profile.playback.settings.group]]</strong><small id="profile-playback-grouping-help">[[t:profile.playback.settings.groupHelp]]</small></span><select id="profile-playback-grouping" class="cw-page-input" aria-describedby="profile-playback-grouping-help"><option value="automatic">[[t:profile.playback.settings.automatic]]</option><option value="separate">[[t:profile.playback.settings.separate]]</option></select></label>
+          <section class="pf-section"><h3>[[t:profile.playback.settings.included]]</h3><div id="profile-playback-provider-list" class="pf-provider-list"></div></section>
+          <details class="pf-advanced"><summary>[[t:common.labels.advanced]]</summary><label class="pf-timeout"><span><strong>[[t:profile.playback.settings.timeout]]</strong><small>[[t:profile.playback.settings.timeoutHelp]]</small></span><span class="pf-timeout-value"><input id="profile-playback-timeout" class="cw-page-input" type="number" min="3" max="60" step="1" aria-label="[[t:profile.playback.settings.timeoutSeconds]]"><span>[[t:common.units.secShort]]</span></span></label></details>
         </div>
-        <footer class="pf-footer"><div id="profile-playback-providers-error" class="pf-error" role="alert"></div><button class="pf-button pf-reset" type="button" data-playback-settings-reset>Reset defaults</button><div class="pf-actions"><button class="pf-button" type="button" data-playback-dialog-cancel>Cancel</button><button class="pf-button primary" type="submit">Apply</button></div></footer>
+        <footer class="pf-footer"><div id="profile-playback-providers-error" class="pf-error" role="alert"></div><button class="pf-button pf-reset" type="button" data-playback-settings-reset>[[t:common.actions.resetDefaults]]</button><div class="pf-actions"><button class="pf-button" type="button" data-playback-dialog-cancel>[[t:common.actions.cancel]]</button><button class="pf-button primary" type="submit">[[t:common.actions.apply]]</button></div></footer>
       </form>
     </dialog>
   </section>"""
@@ -613,25 +625,25 @@ def _profile_avatar_inner(user: dict | None = None) -> str:
 
 def _profile_menu_items(user: dict | None = None) -> str:
     user = user or {}
-    name = html_lib.escape(str(user.get("display_name") or user.get("label") or user.get("username") or "Profile"))
+    name = html_lib.escape(str(user.get("display_name") or user.get("label") or user.get("username") or "")) or "[[t:navigation.account.profileFallback]]"
     username = html_lib.escape(str(user.get("username") or ""))
     return f"""<div class="cw-account-identity"><strong>{name}</strong><span>@{username}</span></div>
         <div data-cw-account-panel="main">
-          <button class="cw-menu-item" type="button" role="menuitem" data-cw-profile-menu-action="account"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">person</span><span>My profile</span></button>
-          <button class="cw-menu-item" type="button" role="menuitem" data-cw-account-view="help"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">help</span><span>Help &amp; About</span></button>
+          <button class="cw-menu-item" type="button" role="menuitem" data-cw-profile-menu-action="account"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">person</span><span>[[t:navigation.account.myProfile]]</span></button>
+          <button class="cw-menu-item" type="button" role="menuitem" data-cw-account-view="help"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">help</span><span>[[t:navigation.account.helpAbout]]</span></button>
           <div class="cw-menu-sep" role="separator"></div>
-          <button class="cw-menu-item danger" type="button" role="menuitem" data-cw-profile-menu-action="logout"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">logout</span><span>Log out</span></button>
+          <button class="cw-menu-item danger" type="button" role="menuitem" data-cw-profile-menu-action="logout"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">logout</span><span>[[t:common.actions.logOut]]</span></button>
         </div>
         <div data-cw-account-panel="help" hidden>
-          <button class="cw-menu-item" type="button" role="menuitem" data-cw-account-view="main"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">arrow_back</span><span>Back</span></button>
-          <button class="cw-menu-item" type="button" role="menuitem" data-cw-profile-menu-action="help"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">help</span><span>Help</span></button>
-          <button class="cw-menu-item" type="button" role="menuitem" data-cw-profile-menu-action="about"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">info</span><span>About CrossWatch</span></button>
+          <button class="cw-menu-item" type="button" role="menuitem" data-cw-account-view="main"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">arrow_back</span><span>[[t:common.actions.back]]</span></button>
+          <button class="cw-menu-item" type="button" role="menuitem" data-cw-profile-menu-action="help"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">help</span><span>[[t:navigation.aboutMenu.help]]</span></button>
+          <button class="cw-menu-item" type="button" role="menuitem" data-cw-profile-menu-action="about"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">info</span><span>[[t:navigation.account.aboutCrossWatch]]</span></button>
         </div>"""
 
 
 def _nav_profile_link(user: dict | None = None) -> str:
     return """    <div class="cw-nav-profile-menu" id="cw-nav-profile-menu">
-      <button id="cw-nav-profile-link" class="cw-nav-profile-link" type="button" title="Open profile menu" aria-label="Open profile menu" aria-haspopup="menu" aria-expanded="false">
+      <button id="cw-nav-profile-link" class="cw-nav-profile-link" type="button" title="[[t:navigation.account.openMenu]]" aria-label="[[t:navigation.account.openMenu]]" aria-haspopup="menu" aria-expanded="false">
         __CW_NAV_PROFILE_AVATAR__
         <span class="tab-caret" aria-hidden="true"></span>
       </button>
@@ -647,43 +659,43 @@ def _managed_user_shell(html: str, user: dict | None = None) -> str:
     tracker = _managed_tracker_allowed(user)
     if not tracker:
         html = html.replace('  <section id="page-tracker" class="card hidden tab-page cw-themed-page"></section>\n\n', "")
-    html = html.replace('    <button id="tab-tracker" class="tab" type="button" onclick="showTab(\'tracker\')">Tracker</button>\n', "")
+    html = html.replace('    <button id="tab-tracker" class="tab" type="button" onclick="showTab(\'tracker\')">[[t:navigation.tabs.tracker]]</button>\n', "")
     perms = _managed_user_permissions(user)
     write_allowed = bool(perms.get("write"))
     dashboard_allowed = bool(perms.get("dashboard")) and write_allowed
     settings_panes = _managed_settings_panes(user) if write_allowed else set()
     if write_allowed:
         tabs = [
-            '    <button id="tab-main" class="tab active" type="button" onclick="showTab(\'main\')">Main</button>',
-            *(['    <button id="tab-tracker" class="tab" type="button" onclick="showTab(\'tracker\')">Tracker</button>'] if tracker else []),
-            _profile_nav_tab("Hub", "/hub"),
-            '    <button id="tab-snapshots" class="tab" type="button" onclick="showTab(\'snapshots\')">Captures</button>',
-            '    <button id="tab-playlists" class="tab" type="button" onclick="showTab(\'playlists\')">Playlists</button>',
+            '    <button id="tab-main" class="tab active" type="button" onclick="showTab(\'main\')">[[t:navigation.tabs.main]]</button>',
+            *(['    <button id="tab-tracker" class="tab" type="button" onclick="showTab(\'tracker\')">[[t:navigation.tabs.tracker]]</button>'] if tracker else []),
+            _profile_nav_tab("profile", "/hub"),
+            '    <button id="tab-snapshots" class="tab" type="button" onclick="showTab(\'snapshots\')">[[t:navigation.tabs.captures]]</button>',
+            '    <button id="tab-playlists" class="tab" type="button" onclick="showTab(\'playlists\')">[[t:navigation.tabs.playlists]]</button>',
             "    " + _tools_menu(maintenance=False),
-            *(['    <button id="tab-settings" class="tab" type="button" onclick="showTab(\'settings\')">Settings</button>'] if settings_panes else []),
+            *(['    <button id="tab-settings" class="tab" type="button" onclick="showTab(\'settings\')">[[t:navigation.tabs.settings]]</button>'] if settings_panes else []),
             _nav_profile_link(user),
         ]
         html = _replace_html_range(
             html,
-            '  <nav class="tabs" aria-label="Primary navigation">\n',
+            '  <nav class="tabs" aria-label="[[t:navigation.primary]]">\n',
             '  </nav>',
-            '  <nav class="tabs" aria-label="Primary navigation">\n' + "\n".join(tabs) + "\n",
+            '  <nav class="tabs" aria-label="[[t:navigation.primary]]">\n' + "\n".join(tabs) + "\n",
         )
     else:
-        tabs = [_profile_nav_tab("Hub", "/hub")]
+        tabs = [_profile_nav_tab("profile", "/hub")]
         tabs.append(_nav_profile_link(user))
         html = html.replace(
-            '<div class="brand" role="button" tabindex="0" title="Go to Main" onclick="showTab(\'main\')" onkeypress="if(event.key===\'Enter\'||event.key===\' \')showTab(\'main\')">',
-            '<div class="brand" role="button" tabindex="0" title="Go to Hub" onclick="location.href=\'/hub\'" onkeypress="if(event.key===\'Enter\'||event.key===\' \')location.href=\'/hub\'">',
+            '<div class="brand" role="button" tabindex="0" title="[[t:navigation.brand.goMain]]" onclick="showTab(\'main\')" onkeypress="if(event.key===\'Enter\'||event.key===\' \')showTab(\'main\')">',
+            '<div class="brand" role="button" tabindex="0" title="[[t:navigation.brand.goHub]]" onclick="location.href=\'/hub\'" onkeypress="if(event.key===\'Enter\'||event.key===\' \')location.href=\'/hub\'">',
         )
         html = _replace_html_range(
             html,
-            '  <nav class="tabs" aria-label="Primary navigation">\n',
+            '  <nav class="tabs" aria-label="[[t:navigation.primary]]">\n',
             '  </nav>',
-            '  <nav class="tabs" aria-label="Primary navigation">\n' + "\n".join(tabs) + "\n",
+            '  <nav class="tabs" aria-label="[[t:navigation.primary]]">\n' + "\n".join(tabs) + "\n",
         )
-        html = html.replace('    <button id="tab-snapshots" class="tab" type="button" onclick="showTab(\'snapshots\')">Captures</button>\n', "")
-        html = html.replace('    <button id="tab-playlists" class="tab" type="button" onclick="showTab(\'playlists\')">Playlists</button>\n', "")
+        html = html.replace('    <button id="tab-snapshots" class="tab" type="button" onclick="showTab(\'snapshots\')">[[t:navigation.tabs.captures]]</button>\n', "")
+        html = html.replace('    <button id="tab-playlists" class="tab" type="button" onclick="showTab(\'playlists\')">[[t:navigation.tabs.playlists]]</button>\n', "")
         for fragment in (
             '  <section id="page-snapshots" class="card hidden tab-page cw-themed-page"></section>\n\n',
             '  <section id="page-capture_compare" class="card hidden tab-page"></section>\n\n',
@@ -697,14 +709,14 @@ def _managed_user_shell(html: str, user: dict | None = None) -> str:
         ):
             html = html.replace(fragment, "")
     if not dashboard_allowed:
-        html = _remove_line(html, '    <button id="tab-main" class="tab active" type="button" onclick="showTab(\'main\')">Main</button>')
+        html = _remove_line(html, '    <button id="tab-main" class="tab active" type="button" onclick="showTab(\'main\')">[[t:navigation.tabs.main]]</button>')
         html = _remove_html_section(html, '  <section id="ops-card"')
         html = _remove_html_section(html, '  <section id="stats-card"')
         html = _remove_html_section(html, '  <section id="dashboard-widgets-card"')
     if settings_panes:
         html = _strip_settings_panes(html, settings_panes)
         html = _remove_line(html, '<div id="save-frost" class="hidden" aria-hidden="true"></div>')
-        html = _remove_line(html, '<div id="save-fab" class="hidden" role="toolbar" aria-label="Sticky save"><button id="save-fab-btn" class="btn" onclick="saveSettings(this)"><span class="btn-label">SAVE</span></button></div>')
+        html = _remove_line(html, '<div id="save-fab" class="hidden" role="toolbar" aria-label="[[t:common.actions.stickySave]]"><button id="save-fab-btn" class="btn" onclick="saveSettings(this)"><span class="btn-label">[[t:settings.saveFab]]</span></button></div>')
     else:
         html = _remove_html_range(
             html,
@@ -796,31 +808,33 @@ def _get_index_html_static() -> str:
     return r"""<!doctype html><html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>CrossWatch</title>
+__CW_I18N_HEAD__
 <script>
 (() => {
   const APP_NAME = "CrossWatch";
   const TITLES = {
-    main: "Main",
-    watchlist: "Watchlist",
-    snapshots: "Captures",
-    capture_compare: "Capture Compare",
-    playlists: "Playlists",
-    tracker: "Tracker",
-    editor: "Editor",
-    analyzer: "Analyzer",
-    events: "Events",
-    logs: "Logs",
-    import_export: "Import / Export",
-    maintenance: "Maintenance tools",
-    backups: "Backup & Restore",
-    interactive_sync: "Interactive Sync",
-    settings: "Settings",
+    main: "navigation.tabs.main",
+    watchlist: "common.media.watchlist",
+    snapshots: "navigation.tabs.captures",
+    capture_compare: "navigation.pages.captureCompare",
+    playlists: "navigation.tabs.playlists",
+    tracker: "navigation.tabs.tracker",
+    editor: "navigation.pages.editor",
+    analyzer: "navigation.pages.analyzer",
+    events: "navigation.pages.events",
+    logs: "navigation.pages.logs",
+    import_export: "navigation.pages.importExport",
+    maintenance: "navigation.pages.maintenance",
+    backups: "navigation.pages.backups",
+    interactive_sync: "navigation.pages.interactiveSync",
+    settings: "navigation.tabs.settings",
   };
 
   const normalize = (value) => String(value || "").trim().toLowerCase();
 
   const setTitle = (page) => {
-    const label = TITLES[normalize(page)];
+    const key = TITLES[normalize(page)];
+    const label = key && window.CW?.I18n ? window.CW.I18n.t(key) : "";
     document.title = label ? `${label} | ${APP_NAME}` : APP_NAME;
   };
 
@@ -987,7 +1001,7 @@ html[data-cw-initial-tab="settings"] #page-settings{display:block!important}
 </head><body>
 
 <header>
-  <div class="brand" role="button" tabindex="0" title="Go to Main" onclick="showTab('main')" onkeypress="if(event.key==='Enter'||event.key===' ')showTab('main')">
+  <div class="brand" role="button" tabindex="0" title="[[t:navigation.brand.goMain]]" onclick="showTab('main')" onkeypress="if(event.key==='Enter'||event.key===' ')showTab('main')">
     <img class="logo" src="/assets/img/CROSSWATCH.svg?v=__CW_VERSION__" alt="CrossWatch">
     <span class="brand-text">
       <span class="name cw-wordmark">CrossWatch<span class="brand-dot" aria-hidden="true">.</span></span>
@@ -995,29 +1009,29 @@ html[data-cw-initial-tab="settings"] #page-settings{display:block!important}
     </span>
   </div>
 
-  <nav class="tabs" aria-label="Primary navigation">
-    <button id="tab-main" class="tab active" type="button" onclick="showTab('main')">Main</button>
-    <button id="tab-tracker" class="tab" type="button" onclick="showTab('tracker')">Tracker</button>
-    <button id="tab-profile" class="tab" type="button" onclick="location.href='/hub'">Hub</button>
-    <button id="tab-snapshots" class="tab" type="button" onclick="showTab('snapshots')">Captures</button>
-    <button id="tab-playlists" class="tab" type="button" onclick="showTab('playlists')">Playlists</button>
+  <nav class="tabs" aria-label="[[t:navigation.primary]]">
+    <button id="tab-main" class="tab active" type="button" onclick="showTab('main')">[[t:navigation.tabs.main]]</button>
+    <button id="tab-tracker" class="tab" type="button" onclick="showTab('tracker')">[[t:navigation.tabs.tracker]]</button>
+    <button id="tab-profile" class="tab" type="button" onclick="location.href='/hub'">[[t:navigation.tabs.hub]]</button>
+    <button id="tab-snapshots" class="tab" type="button" onclick="showTab('snapshots')">[[t:navigation.tabs.captures]]</button>
+    <button id="tab-playlists" class="tab" type="button" onclick="showTab('playlists')">[[t:navigation.tabs.playlists]]</button>
     __CW_TOOLS_MENU__
     <div class="cw-tabmenu" id="tab-settings-menu">
       <button id="tab-settings" class="tab" type="button"
               aria-haspopup="menu" aria-expanded="false"
               onclick="window.cwToggleSettingsMenu(event)">
-        <span>Settings</span>
+        <span>[[t:navigation.tabs.settings]]</span>
         <span class="tab-caret" aria-hidden="true"></span>
       </button>
       <div class="cw-menu hidden" id="cw-settings-menu" role="menu" aria-labelledby="tab-settings">
-        <button class="cw-menu-item active" data-settings-pane="overview" type="button" role="menuitem" aria-current="page" onclick="window.cwSettingsMenuSelect('overview')"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">grid_view</span><span>Settings overview</span></button>
+        <button class="cw-menu-item active" data-settings-pane="overview" type="button" role="menuitem" aria-current="page" onclick="window.cwSettingsMenuSelect('overview')"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">grid_view</span><span>[[t:navigation.settingsMenu.overview]]</span></button>
         <div class="cw-menu-sep" role="separator" aria-hidden="true"></div>
-        <button class="cw-menu-item" data-settings-pane="providers" type="button" role="menuitem" onclick="window.cwSettingsMenuSelect('providers')"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">device_hub</span><span>Connections</span></button>
-        <button class="cw-menu-item" data-settings-pane="sync" type="button" role="menuitem" onclick="window.cwSettingsMenuSelect('pairs')"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">sync_alt</span><span>Sync pairs</span></button>
-        <button class="cw-menu-item" data-settings-pane="scrobbler" type="button" role="menuitem" onclick="window.cwSettingsMenuSelect('scrobbler')"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">sensors</span><span>Scrobbler</span></button>
-        <button class="cw-menu-item" data-settings-pane="scheduling" type="button" role="menuitem" onclick="window.cwSettingsMenuSelect('scheduling')"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">schedule</span><span>Scheduling</span></button>
-        <button class="cw-menu-item" data-settings-pane="app" type="button" role="menuitem" onclick="window.cwSettingsMenuSelect('app')"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">security</span><span>UI and Security</span></button>
-        <button class="cw-menu-item" data-settings-pane="maintenance" type="button" role="menuitem" onclick="window.cwSettingsMenuSelect('maintenance')"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">build</span><span>Maintenance</span></button>
+        <button class="cw-menu-item" data-settings-pane="providers" type="button" role="menuitem" onclick="window.cwSettingsMenuSelect('providers')"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">device_hub</span><span>[[t:navigation.settingsMenu.connections]]</span></button>
+        <button class="cw-menu-item" data-settings-pane="sync" type="button" role="menuitem" onclick="window.cwSettingsMenuSelect('pairs')"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">sync_alt</span><span>[[t:navigation.settingsMenu.pairs]]</span></button>
+        <button class="cw-menu-item" data-settings-pane="scrobbler" type="button" role="menuitem" onclick="window.cwSettingsMenuSelect('scrobbler')"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">sensors</span><span>[[t:navigation.settingsMenu.scrobbler]]</span></button>
+        <button class="cw-menu-item" data-settings-pane="scheduling" type="button" role="menuitem" onclick="window.cwSettingsMenuSelect('scheduling')"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">schedule</span><span>[[t:navigation.settingsMenu.scheduling]]</span></button>
+        <button class="cw-menu-item" data-settings-pane="app" type="button" role="menuitem" onclick="window.cwSettingsMenuSelect('app')"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">security</span><span>[[t:navigation.settingsMenu.app]]</span></button>
+        <button class="cw-menu-item" data-settings-pane="maintenance" type="button" role="menuitem" onclick="window.cwSettingsMenuSelect('maintenance')"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">build</span><span>[[t:navigation.settingsMenu.maintenance]]</span></button>
       </div>
     </div>
 __CW_NAV_PROFILE_MENU__
@@ -1025,21 +1039,21 @@ __CW_NAV_PROFILE_MENU__
 
 </header>
 
-<div id="cw-main-loading" role="status">Loading dashboard...</div>
+<div id="cw-main-loading" role="status">[[t:dashboard.loading]]</div>
 <main id="layout">
   <section id="ops-card" class="card cw-main-card cw-main-card--sync">
-    <div class="title">Sync Hub</div>
+    <div class="title">[[t:dashboard.syncHub.title]]</div>
     <div class="ops-header cw-main-card-head">
       <div class="cw-main-card-head-copy">
-        <h2>Sync Hub</h2>
+        <h2>[[t:dashboard.syncHub.title]]</h2>
       </div>
       <div class="cw-main-card-head-side">
         <div id="conn-badges" class="vip-badges"></div>
         <div class="cw-main-card-head-actions">
-          <div id="update-banner" class="hidden"><span id="update-text">A new version is available.</span>
-            <a id="update-link" href="https://github.com/cenodude/crosswatch/releases" target="_blank" rel="noopener">Get update</a>
+          <div id="update-banner" class="hidden"><span id="update-text">[[t:dashboard.update.available]]</span>
+            <a id="update-link" href="https://github.com/cenodude/crosswatch/releases" target="_blank" rel="noopener">[[t:dashboard.update.get]]</a>
           </div>
-          <button id="btn-status-refresh" class="iconbtn" title="Re-check status" aria-label="Refresh status">
+          <button id="btn-status-refresh" class="iconbtn" title="[[t:dashboard.status.recheck]]" aria-label="[[t:dashboard.status.refresh]]">
             <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
               <path d="M21 12a9 9 0 1 1-2.64-6.36" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
               <path d="M21 5v5h-5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
@@ -1054,27 +1068,27 @@ __CW_NAV_PROFILE_MENU__
       <div class="sb-head">
         <div class="sb-head-main">
           <div>
-            <div class="sb-label">Sync status</div>
-            <div class="sb-phase"><div class="sb-phase-text">Waiting for the next sync run</div></div>
+            <div class="sb-label">[[t:dashboard.progress.title]]</div>
+            <div class="sb-phase"><div class="sb-phase-text">[[t:dashboard.progress.waiting]]</div></div>
           </div>
         </div>
-        <div class="sb-head-side"><div class="sb-note hide"></div><div class="sb-badge">Idle</div></div>
+        <div class="sb-head-side"><div class="sb-note hide"></div><div class="sb-badge">[[t:dashboard.progress.idle]]</div></div>
       </div>
       <div class="sb-rail"><div class="sb-fill"></div><div class="sb-fly hide"></div></div>
-      <div class="sb-steps"><span data-step="start">Start</span><span data-step="discovering">Discovering</span><span data-step="syncing">Syncing</span><span data-step="done">Done</span></div>
+      <div class="sb-steps"><span data-step="start">[[t:dashboard.progress.phase.start]]</span><span data-step="discovering">[[t:dashboard.progress.phase.discovering]]</span><span data-step="syncing">[[t:dashboard.progress.phase.syncing]]</span><span data-step="done">[[t:dashboard.progress.phase.done]]</span></div>
     </div><div id="ux-lanes"></div><div id="ux-spotlight"></div>
 
     <div class="action-row">
       <div class="action-buttons">
         <div class="cw-split-run" id="cw-sync-split">
-        <button id="run" class="btn acc cw-split-main" onclick="runSync()"><span class="material-symbols-rounded cw-action-icon cw-sync-action-icon" aria-hidden="true">sync</span><span class="label">Synchronize</span></button>
-        <button id="run-menu" class="btn acc cw-split-edge" type="button" title="Sync options" aria-label="Sync options" aria-haspopup="menu" aria-expanded="false" onclick="window.cwToggleSyncMenu(event)"><span class="material-symbols-rounded" aria-hidden="true">expand_more</span></button>
+        <button id="run" class="btn acc cw-split-main" onclick="runSync()"><span class="material-symbols-rounded cw-action-icon cw-sync-action-icon" aria-hidden="true">sync</span><span class="label">[[t:dashboard.sync.run]]</span></button>
+        <button id="run-menu" class="btn acc cw-split-edge" type="button" title="[[t:dashboard.sync.options]]" aria-label="[[t:dashboard.sync.options]]" aria-haspopup="menu" aria-expanded="false" onclick="window.cwToggleSyncMenu(event)"><span class="material-symbols-rounded" aria-hidden="true">expand_more</span></button>
         <div class="cw-menu cw-sync-menu hidden" id="cw-sync-menu" role="menu" aria-labelledby="run-menu"></div>
       </div>
-        <button id="btn-details" class="btn cw-hub-action" onclick="toggleDetails()" title="Show the sync results and stats" aria-label="Show the latest sync results and stats"><span class="material-symbols-rounded cw-action-icon" aria-hidden="true">description</span><span>View details</span></button>
-        <button class="btn cw-hub-action cw-hub-tools-start" onclick="openAnalyzer()" title="Finds missing, unresolved or inconsistent sync items" aria-label="Finds missing, unresolved or inconsistent sync items between providers"><span class="material-symbols-rounded cw-action-icon" aria-hidden="true">monitoring</span><span>Analyzer</span></button>
-        <button class="btn cw-hub-action" onclick="openEvents()" title="View sync events" aria-label="View sync events"><span class="material-symbols-rounded cw-action-icon" aria-hidden="true">history</span><span>Events</span></button>
-        <button class="btn cw-hub-action" onclick="openExporter()" title="Import or export watchlist, history and ratings data" aria-label="Import or export watchlist, history and ratings data"><span class="material-symbols-rounded cw-action-icon" aria-hidden="true">import_export</span><span>Import / Export</span></button>
+        <button id="btn-details" class="btn cw-hub-action" onclick="toggleDetails()" title="[[t:dashboard.details.showTitle]]" aria-label="[[t:dashboard.details.showLabel]]"><span class="material-symbols-rounded cw-action-icon" aria-hidden="true">description</span><span>[[t:dashboard.details.view]]</span></button>
+        <button class="btn cw-hub-action cw-hub-tools-start" onclick="openAnalyzer()" title="[[t:dashboard.tools.analyzerTitle]]" aria-label="[[t:dashboard.tools.analyzerLabel]]"><span class="material-symbols-rounded cw-action-icon" aria-hidden="true">monitoring</span><span>[[t:navigation.pages.analyzer]]</span></button>
+        <button class="btn cw-hub-action" onclick="openEvents()" title="[[t:dashboard.tools.eventsTitle]]" aria-label="[[t:dashboard.tools.eventsTitle]]"><span class="material-symbols-rounded cw-action-icon" aria-hidden="true">history</span><span>[[t:navigation.pages.events]]</span></button>
+        <button class="btn cw-hub-action" onclick="openExporter()" title="[[t:dashboard.tools.importExportTitle]]" aria-label="[[t:dashboard.tools.importExportTitle]]"><span class="material-symbols-rounded cw-action-icon" aria-hidden="true">import_export</span><span>[[t:navigation.pages.importExport]]</span></button>
       </div>
       <div class="cw-status-dock"></div>
     </div>
@@ -1083,21 +1097,21 @@ __CW_NAV_PROFILE_MENU__
       <div class="details-grid">
         <div class="det-left">
           <div class="det-head">
-            <div class="det-tabs" role="tablist" aria-label="Output tabs">
+            <div class="det-tabs" role="tablist" aria-label="[[t:dashboard.details.outputTabs]]">
               <button id="det-tab-sync" class="det-tab active" type="button"
-                role="tab" aria-selected="true" aria-controls="det-panel-sync" data-tab="sync">Sync</button>
+                role="tab" aria-selected="true" aria-controls="det-panel-sync" data-tab="sync">[[t:dashboard.details.tabs.sync]]</button>
               <button id="det-tab-watcher" class="det-tab" type="button"
-                role="tab" aria-selected="false" aria-controls="det-panel-watcher" data-tab="watcher">Watcher</button>
+                role="tab" aria-selected="false" aria-controls="det-panel-watcher" data-tab="watcher">[[t:dashboard.details.tabs.watcher]]</button>
               <button id="det-tab-debug" class="det-tab" type="button"
-                role="tab" aria-selected="false" aria-controls="det-panel-debug" data-tab="debug" hidden disabled aria-hidden="true" aria-disabled="true">Debug</button>
+                role="tab" aria-selected="false" aria-controls="det-panel-debug" data-tab="debug" hidden disabled aria-hidden="true" aria-disabled="true">[[t:dashboard.details.tabs.debug]]</button>
             </div>
             <div class="det-tools">
-              <button id="det-ai" class="ghost det-ai" type="button" title="Ask the assistant to explain this log" aria-label="Analyze this log with AI" data-ai-analyze><span class="material-symbols-rounded" aria-hidden="true">auto_awesome</span><span>Analyze</span></button>
-              <button id="det-open-logs" class="ghost det-tool-icon" type="button" title="Open logs page" aria-label="Open logs page" onclick="openLogs({channel: window._detailsTab || 'sync'})"><span class="material-symbols-rounded" aria-hidden="true">open_in_full</span></button>
-              <button id="det-copy" class="ghost det-tool-icon" type="button" title="Copy current output" aria-label="Copy current output"><span class="material-symbols-rounded" aria-hidden="true">content_copy</span></button>
-              <button id="det-clear" class="ghost det-tool-icon" type="button" title="Clear current output" aria-label="Clear current output"><span class="material-symbols-rounded" aria-hidden="true">delete</span></button>
-              <button id="det-follow" class="ghost det-follow" type="button" title="Toggle auto-follow" aria-pressed="true"><span class="material-symbols-rounded det-follow-icon" aria-hidden="true">podcasts</span><span>Follow</span><span class="material-symbols-rounded det-follow-caret" aria-hidden="true">expand_more</span></button>
-              <button id="det-more" class="ghost det-tool-icon" type="button" aria-label="Log actions" aria-haspopup="menu"><span class="material-symbols-rounded" aria-hidden="true">more_horiz</span></button>
+              <button id="det-ai" class="ghost det-ai" type="button" title="[[t:dashboard.details.askAssistant]]" aria-label="[[t:dashboard.details.analyzeWithAi]]" data-ai-analyze><span class="material-symbols-rounded" aria-hidden="true">auto_awesome</span><span>[[t:dashboard.details.analyze]]</span></button>
+              <button id="det-open-logs" class="ghost det-tool-icon" type="button" title="[[t:dashboard.details.openLogs]]" aria-label="[[t:dashboard.details.openLogs]]" onclick="openLogs({channel: window._detailsTab || 'sync'})"><span class="material-symbols-rounded" aria-hidden="true">open_in_full</span></button>
+              <button id="det-copy" class="ghost det-tool-icon" type="button" title="[[t:dashboard.details.copyOutput]]" aria-label="[[t:dashboard.details.copyOutput]]"><span class="material-symbols-rounded" aria-hidden="true">content_copy</span></button>
+              <button id="det-clear" class="ghost det-tool-icon" type="button" title="[[t:dashboard.details.clearOutput]]" aria-label="[[t:dashboard.details.clearOutput]]"><span class="material-symbols-rounded" aria-hidden="true">delete</span></button>
+              <button id="det-follow" class="ghost det-follow" type="button" title="[[t:dashboard.details.toggleFollow]]" aria-pressed="true"><span class="material-symbols-rounded det-follow-icon" aria-hidden="true">podcasts</span><span>[[t:dashboard.details.follow]]</span><span class="material-symbols-rounded det-follow-caret" aria-hidden="true">expand_more</span></button>
+              <button id="det-more" class="ghost det-tool-icon" type="button" aria-label="[[t:dashboard.details.logActions]]" aria-haspopup="menu"><span class="material-symbols-rounded" aria-hidden="true">more_horiz</span></button>
             </div>
           </div>
           <div class="det-panels">
@@ -1112,10 +1126,10 @@ __CW_NAV_PROFILE_MENU__
             </div>
           </div>
           <div class="det-console-footer" aria-live="polite">
-            <span id="det-live-state" class="det-live-state"><span class="det-live-dot" aria-hidden="true"></span><span class="det-live-label">Live</span></span>
-            <span id="det-follow-state" class="det-follow-state">Auto-scroll on</span>
+            <span id="det-live-state" class="det-live-state"><span class="det-live-dot" aria-hidden="true"></span><span class="det-live-label">[[t:dashboard.details.live]]</span></span>
+            <span id="det-follow-state" class="det-follow-state">[[t:dashboard.details.autoScrollOn]]</span>
             <span class="det-footer-spacer"></span>
-            <span id="det-line-count" class="det-line-count">0 lines</span>
+            <span id="det-line-count" class="det-line-count">[[t:dashboard.details.noLines]]</span>
             <span class="material-symbols-rounded det-list-icon" aria-hidden="true">format_list_bulleted</span>
           </div>
 
@@ -1123,12 +1137,12 @@ __CW_NAV_PROFILE_MENU__
         <div class="det-right">
           <div class="meta-card">
             <div class="meta-grid">
-              <div class="meta-label">Module</div><div class="meta-value"><span id="det-cmd" class="pillvalue truncate">-</span></div>
-              <div class="meta-label">Version</div><div class="meta-value"><span id="det-ver" class="pillvalue">-</span></div>
-              <div class="meta-label">Started</div><div class="meta-value"><span id="det-start" class="pillvalue mono">-</span></div>
-              <div class="meta-label">Finished</div><div class="meta-value"><span id="det-finish" class="pillvalue mono">-</span></div>
+              <div class="meta-label">[[t:dashboard.details.summary.module]]</div><div class="meta-value"><span id="det-cmd" class="pillvalue truncate">-</span></div>
+              <div class="meta-label">[[t:dashboard.details.summary.version]]</div><div class="meta-value"><span id="det-ver" class="pillvalue">-</span></div>
+              <div class="meta-label">[[t:dashboard.details.summary.started]]</div><div class="meta-value"><span id="det-start" class="pillvalue mono">-</span></div>
+              <div class="meta-label">[[t:dashboard.details.summary.finished]]</div><div class="meta-value"><span id="det-finish" class="pillvalue mono">-</span></div>
             </div>
-            <div class="meta-actions"><button class="btn" onclick="copySummary(this)">Copy summary</button></div>
+            <div class="meta-actions"><button class="btn" onclick="copySummary(this)">[[t:dashboard.details.copySummary]]</button></div>
           </div>
         </div>
       </div>
@@ -1136,19 +1150,19 @@ __CW_NAV_PROFILE_MENU__
   </section>
 
   <section id="stats-card" class="card cw-main-card cw-main-card--stats collapsed">
-    <div class="title">Statistics</div>
+    <div class="title">[[t:dashboard.stats.title]]</div>
     <div class="cw-main-card-head cw-main-card-head--compact">
       <div class="cw-main-card-head-copy">
-        <div class="cw-main-card-kicker">Statistics</div>
+        <div class="cw-main-card-kicker">[[t:dashboard.stats.title]]</div>
       </div>
     </div>
 
     <div class="stats-modern v2">
-      <div class="now"><div class="label">Now</div><div id="stat-now" class="value" data-v="0">0</div><div class="chips"><span id="trend-week" class="stat-trend flat"></span></div></div>
+      <div class="now"><div class="label">[[t:dashboard.stats.now]]</div><div id="stat-now" class="value" data-v="0">0</div><div class="chips"><span id="trend-week" class="stat-trend flat"></span></div></div>
       <div class="facts">
-        <div class="fact"><span class="k">Last Week</span><span id="stat-week" class="v" data-v="0">0</span></div>
-        <div class="fact"><span class="k">Last Month</span><span id="stat-month" class="v" data-v="0">0</span></div>
-        <div class="mini-legend"><span class="dot add"></span><span class="l">Added</span><span id="stat-added" class="n">0</span><span class="dot del"></span><span class="l">Removed</span><span id="stat-removed" class="n">0</span></div>
+        <div class="fact"><span class="k">[[t:dashboard.stats.lastWeek]]</span><span id="stat-week" class="v" data-v="0">0</span></div>
+        <div class="fact"><span class="k">[[t:dashboard.stats.lastMonth]]</span><span id="stat-month" class="v" data-v="0">0</span></div>
+        <div class="mini-legend"><span class="dot add"></span><span class="l">[[t:dashboard.stats.added]]</span><span id="stat-added" class="n">0</span><span class="dot del"></span><span class="l">[[t:dashboard.stats.removed]]</span><span id="stat-removed" class="n">0</span></div>
         <div class="stat-meter" aria-hidden="true"><span id="stat-fill"></span></div>
       </div>
     </div>
@@ -1156,35 +1170,35 @@ __CW_NAV_PROFILE_MENU__
     <div class="stat-tiles" id="stat-providers"></div>
 
     <div class="stat-block cw-recent-feed" id="recent-activity-block">
-      <div class="stat-block-header"><span class="pill plain">Recent Scrobble</span><button id="activity-view-all" class="cw-page-feed-action refresh-insights" type="button">View all</button></div>
+      <div class="stat-block-header"><span class="pill plain">[[t:dashboard.widgets.recentScrobble]]</span><button id="activity-view-all" class="cw-page-feed-action refresh-insights" type="button">[[t:common.actions.viewAll]]</button></div>
       <div id="recent-activity" class="history-list"></div>
     </div>
 
     <div class="stat-block cw-recent-feed">
-      <div class="stat-block-header"><span class="pill plain">Recent syncs</span><button class="cw-page-feed-action refresh-insights" type="button" onclick="refreshInsights()" title="Refresh" aria-label="Refresh recent syncs"><span class="material-symbols-rounded" aria-hidden="true">refresh</span></button></div>
+      <div class="stat-block-header"><span class="pill plain">[[t:dashboard.stats.recentSyncs]]</span><button class="cw-page-feed-action refresh-insights" type="button" onclick="refreshInsights()" title="[[t:common.actions.refresh]]" aria-label="[[t:dashboard.stats.refreshRecentSyncs]]"><span class="material-symbols-rounded" aria-hidden="true">refresh</span></button></div>
       <div id="sync-history" class="history-list"></div>
     </div>
   </section>
 
-  <section id="dashboard-widgets-card" class="cw-dashboard-widgets hidden" aria-label="Media widgets">
+  <section id="dashboard-widgets-card" class="cw-dashboard-widgets hidden" aria-label="[[t:dashboard.widgets.label]]">
     <article id="placeholder-card" class="card cw-main-card cw-main-card--wall cw-dash-widget cw-dash-widget--watchlist cw-dash-widget--wide hidden">
-      <div class="title">Watchlist</div>
+      <div class="title">[[t:common.media.watchlist]]</div>
       <div class="cw-main-card-head cw-main-card-head--compact">
         <div class="cw-main-card-head-copy">
           <div class="cw-dash-title-row">
             <span class="material-symbols-rounded" aria-hidden="true">movie</span>
-            <h3>Watchlist</h3>
+            <h3>[[t:common.media.watchlist]]</h3>
           </div>
         </div>
         <span id="watchlist-count-chip" class="cw-widget-count-chip hidden" aria-live="polite"></span>
-        <button class="cw-watchlist-see-all" type="button" onclick="location.href='/hub#watchlist'" title="View all" aria-label="Open Watchlist page"><span class="material-symbols-rounded" aria-hidden="true">arrow_forward</span></button>
+        <button class="cw-watchlist-see-all" type="button" onclick="location.href='/hub#watchlist'" title="[[t:common.actions.viewAll]]" aria-label="[[t:dashboard.widgets.openWatchlist]]"><span class="material-symbols-rounded" aria-hidden="true">arrow_forward</span></button>
       </div>
-      <div id="wall-msg" class="wall-msg">Loading...</div>
+      <div id="wall-msg" class="wall-msg">[[t:common.status.loading]]</div>
       <div class="wall-wrap">
         <div id="edgeL" class="edge left"></div><div id="edgeR" class="edge right"></div>
-        <div id="poster-row" class="row-scroll" aria-label="Watchlist"></div>
-        <button class="nav prev" type="button" onclick="scrollWall(-1)" aria-label="Scroll left"><span class="material-symbols-rounded" aria-hidden="true">chevron_left</span></button>
-        <button class="nav next" type="button" onclick="scrollWall(1)" aria-label="Scroll right"><span class="material-symbols-rounded" aria-hidden="true">chevron_right</span></button>
+        <div id="poster-row" class="row-scroll" aria-label="[[t:common.media.watchlist]]"></div>
+        <button class="nav prev" type="button" onclick="scrollWall(-1)" aria-label="[[t:common.actions.scrollLeft]]"><span class="material-symbols-rounded" aria-hidden="true">chevron_left</span></button>
+        <button class="nav next" type="button" onclick="scrollWall(1)" aria-label="[[t:common.actions.scrollRight]]"><span class="material-symbols-rounded" aria-hidden="true">chevron_right</span></button>
       </div>
     </article>
 
@@ -1192,11 +1206,11 @@ __CW_NAV_PROFILE_MENU__
       <div class="cw-dash-widget-head">
         <div class="cw-dash-title-row">
           <span class="material-symbols-rounded" aria-hidden="true">play_arrow</span>
-          <h3>Recent History</h3>
+          <h3>[[t:dashboard.widgets.recentHistory]]</h3>
         </div>
         <div class="cw-dash-head-actions">
           <span id="recent-history-count-chip" class="cw-widget-count-chip hidden" aria-live="polite"></span>
-          <button id="recent-history-refresh" class="cw-dash-ghost" type="button" title="Refresh recent history" aria-label="Refresh recent history"><span class="material-symbols-rounded" aria-hidden="true">refresh</span></button>
+          <button id="recent-history-refresh" class="cw-dash-ghost" type="button" title="[[t:dashboard.widgets.refreshRecentHistory]]" aria-label="[[t:dashboard.widgets.refreshRecentHistory]]"><span class="material-symbols-rounded" aria-hidden="true">refresh</span></button>
         </div>
       </div>
       <div id="recent-history-list" class="cw-history-widget-list cw-widget-scrollbar" aria-live="polite"></div>
@@ -1206,11 +1220,11 @@ __CW_NAV_PROFILE_MENU__
       <div class="cw-dash-widget-head">
         <div class="cw-dash-title-row">
           <span class="material-symbols-rounded" aria-hidden="true">star</span>
-          <h3>Latest Ratings</h3>
+          <h3>[[t:dashboard.widgets.latestRatings]]</h3>
         </div>
         <div class="cw-dash-head-actions">
           <span id="latest-ratings-count-chip" class="cw-widget-count-chip hidden" aria-live="polite"></span>
-          <button id="latest-ratings-refresh" class="cw-dash-ghost" type="button" title="Refresh latest ratings" aria-label="Refresh latest ratings"><span class="material-symbols-rounded" aria-hidden="true">refresh</span></button>
+          <button id="latest-ratings-refresh" class="cw-dash-ghost" type="button" title="[[t:dashboard.widgets.refreshLatestRatings]]" aria-label="[[t:dashboard.widgets.refreshLatestRatings]]"><span class="material-symbols-rounded" aria-hidden="true">refresh</span></button>
         </div>
       </div>
       <div id="latest-ratings-grid" class="cw-ratings-widget-grid" aria-live="polite"></div>
@@ -1220,11 +1234,11 @@ __CW_NAV_PROFILE_MENU__
       <div class="cw-dash-widget-head">
         <div class="cw-dash-title-row">
           <span class="material-symbols-rounded" aria-hidden="true">sensors</span>
-          <h3>Recent Scrobble</h3>
+          <h3>[[t:dashboard.widgets.recentScrobble]]</h3>
         </div>
         <div class="cw-dash-head-actions">
           <span id="recent-scrobble-count-chip" class="cw-widget-count-chip hidden" aria-live="polite"></span>
-          <button id="recent-scrobble-refresh" class="cw-dash-ghost" type="button" title="Refresh recent scrobble" aria-label="Refresh recent scrobble"><span class="material-symbols-rounded" aria-hidden="true">refresh</span></button>
+          <button id="recent-scrobble-refresh" class="cw-dash-ghost" type="button" title="[[t:dashboard.widgets.refreshRecentScrobble]]" aria-label="[[t:dashboard.widgets.refreshRecentScrobble]]"><span class="material-symbols-rounded" aria-hidden="true">refresh</span></button>
         </div>
       </div>
       <div id="recent-scrobble-list" class="cw-history-widget-list cw-widget-scrollbar" aria-live="polite"></div>
@@ -1234,11 +1248,11 @@ __CW_NAV_PROFILE_MENU__
       <div class="cw-dash-widget-head">
         <div class="cw-dash-title-row">
           <span class="material-symbols-rounded" aria-hidden="true">timelapse</span>
-          <h3>Recent Progress</h3>
+          <h3>[[t:dashboard.widgets.recentProgress]]</h3>
         </div>
         <div class="cw-dash-head-actions">
           <span id="recent-progress-count-chip" class="cw-widget-count-chip hidden" aria-live="polite"></span>
-          <button id="recent-progress-refresh" class="cw-dash-ghost" type="button" title="Refresh recent progress" aria-label="Refresh recent progress"><span class="material-symbols-rounded" aria-hidden="true">refresh</span></button>
+          <button id="recent-progress-refresh" class="cw-dash-ghost" type="button" title="[[t:dashboard.widgets.refreshRecentProgress]]" aria-label="[[t:dashboard.widgets.refreshRecentProgress]]"><span class="material-symbols-rounded" aria-hidden="true">refresh</span></button>
         </div>
       </div>
       <div id="recent-progress-list" class="cw-history-widget-list cw-widget-scrollbar" aria-live="polite"></div>
@@ -1248,11 +1262,11 @@ __CW_NAV_PROFILE_MENU__
       <div class="cw-dash-widget-head">
         <div class="cw-dash-title-row">
           <span class="material-symbols-rounded" aria-hidden="true">queue_music</span>
-          <h3>Recent Playlists</h3>
+          <h3>[[t:dashboard.widgets.recentPlaylists]]</h3>
         </div>
         <div class="cw-dash-head-actions">
           <span id="recent-playlists-count-chip" class="cw-widget-count-chip hidden" aria-live="polite"></span>
-          <button id="recent-playlists-refresh" class="cw-dash-ghost" type="button" title="Refresh recent playlists" aria-label="Refresh recent playlists"><span class="material-symbols-rounded" aria-hidden="true">refresh</span></button>
+          <button id="recent-playlists-refresh" class="cw-dash-ghost" type="button" title="[[t:dashboard.widgets.refreshRecentPlaylists]]" aria-label="[[t:dashboard.widgets.refreshRecentPlaylists]]"><span class="material-symbols-rounded" aria-hidden="true">refresh</span></button>
         </div>
       </div>
       <div id="recent-playlists-list" class="cw-history-widget-list cw-widget-scrollbar" aria-live="polite"></div>
@@ -1285,53 +1299,53 @@ __CW_NAV_PROFILE_MENU__
 
   <section id="page-settings" class="card hidden">
     <div id="cw-settings-shell">
-      <aside id="cw-settings-nav" aria-label="Settings navigation">
+      <aside id="cw-settings-nav" aria-label="[[t:settings.nav.label]]">
         <div class="cw-settings-nav-card">
-          <div class="cw-settings-nav-title">Settings</div>
+          <div class="cw-settings-nav-title">[[t:navigation.tabs.settings]]</div>
           <div class="cw-settings-nav-gear" aria-hidden="true"><span class="material-symbols-rounded">settings</span></div>
         </div>
 
-        <div class="cw-settings-nav-list" role="tablist" aria-label="Settings sections">
+        <div class="cw-settings-nav-list" role="tablist" aria-label="[[t:settings.nav.sections]]">
           <button type="button" class="cw-settings-nav-btn active" data-pane="overview" onclick="cwSettingsSelect?.('overview')">
             <span class="material-symbols-rounded">grid_view</span>
-            <span><strong>Setup</strong><small>Progress, status and next steps</small></span>
+            <span><strong>[[t:settings.panes.overview.title]]</strong><small>[[t:settings.panes.overview.sub]]</small></span>
             <span class="cw-settings-nav-chev" aria-hidden="true">chevron_right</span>
           </button>
           <button type="button" class="cw-settings-nav-btn" data-pane="providers" onclick="cwSettingsSelect?.('providers')">
             <span class="material-symbols-rounded">device_hub</span>
-            <span><strong>Connections</strong><small>Providers and metadata</small></span>
+            <span><strong>[[t:settings.panes.providers.title]]</strong><small>[[t:settings.panes.providers.sub]]</small></span>
             <span class="cw-settings-nav-chev" aria-hidden="true">chevron_right</span>
           </button>
           <button type="button" class="cw-settings-nav-btn" data-pane="sync" onclick="cwSettingsSelect?.('sync')">
             <span class="material-symbols-rounded">sync_alt</span>
-            <span><strong>Synchronization</strong><small>Sync pairs and routes</small></span>
+            <span><strong>[[t:settings.panes.sync.title]]</strong><small>[[t:settings.panes.sync.sub]]</small></span>
             <span class="cw-settings-nav-chev" aria-hidden="true">chevron_right</span>
           </button>
           <button type="button" class="cw-settings-nav-btn" data-pane="scrobbler" onclick="cwSettingsSelect?.('scrobbler')">
             <span class="material-symbols-rounded">sensors</span>
-            <span><strong>Scrobbler</strong><small>Webhook and watcher routes</small></span>
+            <span><strong>[[t:settings.panes.scrobbler.title]]</strong><small>[[t:settings.panes.scrobbler.sub]]</small></span>
             <span class="cw-settings-nav-chev" aria-hidden="true">chevron_right</span>
           </button>
           <button type="button" class="cw-settings-nav-btn" data-pane="scheduling" onclick="cwSettingsSelect?.('scheduling')">
             <span class="material-symbols-rounded">schedule</span>
-            <span><strong>Scheduling</strong><small>Jobs and automation</small></span>
+            <span><strong>[[t:settings.panes.scheduling.title]]</strong><small>[[t:settings.panes.scheduling.sub]]</small></span>
             <span class="cw-settings-nav-chev" aria-hidden="true">chevron_right</span>
           </button>
           <button type="button" class="cw-settings-nav-btn" data-pane="app" onclick="cwSettingsSelect?.('app')">
             <span class="material-symbols-rounded">security</span>
-            <span><strong>UI and Security</strong><small>Interface and auth</small></span>
+            <span><strong>[[t:settings.panes.app.title]]</strong><small>[[t:settings.panes.app.sub]]</small></span>
             <span class="cw-settings-nav-chev" aria-hidden="true">chevron_right</span>
           </button>
           <button type="button" class="cw-settings-nav-btn" data-pane="maintenance" onclick="cwSettingsSelect?.('maintenance')">
             <span class="material-symbols-rounded">build</span>
-            <span><strong>Maintenance</strong><small>Tools and diagnostics</small></span>
+            <span><strong>[[t:settings.panes.maintenance.title]]</strong><small>[[t:settings.panes.maintenance.sub]]</small></span>
             <span class="cw-settings-nav-chev" aria-hidden="true">chevron_right</span>
           </button>
         </div>
 
         <div class="cw-settings-nav-footer">
           <button type="button" class="cw-settings-help-card" onclick="openHelp?.()">
-            <span><strong>Need help?</strong><small>View documentation</small></span>
+            <span><strong>[[t:settings.nav.needHelp]]</strong><small>[[t:settings.nav.viewDocs]]</small></span>
             <span class="material-symbols-rounded" aria-hidden="true">open_in_new</span>
           </button>
         </div>
@@ -1342,9 +1356,9 @@ __CW_NAV_PROFILE_MENU__
         <section id="cw-settings-overview" class="cw-settings-pane active" data-pane="overview">
           <div class="cw-settings-pane-head cw-settings-hero cw-settings-hero-overview">
             <div>
-              <div class="cw-settings-pane-kicker">Setup</div>
-              <h3>Progress, status and next steps</h3>
-              <p>Track your setup progress and configure core areas.</p>
+              <div class="cw-settings-pane-kicker">[[t:settings.panes.overview.title]]</div>
+              <h3>[[t:settings.panes.overview.sub]]</h3>
+              <p>[[t:settings.overview.intro]]</p>
             </div>
             <span class="material-symbols-rounded cw-settings-hero-shape" aria-hidden="true">grid_view</span>
           </div>
@@ -1356,69 +1370,69 @@ __CW_NAV_PROFILE_MENU__
                     <span id="cw-settings-progress-count">0/4</span>
                   </div>
                   <div class="cw-settings-progress-copy">
-                    <strong id="cw-settings-hero-title">Setup progress</strong>
-                    <span id="cw-settings-hero-copy">Checking your CrossWatch setup.</span>
-                    <span class="cw-settings-hero-progress-value" id="cw-settings-progress-text">0 of 4 steps ready</span>
+                    <strong id="cw-settings-hero-title">[[t:settings.overview.progressTitle]]</strong>
+                    <span id="cw-settings-hero-copy">[[t:settings.overview.checking]]</span>
+                    <span class="cw-settings-hero-progress-value" id="cw-settings-progress-text">[[t:settings.overview.progressInitial]]</span>
                     <span class="cw-settings-progress-track" aria-hidden="true"><span id="cw-settings-progress-bar"></span></span>
                   </div>
                 </div>
-                <div class="cw-settings-progress-steps" aria-label="Setup progress areas">
-                  <span class="cw-settings-progress-node" data-step-node="auth"><span class="material-symbols-rounded">check</span><small>Connections</small></span>
-                  <span class="cw-settings-progress-node" data-step-node="meta"><span class="material-symbols-rounded">check</span><small>Metadata</small></span>
-                  <span class="cw-settings-progress-node" data-step-node="sync"><span class="material-symbols-rounded">check</span><small>Synchronization</small></span>
-                  <span class="cw-settings-progress-node" data-step-node="scheduling"><span class="material-symbols-rounded">check</span><small>Automation</small></span>
+                <div class="cw-settings-progress-steps" aria-label="[[t:settings.overview.progressAreas]]">
+                  <span class="cw-settings-progress-node" data-step-node="auth"><span class="material-symbols-rounded">check</span><small>[[t:settings.overview.areas.connections]]</small></span>
+                  <span class="cw-settings-progress-node" data-step-node="meta"><span class="material-symbols-rounded">check</span><small>[[t:settings.overview.areas.metadata]]</small></span>
+                  <span class="cw-settings-progress-node" data-step-node="sync"><span class="material-symbols-rounded">check</span><small>[[t:settings.overview.areas.sync]]</small></span>
+                  <span class="cw-settings-progress-node" data-step-node="scheduling"><span class="material-symbols-rounded">check</span><small>[[t:settings.overview.areas.automation]]</small></span>
                 </div>
               </section>
 
-              <section class="cw-settings-setup-card-list" aria-label="Setup areas">
+              <section class="cw-settings-setup-card-list" aria-label="[[t:settings.overview.setupAreas]]">
                 <div class="cw-settings-setup-table">
                   <article class="cw-settings-setup-step cw-settings-setup-row" data-step="auth" role="button" tabindex="0" onclick="cwSettingsOverviewGo?.('auth')" onkeydown="cwSettingsStepKey?.(event,'auth')">
                     <span class="cw-settings-setup-area">
                       <span class="cw-settings-management-icon material-symbols-rounded" aria-hidden="true">device_hub</span>
                       <span>
-                        <strong>Connections</strong>
-                        <span class="cw-settings-step-copy" id="cw-settings-step-auth-copy">Connect your media services and metadata providers.</span>
+                        <strong>[[t:settings.overview.areas.connections]]</strong>
+                        <span class="cw-settings-step-copy" id="cw-settings-step-auth-copy">[[t:settings.overview.steps.auth.copy]]</span>
                       </span>
                     </span>
-                    <span class="cw-settings-step-state" id="cw-settings-step-auth-state">Needs setup</span>
-                    <span class="cw-settings-step-detail" id="cw-settings-step-auth-detail">No providers</span>
-                    <button type="button" class="cw-settings-step-link" id="cw-settings-step-auth-link" onclick="event.stopPropagation(); cwSettingsOverviewGo?.('auth')">Manage</button>
+                    <span class="cw-settings-step-state" id="cw-settings-step-auth-state">[[t:settings.overview.state.needsSetup]]</span>
+                    <span class="cw-settings-step-detail" id="cw-settings-step-auth-detail">[[t:settings.overview.steps.auth.none]]</span>
+                    <button type="button" class="cw-settings-step-link" id="cw-settings-step-auth-link" onclick="event.stopPropagation(); cwSettingsOverviewGo?.('auth')">[[t:common.actions.manage]]</button>
                   </article>
                   <article class="cw-settings-setup-step cw-settings-setup-row" data-step="meta" role="button" tabindex="0" onclick="cwSettingsOverviewGo?.('meta')" onkeydown="cwSettingsStepKey?.(event,'meta')">
                     <span class="cw-settings-setup-area">
                       <span class="cw-settings-management-icon material-symbols-rounded" aria-hidden="true">database</span>
                       <span>
-                        <strong>Metadata</strong>
-                        <span class="cw-settings-step-copy" id="cw-settings-step-meta-copy">Configure metadata sources and refresh settings.</span>
+                        <strong>[[t:settings.overview.areas.metadata]]</strong>
+                        <span class="cw-settings-step-copy" id="cw-settings-step-meta-copy">[[t:settings.overview.steps.meta.copy]]</span>
                       </span>
                     </span>
-                    <span class="cw-settings-step-state" id="cw-settings-step-meta-state">Missing</span>
-                    <span class="cw-settings-step-detail" id="cw-settings-step-meta-detail">Configure metadata sources</span>
-                    <button type="button" class="cw-settings-step-link" id="cw-settings-step-meta-link" onclick="event.stopPropagation(); cwSettingsOverviewGo?.('meta')">Manage</button>
+                    <span class="cw-settings-step-state" id="cw-settings-step-meta-state">[[t:settings.overview.state.missing]]</span>
+                    <span class="cw-settings-step-detail" id="cw-settings-step-meta-detail">[[t:settings.overview.steps.meta.none]]</span>
+                    <button type="button" class="cw-settings-step-link" id="cw-settings-step-meta-link" onclick="event.stopPropagation(); cwSettingsOverviewGo?.('meta')">[[t:common.actions.manage]]</button>
                   </article>
                   <article class="cw-settings-setup-step cw-settings-setup-row" data-step="sync" role="button" tabindex="0" onclick="cwSettingsOverviewGo?.('sync')" onkeydown="cwSettingsStepKey?.(event,'sync')">
                     <span class="cw-settings-setup-area">
                       <span class="cw-settings-management-icon material-symbols-rounded" aria-hidden="true">sync_alt</span>
                       <span>
-                        <strong>Synchronization</strong>
-                        <span class="cw-settings-step-copy" id="cw-settings-step-sync-copy">Manage sync pairs, routes and history.</span>
+                        <strong>[[t:settings.overview.areas.sync]]</strong>
+                        <span class="cw-settings-step-copy" id="cw-settings-step-sync-copy">[[t:settings.overview.steps.sync.copy]]</span>
                       </span>
                     </span>
-                    <span class="cw-settings-step-state" id="cw-settings-step-sync-state">Optional</span>
-                    <span class="cw-settings-step-detail" id="cw-settings-step-sync-detail">No pairs configured</span>
-                    <button type="button" class="cw-settings-step-link" id="cw-settings-step-sync-link" onclick="event.stopPropagation(); cwSettingsOverviewGo?.('sync')">Manage</button>
+                    <span class="cw-settings-step-state" id="cw-settings-step-sync-state">[[t:settings.overview.state.optional]]</span>
+                    <span class="cw-settings-step-detail" id="cw-settings-step-sync-detail">[[t:settings.overview.steps.sync.none]]</span>
+                    <button type="button" class="cw-settings-step-link" id="cw-settings-step-sync-link" onclick="event.stopPropagation(); cwSettingsOverviewGo?.('sync')">[[t:common.actions.manage]]</button>
                   </article>
                   <article class="cw-settings-setup-step cw-settings-setup-row" data-step="scheduling" role="button" tabindex="0" onclick="cwSettingsOverviewGo?.('scheduling')" onkeydown="cwSettingsStepKey?.(event,'scheduling')">
                     <span class="cw-settings-setup-area">
                       <span class="cw-settings-management-icon material-symbols-rounded" aria-hidden="true">schedule</span>
                       <span>
-                        <strong>Automation</strong>
-                        <span class="cw-settings-step-copy" id="cw-settings-step-scheduling-copy">Schedule jobs and manage automation tasks.</span>
+                        <strong>[[t:settings.overview.areas.automation]]</strong>
+                        <span class="cw-settings-step-copy" id="cw-settings-step-scheduling-copy">[[t:settings.overview.steps.scheduling.copy]]</span>
                       </span>
                     </span>
-                    <span class="cw-settings-step-state" id="cw-settings-step-scheduling-state">Optional</span>
-                    <span class="cw-settings-step-detail" id="cw-settings-step-scheduling-detail">No automation enabled</span>
-                    <button type="button" class="cw-settings-step-link" id="cw-settings-step-scheduling-link" onclick="event.stopPropagation(); cwSettingsOverviewGo?.('scheduling')">Manage</button>
+                    <span class="cw-settings-step-state" id="cw-settings-step-scheduling-state">[[t:settings.overview.state.optional]]</span>
+                    <span class="cw-settings-step-detail" id="cw-settings-step-scheduling-detail">[[t:settings.overview.steps.scheduling.none]]</span>
+                    <button type="button" class="cw-settings-step-link" id="cw-settings-step-scheduling-link" onclick="event.stopPropagation(); cwSettingsOverviewGo?.('scheduling')">[[t:common.actions.manage]]</button>
                   </article>
                 </div>
               </section>
@@ -1435,23 +1449,23 @@ __CW_NAV_PROFILE_MENU__
               </div>
 
             </div>
-            <aside id="cw-settings-insight" aria-label="Settings Insight"></aside>
+            <aside id="cw-settings-insight" aria-label="[[t:settings.overview.insight]]"></aside>
           </div>
         </section>
 
         <section class="cw-settings-pane" data-pane="providers">
           <div class="cw-settings-pane-head cw-settings-hero cw-settings-hero-connections">
             <div>
-              <div class="cw-settings-pane-kicker">Connections</div>
-              <h3>Providers and metadata</h3>
-              <p>Connect media servers and/or Trackers first (Providers) then configure Metadata</p>
+              <div class="cw-settings-pane-kicker">[[t:settings.panes.providers.title]]</div>
+              <h3>[[t:settings.panes.providers.sub]]</h3>
+              <p>[[t:settings.providers.intro]]</p>
             </div>
             <div class="cw-settings-pane-head-actions">
-              <div class="cw-conn-hero-summary" aria-label="Connection actions">
-                <button type="button" class="cw-conn-seg" onclick="window.cwUserProfilesNew?.()"><span class="material-symbols-rounded" aria-hidden="true">add</span><span>Add profile</span></button>
-                <button type="button" class="cw-conn-seg" onclick="window.openAddMetadata?.()"><span class="material-symbols-rounded" aria-hidden="true">add</span><span>Add metadata</span></button>
-                <button type="button" class="cw-conn-seg" onclick="window.openAddConnection?.()"><span class="material-symbols-rounded" aria-hidden="true">add</span><span>Add provider</span></button>
-                <button type="button" id="cw-conn-refresh" class="cw-conn-refresh" title="Re-check connections" aria-label="Re-check connections"><span class="material-symbol" aria-hidden="true">refresh</span></button>
+              <div class="cw-conn-hero-summary" aria-label="[[t:settings.providers.actions]]">
+                <button type="button" class="cw-conn-seg" onclick="window.cwUserProfilesNew?.()"><span class="material-symbols-rounded" aria-hidden="true">add</span><span>[[t:settings.providers.addProfile]]</span></button>
+                <button type="button" class="cw-conn-seg" onclick="window.openAddMetadata?.()"><span class="material-symbols-rounded" aria-hidden="true">add</span><span>[[t:settings.providers.addMetadata]]</span></button>
+                <button type="button" class="cw-conn-seg" onclick="window.openAddConnection?.()"><span class="material-symbols-rounded" aria-hidden="true">add</span><span>[[t:settings.providers.addProvider]]</span></button>
+                <button type="button" id="cw-conn-refresh" class="cw-conn-refresh" title="[[t:settings.providers.recheck]]" aria-label="[[t:settings.providers.recheck]]"><span class="material-symbol" aria-hidden="true">refresh</span></button>
               </div>
             </div>
             <span class="material-symbols-rounded cw-settings-hero-shape" aria-hidden="true">hub</span>
@@ -1470,16 +1484,16 @@ __CW_NAV_PROFILE_MENU__
         <section class="cw-settings-pane" data-pane="sync">
           <div class="cw-settings-pane-head cw-settings-hero cw-settings-hero-sync">
             <div>
-              <div class="cw-settings-pane-kicker">Synchronization</div>
-              <h3>Sync pairs</h3>
-              <p>Choose providers and manage how data syncs between them.</p>
+              <div class="cw-settings-pane-kicker">[[t:settings.panes.sync.title]]</div>
+              <h3>[[t:settings.sync.title]]</h3>
+              <p>[[t:settings.sync.intro]]</p>
             </div>
             <div class="cw-settings-pane-head-actions">
-              <div class="cw-conn-hero-summary" aria-label="Sync summary">
-                <div class="cw-conn-seg is-stat"><strong id="cw-sync-stat-providers">0</strong><span>Providers</span></div>
-                <div class="cw-conn-seg is-stat"><strong id="cw-sync-stat-active">0</strong><span>Active pairs</span></div>
-                <div class="cw-conn-seg is-stat"><strong id="cw-sync-stat-disabled">0</strong><span>Disabled pairs</span></div>
-                <button type="button" id="cw-sync-refresh" class="cw-conn-refresh" title="Refresh providers and pairs" aria-label="Refresh providers and pairs"><span class="material-symbol" aria-hidden="true">refresh</span></button>
+              <div class="cw-conn-hero-summary" aria-label="[[t:settings.sync.summary]]">
+                <div class="cw-conn-seg is-stat"><strong id="cw-sync-stat-providers">0</strong><span>[[t:settings.sync.providers]]</span></div>
+                <div class="cw-conn-seg is-stat"><strong id="cw-sync-stat-active">0</strong><span>[[t:settings.sync.activePairs]]</span></div>
+                <div class="cw-conn-seg is-stat"><strong id="cw-sync-stat-disabled">0</strong><span>[[t:settings.sync.disabledPairs]]</span></div>
+                <button type="button" id="cw-sync-refresh" class="cw-conn-refresh" title="[[t:settings.sync.refresh]]" aria-label="[[t:settings.sync.refresh]]"><span class="material-symbol" aria-hidden="true">refresh</span></button>
               </div>
             </div>
             <span class="material-symbols-rounded cw-settings-hero-shape" aria-hidden="true">sync_alt</span>
@@ -1488,12 +1502,12 @@ __CW_NAV_PROFILE_MENU__
             <div class="section open cw-settings-section" id="sec-sync" data-accordion="off">
               <div class="body">
                 <div id="providers_list" class="grid2"></div>
-                <div class="sep"></div><h4 class="cw-sync-subhead">Pairs</h4>
-                <section id="sync-topology-health" class="topology-summary" aria-label="Topology health"></section>
+                <div class="sep"></div><h4 class="cw-sync-subhead">[[t:settings.sync.pairs]]</h4>
+                <section id="sync-topology-health" class="topology-summary" aria-label="[[t:settings.sync.topologyHealth]]"></section>
                 <div id="pairs_list"></div>
                 <div class="footer"><div class="pair-selectors" style="margin-top:1em;">
-                  <label for="source-provider" style="margin-right:1em;">Source:</label><select id="source-provider" name="source_provider" style="margin-left:.5em;"></select>
-                  <label for="target-provider">Target:</label><select id="target-provider" name="target_provider" style="margin-left:.5em;"></select>
+                  <label for="source-provider" style="margin-right:1em;">[[t:settings.sync.source]]</label><select id="source-provider" name="source_provider" style="margin-left:.5em;"></select>
+                  <label for="target-provider">[[t:settings.sync.target]]</label><select id="target-provider" name="target_provider" style="margin-left:.5em;"></select>
                 </div></div>
               </div>
             </div>
@@ -1503,15 +1517,15 @@ __CW_NAV_PROFILE_MENU__
         <section class="cw-settings-pane" data-pane="scheduling">
           <div class="cw-settings-pane-head cw-settings-hero cw-settings-hero-scheduling">
             <div>
-              <div class="cw-settings-pane-kicker">Scheduling</div>
-              <h3>Run automation</h3>
+              <div class="cw-settings-pane-kicker">[[t:settings.panes.scheduling.title]]</div>
+              <h3>[[t:sync.schedule.runAutomation]]</h3>
             </div>
             <div class="cw-settings-pane-head-actions">
-              <div class="cw-conn-hero-summary" id="sched-pane-tabs" aria-label="Scheduling sections">
-                <button type="button" class="cw-conn-seg active" data-sub="basic">Standard</button>
-                <button type="button" class="cw-conn-seg" data-sub="advanced">Advanced</button>
-                <button type="button" class="cw-conn-seg" data-sub="webhooks">Webhooks</button>
-                <button type="button" id="cw-sched-refresh" class="cw-conn-refresh" title="Refresh scheduling" aria-label="Refresh scheduling"><span class="material-symbol" aria-hidden="true">refresh</span></button>
+              <div class="cw-conn-hero-summary" id="sched-pane-tabs" aria-label="[[t:sync.schedule.sections]]">
+                <button type="button" class="cw-conn-seg active" data-sub="basic">[[t:sync.schedule.tabs.standard]]</button>
+                <button type="button" class="cw-conn-seg" data-sub="advanced">[[t:sync.schedule.tabs.advanced]]</button>
+                <button type="button" class="cw-conn-seg" data-sub="webhooks">[[t:sync.schedule.tabs.webhooks]]</button>
+                <button type="button" id="cw-sched-refresh" class="cw-conn-refresh" title="[[t:sync.schedule.refresh]]" aria-label="[[t:sync.schedule.refresh]]"><span class="material-symbol" aria-hidden="true">refresh</span></button>
               </div>
             </div>
             <span class="material-symbols-rounded cw-settings-hero-shape" aria-hidden="true">event_repeat</span>
@@ -1521,12 +1535,12 @@ __CW_NAV_PROFILE_MENU__
               <div id="sched-provider-panel" class="cw-panel hidden"></div>
               <div id="sched-provider-raw" class="hidden">
                 <div class="grid2">
-                  <div><label for="schEnabled">Enable</label><select id="schEnabled" name="schEnabled"><option value="false">Disabled</option><option value="true">Enabled</option></select></div>
-                  <div><label for="schMode">Frequency</label><select id="schMode" name="schMode"><option value="hourly">Every hour</option><option value="every_n_hours">Every N hours</option><option value="daily_time">Daily at...</option><option value="custom_interval">Custom</option></select></div>
-                  <div><label for="schN">Every N hours</label><input id="schN" name="schN" type="number" min="2" value="12"></div>
-                  <div><label for="schTime">Time</label><input id="schTime" name="schTime" type="time" value="03:30"></div>
-                  <div><label for="schCustomValue">Custom interval</label><input id="schCustomValue" name="schCustomValue" type="number" min="15" step="15" value="60"></div>
-                  <div><label for="schCustomUnit">Custom unit</label><select id="schCustomUnit" name="schCustomUnit"><option value="minutes">Minutes</option><option value="hours">Hours</option></select></div>
+                  <div><label for="schEnabled">[[t:common.actions.enable]]</label><select id="schEnabled" name="schEnabled"><option value="false">[[t:common.status.disabled]]</option><option value="true">[[t:common.status.enabled]]</option></select></div>
+                  <div><label for="schMode">[[t:sync.schedule.frequency]]</label><select id="schMode" name="schMode"><option value="hourly">[[t:sync.schedule.mode.hourly]]</option><option value="every_n_hours">[[t:sync.schedule.mode.everyN]]</option><option value="daily_time">[[t:sync.schedule.mode.daily]]</option><option value="custom_interval">[[t:sync.schedule.mode.custom]]</option></select></div>
+                  <div><label for="schN">[[t:sync.schedule.mode.everyN]]</label><input id="schN" name="schN" type="number" min="2" value="12"></div>
+                  <div><label for="schTime">[[t:sync.schedule.time]]</label><input id="schTime" name="schTime" type="time" value="03:30"></div>
+                  <div><label for="schCustomValue">[[t:sync.schedule.customInterval]]</label><input id="schCustomValue" name="schCustomValue" type="number" min="15" step="15" value="60"></div>
+                  <div><label for="schCustomUnit">[[t:sync.schedule.customUnit]]</label><select id="schCustomUnit" name="schCustomUnit"><option value="minutes">[[t:common.units.minutes]]</option><option value="hours">[[t:common.units.hours]]</option></select></div>
                 </div>
                 <div id="sched_advanced_mount"></div>
                 <div id="sched_webhooks_mount"></div>
@@ -1541,13 +1555,13 @@ __CW_NAV_PROFILE_MENU__
               <div class="sc2-page">
                 <div class="cw-settings-pane-head cw-settings-hero cw-settings-hero-scrobbler sc2-pane-head">
                   <div>
-                    <div class="cw-settings-pane-kicker">Scrobbler</div>
-                    <h3>Webhooks and Watcher</h3>
-                    <p>Receive real time scrobbles via Watcher routes or webhooks. <b>Watcher is recommended</b> Only use both for specific use cases!</p>
+                    <div class="cw-settings-pane-kicker">[[t:settings.panes.scrobbler.title]]</div>
+                    <h3>[[t:scrobbler.pane.title]]</h3>
+                    <p>[[t:scrobbler.pane.intro]] <b>[[t:scrobbler.pane.recommended]]</b> [[t:scrobbler.pane.bothWarning]]</p>
                   </div>
                   <span class="material-symbols-rounded cw-settings-hero-shape" aria-hidden="true">sensors</span>
                 </div>
-                <div class="sc2-empty">Loading Scrobbler...</div>
+                <div class="sc2-empty">[[t:scrobbler.pane.loading]]</div>
               </div>
             </div>
           </div>
@@ -1556,14 +1570,14 @@ __CW_NAV_PROFILE_MENU__
         <section class="cw-settings-pane cw-app-settings-pane" data-pane="app">
           <div class="cw-settings-pane-head cw-app-hero">
             <div class="cw-app-hero-copy">
-              <div class="cw-settings-pane-kicker">UI and Security</div>
-              <h3>Interface and security</h3>
-              <p>Customize your experience and manage access to CrossWatch.</p>
+              <div class="cw-settings-pane-kicker">[[t:settings.panes.app.title]]</div>
+              <h3>[[t:settings.app.subtitle]]</h3>
+              <p>[[t:settings.app.intro]]</p>
             </div>
-            <div class="cw-conn-hero-summary" aria-label="UI settings sections">
-              <button type="button" class="cw-conn-seg active" aria-current="page" data-target="ui" onclick="cwUiSettingsJump?.('ui')">User Interface</button>
-              <button type="button" class="cw-conn-seg" data-target="security" onclick="cwUiSettingsJump?.('security')">Security</button>
-              <button type="button" id="cw-app-refresh" class="cw-conn-refresh" title="Refresh settings and users" aria-label="Refresh settings and users"><span class="material-symbol" aria-hidden="true">refresh</span></button>
+            <div class="cw-conn-hero-summary" aria-label="[[t:settings.app.sections]]">
+              <button type="button" class="cw-conn-seg active" aria-current="page" data-target="ui" onclick="cwUiSettingsJump?.('ui')">[[t:settings.app.tabs.ui]]</button>
+              <button type="button" class="cw-conn-seg" data-target="security" onclick="cwUiSettingsJump?.('security')">[[t:settings.app.tabs.security]]</button>
+              <button type="button" id="cw-app-refresh" class="cw-conn-refresh" title="[[t:settings.app.refresh]]" aria-label="[[t:settings.app.refresh]]"><span class="material-symbol" aria-hidden="true">refresh</span></button>
             </div>
             <span class="material-symbols-rounded cw-app-hero-shape active" data-app-hero-shape="ui" aria-hidden="true">settings</span>
             <span class="material-symbols-rounded cw-app-hero-shape" data-app-hero-shape="security" aria-hidden="true">settings</span>
@@ -1571,7 +1585,7 @@ __CW_NAV_PROFILE_MENU__
           <div class="section open cw-settings-section cw-app-section" id="sec-ui" data-accordion="off">
             <div class="head" style="display:flex;align-items:center">
               <span class="chev"></span>
-              <strong>Settings (UI / Security)</strong>
+              <strong>[[t:settings.app.heading]]</strong>
             </div>
             <div class="body">
 
@@ -1584,30 +1598,30 @@ __CW_NAV_PROFILE_MENU__
                       <div class="cw-app-card-head">
                         <span class="material-symbols-rounded cw-app-card-icon" aria-hidden="true">dashboard_customize</span>
                         <div>
-                          <h4 class="cw-page-settings-title">Dashboard widgets</h4>
-                          <div class="sub">Control which widgets appear on the dashboard.</div>
+                          <h4 class="cw-page-settings-title">[[t:settings.ui.widgets.title]]</h4>
+                          <div class="sub">[[t:settings.ui.widgets.intro]]</div>
                         </div>
                       </div>
                       <div class="cw-page-settings-columns">
                         <div class="cw-page-settings-column">
                           <div class="cw-page-settings-row">
                             <div class="cw-field-label-row">
-                              <label class="cw-page-settings-label" for="ui_show_watchlist_preview">Watchlist widget</label>
-                              <button type="button" class="cw-field-help material-symbols-rounded" title="Watchlist widget: Shows or hides the dashboard Watchlist card on the Main screen." aria-label="Watchlist widget setting help">help</button>
+                              <label class="cw-page-settings-label" for="ui_show_watchlist_preview">[[t:settings.ui.widgets.watchlist]]</label>
+                              <button type="button" class="cw-field-help material-symbols-rounded" title="[[t:settings.ui.widgets.watchlistHelp]]" aria-label="[[t:settings.ui.widgets.watchlistHelpLabel]]">help</button>
                             </div>
                             <span class="cw-page-settings-switch"><input id="ui_show_watchlist_preview" name="ui_show_watchlist_preview" type="checkbox" role="switch" checked><span aria-hidden="true"></span></span>
                           </div>
                           <div class="cw-page-settings-row">
                             <div class="cw-field-label-row">
-                              <label class="cw-page-settings-label" for="ui_show_latest_ratings_widget">Latest ratings widget</label>
-                              <button type="button" class="cw-field-help material-symbols-rounded" title="Latest ratings widget: Shows or hides the Main screen latest ratings poster widget below Watchlist." aria-label="Latest ratings widget setting help">help</button>
+                              <label class="cw-page-settings-label" for="ui_show_latest_ratings_widget">[[t:settings.ui.widgets.ratings]]</label>
+                              <button type="button" class="cw-field-help material-symbols-rounded" title="[[t:settings.ui.widgets.ratingsHelp]]" aria-label="[[t:settings.ui.widgets.ratingsHelpLabel]]">help</button>
                             </div>
                             <span class="cw-page-settings-switch"><input id="ui_show_latest_ratings_widget" name="ui_show_latest_ratings_widget" type="checkbox" role="switch" checked><span aria-hidden="true"></span></span>
                           </div>
                           <div class="cw-page-settings-row">
                             <div class="cw-field-label-row">
-                              <label class="cw-page-settings-label" for="ui_show_recent_progress_widget">Recent progress widget</label>
-                              <button type="button" class="cw-field-help material-symbols-rounded" title="Recent Progress widget: Shows or hides the Main screen recent progress sync activity widget." aria-label="Recent Progress widget setting help">help</button>
+                              <label class="cw-page-settings-label" for="ui_show_recent_progress_widget">[[t:settings.ui.widgets.progress]]</label>
+                              <button type="button" class="cw-field-help material-symbols-rounded" title="[[t:settings.ui.widgets.progressHelp]]" aria-label="[[t:settings.ui.widgets.progressHelpLabel]]">help</button>
                             </div>
                             <span class="cw-page-settings-switch"><input id="ui_show_recent_progress_widget" name="ui_show_recent_progress_widget" type="checkbox" role="switch"><span aria-hidden="true"></span></span>
                           </div>
@@ -1615,22 +1629,22 @@ __CW_NAV_PROFILE_MENU__
                         <div class="cw-page-settings-column">
                           <div class="cw-page-settings-row">
                             <div class="cw-field-label-row">
-                              <label class="cw-page-settings-label" for="ui_show_recent_history_widget">Recent history widget</label>
-                              <button type="button" class="cw-field-help material-symbols-rounded" title="Recent history widget: Shows or hides the Main screen media history widget below Watchlist." aria-label="Recent history widget setting help">help</button>
+                              <label class="cw-page-settings-label" for="ui_show_recent_history_widget">[[t:settings.ui.widgets.history]]</label>
+                              <button type="button" class="cw-field-help material-symbols-rounded" title="[[t:settings.ui.widgets.historyHelp]]" aria-label="[[t:settings.ui.widgets.historyHelpLabel]]">help</button>
                             </div>
                             <span class="cw-page-settings-switch"><input id="ui_show_recent_history_widget" name="ui_show_recent_history_widget" type="checkbox" role="switch" checked><span aria-hidden="true"></span></span>
                           </div>
                           <div class="cw-page-settings-row">
                             <div class="cw-field-label-row">
-                              <label class="cw-page-settings-label" for="ui_show_recent_scrobble_widget">Recent scrobble widget</label>
-                              <button type="button" class="cw-field-help material-symbols-rounded" title="Recent Scrobble widget: Shows or hides the Main screen recent scrobble widget below Watchlist." aria-label="Recent Scrobble widget setting help">help</button>
+                              <label class="cw-page-settings-label" for="ui_show_recent_scrobble_widget">[[t:settings.ui.widgets.scrobble]]</label>
+                              <button type="button" class="cw-field-help material-symbols-rounded" title="[[t:settings.ui.widgets.scrobbleHelp]]" aria-label="[[t:settings.ui.widgets.scrobbleHelpLabel]]">help</button>
                             </div>
                             <span class="cw-page-settings-switch"><input id="ui_show_recent_scrobble_widget" name="ui_show_recent_scrobble_widget" type="checkbox" role="switch" checked><span aria-hidden="true"></span></span>
                           </div>
                           <div class="cw-page-settings-row">
                             <div class="cw-field-label-row">
-                              <label class="cw-page-settings-label" for="ui_show_recent_playlists_widget">Recent playlists widget</label>
-                              <button type="button" class="cw-field-help material-symbols-rounded" title="Recent Playlists widget: Shows or hides the Main screen recent playlist sync activity widget." aria-label="Recent Playlists widget setting help">help</button>
+                              <label class="cw-page-settings-label" for="ui_show_recent_playlists_widget">[[t:settings.ui.widgets.playlists]]</label>
+                              <button type="button" class="cw-field-help material-symbols-rounded" title="[[t:settings.ui.widgets.playlistsHelp]]" aria-label="[[t:settings.ui.widgets.playlistsHelpLabel]]">help</button>
                             </div>
                             <span class="cw-page-settings-switch"><input id="ui_show_recent_playlists_widget" name="ui_show_recent_playlists_widget" type="checkbox" role="switch"><span aria-hidden="true"></span></span>
                           </div>
@@ -1642,37 +1656,37 @@ __CW_NAV_PROFILE_MENU__
                       <div class="cw-app-card-head">
                         <span class="material-symbols-rounded cw-app-card-icon" aria-hidden="true">visibility</span>
                         <div>
-                          <h4 class="cw-page-settings-title">Visibility</h4>
-                          <div class="sub">Manage what information is displayed in the UI.</div>
+                          <h4 class="cw-page-settings-title">[[t:settings.ui.visibility.title]]</h4>
+                          <div class="sub">[[t:settings.ui.visibility.intro]]</div>
                         </div>
                       </div>
                       <div class="cw-page-settings-columns">
                         <div class="cw-page-settings-column">
                           <div class="cw-page-settings-row">
                             <div class="cw-field-label-row">
-                              <label class="cw-page-settings-label" for="ui_show_playingcard">Playing card</label>
-                              <button type="button" class="cw-field-help material-symbols-rounded" title="Playing card: Shows or hides the currently playing card on the Main screen." aria-label="Playing card setting help">help</button>
+                              <label class="cw-page-settings-label" for="ui_show_playingcard">[[t:settings.ui.visibility.playingCard]]</label>
+                              <button type="button" class="cw-field-help material-symbols-rounded" title="[[t:settings.ui.visibility.playingCardHelp]]" aria-label="[[t:settings.ui.visibility.playingCardHelpLabel]]">help</button>
                             </div>
                             <span class="cw-page-settings-switch"><input id="ui_show_playingcard" name="ui_show_playingcard" type="checkbox" role="switch" checked><span aria-hidden="true"></span></span>
                           </div>
                           <div class="cw-page-settings-row">
                             <div class="cw-field-label-row">
-                              <label class="cw-page-settings-label" for="ui_show_recent_activity">Recent scrobble list</label>
-                              <button type="button" class="cw-field-help material-symbols-rounded" title="Recent Scrobble list: Shows or hides the Main screen text list of locally recorded scrobbled movies and episodes." aria-label="Recent Scrobble list setting help">help</button>
+                              <label class="cw-page-settings-label" for="ui_show_recent_activity">[[t:settings.ui.visibility.scrobbleList]]</label>
+                              <button type="button" class="cw-field-help material-symbols-rounded" title="[[t:settings.ui.visibility.scrobbleListHelp]]" aria-label="[[t:settings.ui.visibility.scrobbleListHelpLabel]]">help</button>
                             </div>
                             <span class="cw-page-settings-switch"><input id="ui_show_recent_activity" name="ui_show_recent_activity" type="checkbox" role="switch" checked><span aria-hidden="true"></span></span>
                           </div>
                           <div class="cw-page-settings-row">
                             <div class="cw-field-label-row">
-                              <label class="cw-page-settings-label" for="ui_show_quick_add_desktop">Desktop quick add</label>
-                              <button type="button" class="cw-field-help material-symbols-rounded" title="Desktop quick add: Shows or hides the quick-add control on larger screens." aria-label="Desktop quick add setting help">help</button>
+                              <label class="cw-page-settings-label" for="ui_show_quick_add_desktop">[[t:settings.ui.visibility.quickAddDesktop]]</label>
+                              <button type="button" class="cw-field-help material-symbols-rounded" title="[[t:settings.ui.visibility.quickAddDesktopHelp]]" aria-label="[[t:settings.ui.visibility.quickAddDesktopHelpLabel]]">help</button>
                             </div>
                             <span class="cw-page-settings-switch"><input id="ui_show_quick_add_desktop" name="ui_show_quick_add_desktop" type="checkbox" role="switch" checked><span aria-hidden="true"></span></span>
                           </div>
                           <div class="cw-page-settings-row">
                             <div class="cw-field-label-row">
-                              <label class="cw-page-settings-label" for="ui_show_quick_add_mobile">Mobile quick add</label>
-                              <button type="button" class="cw-field-help material-symbols-rounded" title="Mobile quick add: Shows or hides the compact quick-add control on mobile layouts." aria-label="Mobile quick add setting help">help</button>
+                              <label class="cw-page-settings-label" for="ui_show_quick_add_mobile">[[t:settings.ui.visibility.quickAddMobile]]</label>
+                              <button type="button" class="cw-field-help material-symbols-rounded" title="[[t:settings.ui.visibility.quickAddMobileHelp]]" aria-label="[[t:settings.ui.visibility.quickAddMobileHelpLabel]]">help</button>
                             </div>
                             <span class="cw-page-settings-switch"><input id="ui_show_quick_add_mobile" name="ui_show_quick_add_mobile" type="checkbox" role="switch" checked><span aria-hidden="true"></span></span>
                           </div>
@@ -1680,30 +1694,30 @@ __CW_NAV_PROFILE_MENU__
                         <div class="cw-page-settings-column">
                           <div class="cw-page-settings-row">
                             <div class="cw-field-label-row">
-                              <label class="cw-page-settings-label" for="ui_recent_activity_display">Recent scrobble display</label>
-                              <button type="button" class="cw-field-help material-symbols-rounded" title="Recent Scrobble display: Choose a fixed number of rows, or show items from the last 24, 48, or 72 hours with a maximum of 5 rows." aria-label="Recent Scrobble display setting help">help</button>
+                              <label class="cw-page-settings-label" for="ui_recent_activity_display">[[t:settings.ui.visibility.scrobbleDisplay]]</label>
+                              <button type="button" class="cw-field-help material-symbols-rounded" title="[[t:settings.ui.visibility.scrobbleDisplayHelp]]" aria-label="[[t:settings.ui.visibility.scrobbleDisplayHelpLabel]]">help</button>
                             </div>
                             <select id="ui_recent_activity_display" name="ui_recent_activity_display">
-                              <option value="count:3">Last 3 items</option>
-                              <option value="count:4">Last 4 items</option>
-                              <option value="count:5">Last 5 items</option>
-                              <option value="hours:24">Last 24 hours, max 5</option>
-                              <option value="hours:48">Last 48 hours, max 5</option>
-                              <option value="hours:72">Last 72 hours, max 5</option>
+                              <option value="count:3">[[t:settings.ui.recent.last3]]</option>
+                              <option value="count:4">[[t:settings.ui.recent.last4]]</option>
+                              <option value="count:5">[[t:settings.ui.recent.last5]]</option>
+                              <option value="hours:24">[[t:settings.ui.recent.hours24]]</option>
+                              <option value="hours:48">[[t:settings.ui.recent.hours48]]</option>
+                              <option value="hours:72">[[t:settings.ui.recent.hours72]]</option>
                             </select>
                           </div>
                           <div class="cw-page-settings-row">
                             <div class="cw-field-label-row">
-                              <label class="cw-page-settings-label" for="ui_recent_syncs_display">Recent syncs display</label>
-                              <button type="button" class="cw-field-help material-symbols-rounded" title="Recent syncs display: Choose a fixed number of rows, or show runs from the last 24, 48, or 72 hours with a maximum of 5 rows." aria-label="Recent syncs display setting help">help</button>
+                              <label class="cw-page-settings-label" for="ui_recent_syncs_display">[[t:settings.ui.visibility.syncsDisplay]]</label>
+                              <button type="button" class="cw-field-help material-symbols-rounded" title="[[t:settings.ui.visibility.syncsDisplayHelp]]" aria-label="[[t:settings.ui.visibility.syncsDisplayHelpLabel]]">help</button>
                             </div>
                             <select id="ui_recent_syncs_display" name="ui_recent_syncs_display">
-                              <option value="count:3">Last 3 items</option>
-                              <option value="count:4">Last 4 items</option>
-                              <option value="count:5">Last 5 items</option>
-                              <option value="hours:24">Last 24 hours, max 5</option>
-                              <option value="hours:48">Last 48 hours, max 5</option>
-                              <option value="hours:72">Last 72 hours, max 5</option>
+                              <option value="count:3">[[t:settings.ui.recent.last3]]</option>
+                              <option value="count:4">[[t:settings.ui.recent.last4]]</option>
+                              <option value="count:5">[[t:settings.ui.recent.last5]]</option>
+                              <option value="hours:24">[[t:settings.ui.recent.hours24]]</option>
+                              <option value="hours:48">[[t:settings.ui.recent.hours48]]</option>
+                              <option value="hours:72">[[t:settings.ui.recent.hours72]]</option>
                             </select>
                           </div>
                         </div>
@@ -1714,44 +1728,49 @@ __CW_NAV_PROFILE_MENU__
                       <div class="cw-app-card-head">
                         <span class="material-symbols-rounded cw-app-card-icon" aria-hidden="true">palette</span>
                         <div>
-                          <h4 class="cw-page-settings-title">Appearance and connection</h4>
-                          <div class="sub">Choose your appearance, media details and browser connection.</div>
+                          <h4 class="cw-page-settings-title">[[t:settings.ui.appearance.title]]</h4>
+                          <div class="sub">[[t:settings.ui.appearance.intro]]</div>
                         </div>
                       </div>
                       <div class="cw-settings-2col">
                         <div>
                           <div class="cw-field-label-row">
-                            <label class="cw-page-settings-label" for="ui_theme">Theme</label>
-                            <button type="button" class="cw-field-help material-symbols-rounded" title="Theme: Choose Flat dark, Flat light, or Original to use the classic CrossWatch styling." aria-label="Theme setting help">help</button>
+                            <label class="cw-page-settings-label" for="ui_theme">[[t:settings.ui.appearance.theme]]</label>
+                            <button type="button" class="cw-field-help material-symbols-rounded" title="[[t:settings.ui.appearance.themeHelp]]" aria-label="[[t:settings.ui.appearance.themeHelpLabel]]">help</button>
                           </div>
                           <select id="ui_theme" name="ui_theme">
-                            <option value="flat-dark">Flat dark</option>
-                            <option value="flat-light">Flat light</option>
-                            <option value="original">Original</option>
+                            <option value="flat-dark">[[t:settings.ui.appearance.flatDark]]</option>
+                            <option value="flat-light">[[t:settings.ui.appearance.flatLight]]</option>
+                            <option value="original">[[t:settings.ui.appearance.original]]</option>
                           </select>
                         </div>
                         <div>
-                          <div class="cw-field-label-row"><label class="cw-page-settings-label" for="ui_media_card">Media details</label></div>
+                          <div class="cw-field-label-row"><label class="cw-page-settings-label" for="ui_media_card">[[t:settings.ui.appearance.mediaDetails]]</label></div>
                           <select id="ui_media_card" data-cw-media-card>
-                            <option value="full">Full media card</option>
-                            <option value="compact">Compact media card</option>
+                            <option value="full">[[t:settings.ui.appearance.mediaCardFull]]</option>
+                            <option value="compact">[[t:settings.ui.appearance.mediaCardCompact]]</option>
                           </select>
-                          <div class="sub">Applies to Main and profile media details. Save to apply.</div>
+                          <div class="sub">[[t:settings.ui.appearance.mediaDetailsHint]]</div>
+                        </div>
+                        <div>
+                          <div class="cw-field-label-row"><label class="cw-page-settings-label" for="ui_language">[[t:common.language.label]]</label></div>
+                          <select id="ui_language" data-cw-language-select aria-describedby="ui_language_hint">__CW_LANGUAGE_OPTIONS__</select>
+                          <div class="sub" id="ui_language_hint" data-cw-language-status>__CW_LANGUAGE_HINT__</div>
                         </div>
                         <div>
                           <div class="cw-field-label-row">
-                            <label class="cw-page-settings-label" for="ui_protocol">UI protocol</label>
-                            <button type="button" class="cw-field-help material-symbols-rounded" title="UI protocol: HTTP is simplest. HTTPS serves CrossWatch with a self-signed certificate for encrypted browser traffic." aria-label="UI protocol setting help">help</button>
+                            <label class="cw-page-settings-label" for="ui_protocol">[[t:settings.ui.appearance.protocol]]</label>
+                            <button type="button" class="cw-field-help material-symbols-rounded" title="[[t:settings.ui.appearance.protocolHelp]]" aria-label="[[t:settings.ui.appearance.protocolHelpLabel]]">help</button>
                           </div>
                           <div class="cw-settings-inline-action">
                             <select id="ui_protocol" name="ui_protocol">
                               <option value="http">HTTP</option>
-                              <option value="https">HTTPS (self-signed)</option>
+                              <option value="https">[[t:settings.ui.appearance.httpsSelfSigned]]</option>
                             </select>
-                            <button type="button" class="btn primary" id="ui_tls_advanced" onclick="openTlsCertModal?.()">Advanced</button>
+                            <button type="button" class="btn primary" id="ui_tls_advanced" onclick="openTlsCertModal?.()">[[t:common.labels.advanced]]</button>
                           </div>
                           <div class="sub" style="margin-top:0.35rem">
-                            HTTPS uses a self-signed certificate, so your browser will warn unless you trust it.
+                            [[t:settings.ui.appearance.httpsWarning]]
                           </div>
                         </div>
                       </div>
@@ -1768,18 +1787,18 @@ __CW_NAV_PROFILE_MENU__
                         <div class="cw-app-card-head">
                           <span class="material-symbols-rounded cw-app-card-icon" aria-hidden="true">lock</span>
                           <div>
-                            <h4 class="cw-page-settings-title">Account security</h4>
-                            <div class="sub">Manage your account, password and two-factor authentication.</div>
+                            <h4 class="cw-page-settings-title">[[t:settings.security.account.title]]</h4>
+                            <div class="sub">[[t:settings.security.account.intro]]</div>
                           </div>
                         </div>
                         <div class="cw-page-security-row">
                           <span class="material-symbols-rounded cw-page-security-icon" aria-hidden="true">person</span>
                           <div class="cw-auth-username-field">
                             <div class="cw-field-label-row">
-                              <label class="cw-page-settings-label" for="app_auth_username">Username</label>
-                              <button type="button" class="cw-field-help material-symbols-rounded" title="Username: The local CrossWatch username used on the login screen." aria-label="Username setting help">help</button>
+                              <label class="cw-page-settings-label" for="app_auth_username">[[t:settings.security.username]]</label>
+                              <button type="button" class="cw-field-help material-symbols-rounded" title="[[t:settings.security.usernameHelp]]" aria-label="[[t:settings.security.usernameHelpLabel]]">help</button>
                             </div>
-                            <div class="sub">The administrator username used to sign in.</div>
+                            <div class="sub">[[t:settings.security.usernameHint]]</div>
                             <input id="app_auth_username" name="app_auth_username" type="text" autocomplete="username" placeholder="admin">
                           </div>
                         </div>
@@ -1787,28 +1806,28 @@ __CW_NAV_PROFILE_MENU__
                           <summary>
                             <span class="material-symbols-rounded cw-page-security-icon" aria-hidden="true">key</span>
                             <span class="cw-page-security-copy">
-                              <strong>Password</strong>
-                              <span class="sub">Update your account password.</span>
+                              <strong>[[t:settings.security.password.title]]</strong>
+                              <span class="sub">[[t:settings.security.password.intro]]</span>
                             </span>
-                            <span class="cw-page-security-action">Change password</span>
+                            <span class="cw-page-security-action">[[t:settings.security.password.change]]</span>
                             <span class="material-symbols-rounded cw-page-security-chevron" aria-hidden="true">expand_more</span>
                           </summary>
                           <div class="cw-settings-2col cw-page-security-expanded">
                             <div class="cw-auth-password-field">
                               <div class="cw-field-label-row">
-                                <label class="cw-page-settings-label" for="app_auth_password">New password</label>
-                                <button type="button" class="cw-field-help material-symbols-rounded" title="New password: Enter a new local CrossWatch password. Leave it blank to keep the current password." aria-label="New password setting help">help</button>
+                                <label class="cw-page-settings-label" for="app_auth_password">[[t:settings.security.password.new]]</label>
+                                <button type="button" class="cw-field-help material-symbols-rounded" title="[[t:settings.security.password.newHelp]]" aria-label="[[t:settings.security.password.newHelpLabel]]">help</button>
                               </div>
-                              <input id="app_auth_password" name="app_auth_password" type="password" autocomplete="new-password" placeholder="(leave blank to keep)">
-                              <div class="sub" style="margin-top:0.35rem">Leave blank to keep the current password.</div>
+                              <input id="app_auth_password" name="app_auth_password" type="password" autocomplete="new-password" placeholder="[[t:settings.security.password.keepPlaceholder]]">
+                              <div class="sub" style="margin-top:0.35rem">[[t:settings.security.password.keepHint]]</div>
                             </div>
                             <div class="cw-auth-confirm-field">
                               <div class="cw-field-label-row">
-                                <label class="cw-page-settings-label" for="app_auth_password2">Confirm password</label>
-                                <button type="button" class="cw-field-help material-symbols-rounded" title="Confirm password: Repeat the new password exactly so CrossWatch can verify it before saving." aria-label="Confirm password setting help">help</button>
+                                <label class="cw-page-settings-label" for="app_auth_password2">[[t:settings.security.password.confirm]]</label>
+                                <button type="button" class="cw-field-help material-symbols-rounded" title="[[t:settings.security.password.confirmHelp]]" aria-label="[[t:settings.security.password.confirmHelpLabel]]">help</button>
                               </div>
-                              <input id="app_auth_password2" name="app_auth_password2" type="password" autocomplete="new-password" placeholder="(repeat)">
-                              <div class="sub" style="margin-top:0.35rem">Repeat the new password exactly before saving.</div>
+                              <input id="app_auth_password2" name="app_auth_password2" type="password" autocomplete="new-password" placeholder="[[t:settings.security.password.repeatPlaceholder]]">
+                              <div class="sub" style="margin-top:0.35rem">[[t:settings.security.password.repeatHint]]</div>
                             </div>
                           </div>
                         </details>
@@ -1817,19 +1836,19 @@ __CW_NAV_PROFILE_MENU__
                           <div class="cw-auth-totp-field">
                             <div class="cw-page-security-method">
                               <div class="cw-field-label-row">
-                                <strong>Two-factor authentication</strong>
-                                <button type="button" class="cw-field-help material-symbols-rounded" title="Two-factor authentication: Require a six digit authenticator app code after the password." aria-label="Two-factor authentication help">help</button>
+                                <strong>[[t:settings.security.twoFactor.title]]</strong>
+                                <button type="button" class="cw-field-help material-symbols-rounded" title="[[t:settings.security.twoFactor.help]]" aria-label="[[t:settings.security.twoFactor.helpLabel]]">help</button>
                               </div>
-                              <div class="sub" id="app_auth_totp_state">2FA: off</div>
+                              <div class="sub" id="app_auth_totp_state">[[t:settings.security.twoFactor.stateOff]]</div>
                               <div class="cw-auth-totp-setup hidden" id="app_auth_totp_setup">
-                                <div class="sub">Add this secret to your authenticator app, then enter the current code.</div>
-                                <input id="app_auth_totp_secret" type="text" readonly autocomplete="off" aria-label="Two-factor setup secret">
-                                <input id="app_auth_totp_code" aria-label="Authenticator code" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="one-time-code" placeholder="123456">
+                                <div class="sub">[[t:settings.security.twoFactor.setupHint]]</div>
+                                <input id="app_auth_totp_secret" type="text" readonly autocomplete="off" aria-label="[[t:settings.security.twoFactor.secret]]">
+                                <input id="app_auth_totp_code" aria-label="[[t:settings.security.twoFactor.code]]" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="one-time-code" placeholder="123456">
                               </div>
                               <div class="cw-page-security-actions">
-                                <button class="btn primary" type="button" id="btn-app-auth-totp-setup" onclick="cwAppAuthTotpSetup?.()">Set up 2FA</button>
-                                <button class="btn primary hidden" type="button" id="btn-app-auth-totp-verify" onclick="cwAppAuthTotpVerify?.()">Verify code</button>
-                                <button class="btn danger" type="button" id="btn-app-auth-totp-disable" disabled onclick="cwAppAuthTotpDisable?.()">Disable 2FA</button>
+                                <button class="btn primary" type="button" id="btn-app-auth-totp-setup" onclick="cwAppAuthTotpSetup?.()">[[t:settings.security.twoFactor.setup]]</button>
+                                <button class="btn primary hidden" type="button" id="btn-app-auth-totp-verify" onclick="cwAppAuthTotpVerify?.()">[[t:settings.security.twoFactor.verify]]</button>
+                                <button class="btn danger" type="button" id="btn-app-auth-totp-disable" disabled onclick="cwAppAuthTotpDisable?.()">[[t:settings.security.twoFactor.disable]]</button>
                               </div>
                             </div>
                           </div>
@@ -1839,8 +1858,8 @@ __CW_NAV_PROFILE_MENU__
                         <div class="cw-app-card-head">
                           <span class="material-symbols-rounded cw-app-card-icon" aria-hidden="true">login</span>
                           <div>
-                            <h4 class="cw-page-settings-title">Sign-in methods</h4>
-                            <div class="sub">Configure how you can sign in to CrossWatch.</div>
+                            <h4 class="cw-page-settings-title">[[t:settings.security.signIn.title]]</h4>
+                            <div class="sub">[[t:settings.security.signIn.intro]]</div>
                           </div>
                         </div>
                         <div class="cw-page-security-row">
@@ -1848,13 +1867,13 @@ __CW_NAV_PROFILE_MENU__
                           <div class="cw-auth-plex-field">
                             <div class="cw-page-security-method">
                               <div class="cw-field-label-row">
-                                <strong>Linked Plex account</strong>
-                                <button type="button" class="cw-field-help material-symbols-rounded" title="Linked Plex account: Adds optional Sign in with Plex on the login screen while keeping the local password as fallback." aria-label="Linked Plex account help">help</button>
+                                <strong>[[t:settings.security.plex.title]]</strong>
+                                <button type="button" class="cw-field-help material-symbols-rounded" title="[[t:settings.security.plex.help]]" aria-label="[[t:settings.security.plex.helpLabel]]">help</button>
                               </div>
-                              <div class="sub" id="app_auth_plex_state">Not linked</div>
+                              <div class="sub" id="app_auth_plex_state">[[t:settings.security.plex.notLinked]]</div>
                               <div class="cw-page-security-actions">
-                                <button class="btn primary" type="button" id="btn-app-auth-plex-link" onclick="cwAppAuthPlexLink?.()">Link Plex account</button>
-                                <button class="btn" type="button" id="btn-app-auth-plex-unlink" disabled onclick="cwAppAuthPlexUnlink?.()">Unlink</button>
+                                <button class="btn primary" type="button" id="btn-app-auth-plex-link" onclick="cwAppAuthPlexLink?.()">[[t:settings.security.plex.link]]</button>
+                                <button class="btn" type="button" id="btn-app-auth-plex-unlink" disabled onclick="cwAppAuthPlexUnlink?.()">[[t:common.actions.unlink]]</button>
                               </div>
                             </div>
                           </div>
@@ -1864,44 +1883,44 @@ __CW_NAV_PROFILE_MENU__
                             <summary>
                               <span class="material-symbols-rounded cw-page-security-icon" aria-hidden="true">tune</span>
                               <span class="cw-page-security-copy">
-                                <strong>OIDC sign-in</strong>
-                                <span class="sub" id="app_auth_oidc_state">Not configured</span>
+                                <strong>[[t:settings.security.oidc.title]]</strong>
+                                <span class="sub" id="app_auth_oidc_state">[[t:settings.security.oidc.notConfigured]]</span>
                               </span>
-                              <span class="cw-page-security-action">Configure OIDC</span>
+                              <span class="cw-page-security-action">[[t:settings.security.oidc.configure]]</span>
                               <span class="material-symbols-rounded cw-page-security-chevron" aria-hidden="true">expand_more</span>
                             </summary>
                             <div class="cw-app-oidc-grid">
                               <label class="cw-page-settings-field" for="app_auth_oidc_enabled">
-                                <span>OIDC enabled</span>
-                                <select id="app_auth_oidc_enabled" aria-label="OIDC enabled" title="Turns the OIDC sign-in button on the login page on or off.">
-                                  <option value="false">Disabled</option>
-                                  <option value="true">Enabled</option>
+                                <span>[[t:settings.security.oidc.enabled]]</span>
+                                <select id="app_auth_oidc_enabled" aria-label="[[t:settings.security.oidc.enabled]]" title="[[t:settings.security.oidc.enabledHelp]]">
+                                  <option value="false">[[t:common.status.disabled]]</option>
+                                  <option value="true">[[t:common.status.enabled]]</option>
                                 </select>
                               </label>
                               <label class="cw-page-settings-field" for="app_auth_oidc_issuer">
-                                <span>Issuer URL</span>
-                                <input id="app_auth_oidc_issuer" type="url" autocomplete="off" placeholder="Issuer URL" aria-label="Issuer URL" title="Required. The issuer URL of your provider, for example https://auth.example.com/application/o/crosswatch/ for Authentik or https://id.example.com for Pocket ID. CrossWatch reads the provider settings from it.">
+                                <span>[[t:settings.security.oidc.issuer]]</span>
+                                <input id="app_auth_oidc_issuer" type="url" autocomplete="off" placeholder="[[t:settings.security.oidc.issuer]]" aria-label="[[t:settings.security.oidc.issuer]]" title="[[t:settings.security.oidc.issuerHelp]]">
                               </label>
                               <label class="cw-page-settings-field" for="app_auth_oidc_client_id">
-                                <span>Client ID</span>
-                                <input id="app_auth_oidc_client_id" type="text" autocomplete="off" placeholder="Client ID" aria-label="Client ID" title="Required. The client ID of the CrossWatch application at your provider. Set its redirect URI to https://your-crosswatch/api/app-auth/oidc/callback.">
+                                <span>[[t:settings.security.oidc.clientId]]</span>
+                                <input id="app_auth_oidc_client_id" type="text" autocomplete="off" placeholder="[[t:settings.security.oidc.clientId]]" aria-label="[[t:settings.security.oidc.clientId]]" title="[[t:settings.security.oidc.clientIdHelp]]">
                               </label>
                               <label class="cw-page-settings-field" for="app_auth_oidc_client_secret">
-                                <span>Client secret</span>
-                                <input id="app_auth_oidc_client_secret" type="password" autocomplete="new-password" placeholder="Client secret" aria-label="Client secret" title="The client secret from your provider. Leave empty for a public client. Once saved it is never shown again; leave the field blank to keep it.">
+                                <span>[[t:settings.security.oidc.clientSecret]]</span>
+                                <input id="app_auth_oidc_client_secret" type="password" autocomplete="new-password" placeholder="[[t:settings.security.oidc.clientSecret]]" aria-label="[[t:settings.security.oidc.clientSecret]]" title="[[t:settings.security.oidc.clientSecretHelp]]">
                               </label>
                               <label class="cw-page-settings-field" for="app_auth_oidc_scopes">
-                                <span>Scopes</span>
-                                <input id="app_auth_oidc_scopes" type="text" autocomplete="off" placeholder="openid profile email" aria-label="Scopes" title="Optional. Scopes to request, separated by spaces. Default: openid profile email. openid is always added.">
+                                <span>[[t:settings.security.oidc.scopes]]</span>
+                                <input id="app_auth_oidc_scopes" type="text" autocomplete="off" placeholder="openid profile email" aria-label="[[t:settings.security.oidc.scopes]]" title="[[t:settings.security.oidc.scopesHelp]]">
                               </label>
                               <label class="cw-page-settings-field" for="app_auth_oidc_button_label">
-                                <span>Sign-in button label</span>
-                                <input id="app_auth_oidc_button_label" type="text" maxlength="40" autocomplete="off" placeholder="Button label (OIDC)" aria-label="Sign-in button label" title="Optional. Text on the login page button, for example Sign in with Authentik. Empty shows OIDC.">
+                                <span>[[t:settings.security.oidc.buttonLabel]]</span>
+                                <input id="app_auth_oidc_button_label" type="text" maxlength="40" autocomplete="off" placeholder="[[t:settings.security.oidc.buttonLabelPlaceholder]]" aria-label="[[t:settings.security.oidc.buttonLabel]]" title="[[t:settings.security.oidc.buttonLabelHelp]]">
                               </label>
                               <label class="cw-page-settings-field" for="app_auth_oidc_button_icon">
-                                <span>Sign-in button icon</span>
-                                <select id="app_auth_oidc_button_icon" aria-label="Sign-in button icon" title="Optional. Icon shown before the text on the login page button.">
-                                  <option value="">No button icon</option>
+                                <span>[[t:settings.security.oidc.buttonIcon]]</span>
+                                <select id="app_auth_oidc_button_icon" aria-label="[[t:settings.security.oidc.buttonIcon]]" title="[[t:settings.security.oidc.buttonIconHelp]]">
+                                  <option value="">[[t:settings.security.oidc.noIcon]]</option>
                                   <option value="authentik">Authentik</option>
                                   <option value="authelia">Authelia</option>
                                   <option value="keycloak">Keycloak</option>
@@ -1914,51 +1933,51 @@ __CW_NAV_PROFILE_MENU__
                               </label>
                             </div>
                             <div class="cw-field-label-row" style="margin-top:0.75rem">
-                              <strong>New logins from OIDC</strong>
-                              <button type="button" class="cw-field-help material-symbols-rounded" title="New logins from OIDC: Members of an allowed group get a login and a profile on their first OIDC sign-in. You assign their accounts and pairs afterwards, unless identity matching finds them. Removing them from the group at your identity provider blocks their OIDC sign-in." aria-label="New logins from OIDC help">help</button>
+                              <strong>[[t:settings.security.oidc.provision.title]]</strong>
+                              <button type="button" class="cw-field-help material-symbols-rounded" title="[[t:settings.security.oidc.provision.help]]" aria-label="[[t:settings.security.oidc.provision.helpLabel]]">help</button>
                             </div>
                             <div class="cw-app-oidc-grid">
                               <label class="cw-page-settings-field" for="app_auth_oidc_provision">
-                                <span>Create logins from OIDC</span>
-                                <select id="app_auth_oidc_provision" aria-label="Create logins from OIDC" title="Off by default. When on, members of an allowed group get a login and an empty profile on their first OIDC sign-in. Needs at least one allowed group.">
-                                  <option value="false">Do not create logins</option>
-                                  <option value="true">Create logins on first sign-in</option>
+                                <span>[[t:settings.security.oidc.provision.create]]</span>
+                                <select id="app_auth_oidc_provision" aria-label="[[t:settings.security.oidc.provision.create]]" title="[[t:settings.security.oidc.provision.createHelp]]">
+                                  <option value="false">[[t:settings.security.oidc.provision.off]]</option>
+                                  <option value="true">[[t:settings.security.oidc.provision.on]]</option>
                                 </select>
                               </label>
                             </div>
                             <div id="app_auth_oidc_provision_fields" hidden>
                               <div class="cw-app-oidc-grid">
                                 <label class="cw-page-settings-field" for="app_auth_oidc_provision_access">
-                                  <span>Access for new logins</span>
-                                  <select id="app_auth_oidc_provision_access" aria-label="Access for new logins" title="Access for logins created from OIDC. Full access can change their own data, Read-only can only look. Never administrator. You can change it per login later.">
-                                    <option value="full">New logins: Full access</option>
-                                    <option value="readonly">New logins: Read-only</option>
+                                  <span>[[t:settings.security.oidc.provision.access]]</span>
+                                  <select id="app_auth_oidc_provision_access" aria-label="[[t:settings.security.oidc.provision.access]]" title="[[t:settings.security.oidc.provision.accessHelp]]">
+                                    <option value="full">[[t:settings.security.oidc.provision.full]]</option>
+                                    <option value="readonly">[[t:settings.security.oidc.provision.readOnly]]</option>
                                   </select>
                                 </label>
                                 <label class="cw-page-settings-field" for="app_auth_oidc_allowed_groups">
-                                  <span>Allowed groups</span>
-                                  <input id="app_auth_oidc_allowed_groups" type="text" autocomplete="off" placeholder="Allowed groups, comma separated" aria-label="Allowed groups" title="Required when creating logins. Group names exactly as your provider sends them, separated by commas. Logins created from OIDC are checked against these groups on every sign-in.">
+                                  <span>[[t:settings.security.oidc.provision.groups]]</span>
+                                  <input id="app_auth_oidc_allowed_groups" type="text" autocomplete="off" placeholder="[[t:settings.security.oidc.provision.groupsPlaceholder]]" aria-label="[[t:settings.security.oidc.provision.groups]]" title="[[t:settings.security.oidc.provision.groupsHelp]]">
                                 </label>
                                 <label class="cw-page-settings-field" for="app_auth_oidc_groups_claim">
-                                  <span>Groups claim</span>
-                                  <input id="app_auth_oidc_groups_claim" type="text" autocomplete="off" placeholder="Groups claim (groups)" aria-label="Groups claim" title="Optional. The claim that holds the group names. Empty uses groups, which Authentik sends by default.">
+                                  <span>[[t:settings.security.oidc.provision.groupsClaim]]</span>
+                                  <input id="app_auth_oidc_groups_claim" type="text" autocomplete="off" placeholder="[[t:settings.security.oidc.provision.groupsClaimPlaceholder]]" aria-label="[[t:settings.security.oidc.provision.groupsClaim]]" title="[[t:settings.security.oidc.provision.groupsClaimHelp]]">
                                 </label>
                                 <label class="cw-page-settings-field" for="app_auth_oidc_match_identities">
-                                  <span>Match identities for new logins</span>
-                                  <select id="app_auth_oidc_match_identities" aria-label="Match identities for new logins" title="Off by default. When on, a new login gets the identities with the same name on your connections. If a name is not unique, or belongs to another profile, nothing is assigned. Use it only if names on your media servers belong to the same people.">
-                                    <option value="false">Do not match identities</option>
-                                    <option value="true">Match identities by name</option>
+                                  <span>[[t:settings.security.oidc.provision.match]]</span>
+                                  <select id="app_auth_oidc_match_identities" aria-label="[[t:settings.security.oidc.provision.match]]" title="[[t:settings.security.oidc.provision.matchHelp]]">
+                                    <option value="false">[[t:settings.security.oidc.provision.matchOff]]</option>
+                                    <option value="true">[[t:settings.security.oidc.provision.matchByName]]</option>
                                   </select>
                                 </label>
                                 <label class="cw-page-settings-field" for="app_auth_oidc_identity_claim">
-                                  <span>Identity name claim</span>
-                                  <input id="app_auth_oidc_identity_claim" type="text" maxlength="64" autocomplete="off" placeholder="Identity name claim (preferred_username)" aria-label="Identity name claim" title="Optional. The claim that holds the media server username, for people whose names differ. Falls back to preferred_username. Users must not be able to edit this claim at your provider.">
+                                  <span>[[t:settings.security.oidc.provision.identityClaim]]</span>
+                                  <input id="app_auth_oidc_identity_claim" type="text" maxlength="64" autocomplete="off" placeholder="[[t:settings.security.oidc.provision.identityClaimPlaceholder]]" aria-label="[[t:settings.security.oidc.provision.identityClaim]]" title="[[t:settings.security.oidc.provision.identityClaimHelp]]">
                                 </label>
                               </div>
                             </div>
                             <div class="cw-app-oidc-actions">
-                              <button class="btn primary" type="button" id="btn-app-auth-oidc-link" onclick="cwAppAuthOidcLink?.()" title="Saves the OIDC settings, then opens your provider to link your own OIDC account to this administrator login.">Link OIDC account</button>
-                              <button class="btn" type="button" id="btn-app-auth-oidc-unlink" onclick="cwAppAuthOidcUnlink?.()" title="Removes the OIDC account from this administrator login. Password sign-in keeps working.">Unlink</button>
+                              <button class="btn primary" type="button" id="btn-app-auth-oidc-link" onclick="cwAppAuthOidcLink?.()" title="[[t:settings.security.oidc.linkHelp]]">[[t:settings.security.oidc.link]]</button>
+                              <button class="btn" type="button" id="btn-app-auth-oidc-unlink" onclick="cwAppAuthOidcUnlink?.()" title="[[t:settings.security.oidc.unlinkHelp]]">[[t:common.actions.unlink]]</button>
                             </div>
                           </details>
                         </div>
@@ -1969,12 +1988,12 @@ __CW_NAV_PROFILE_MENU__
                         <div class="cw-app-card-head">
                           <span class="material-symbols-rounded cw-app-card-icon" aria-hidden="true">group</span>
                           <div>
-                            <h4 class="cw-page-settings-title">User logins</h4>
-                            <div class="sub">People who can sign in. Logins are created and changed on their profile.</div>
+                            <h4 class="cw-page-settings-title">[[t:settings.security.logins.title]]</h4>
+                            <div class="sub">[[t:settings.security.logins.intro]]</div>
                           </div>
                           <button class="btn primary cw-app-user-add" type="button" id="btn-app-user-profile-create">
                             <span class="material-symbols-rounded" aria-hidden="true">person_add</span>
-                            <span>Add profile</span>
+                            <span>[[t:settings.providers.addProfile]]</span>
                           </button>
                         </div>
                         <div class="cw-app-user-list" id="app_users_list">
@@ -1984,55 +2003,55 @@ __CW_NAV_PROFILE_MENU__
                         <div class="cw-app-card-head">
                           <span class="material-symbols-rounded cw-app-card-icon" aria-hidden="true">admin_panel_settings</span>
                           <div>
-                            <h4 class="cw-page-settings-title">Sessions &amp; network</h4>
-                            <div class="sub">Review active sessions and reverse proxy trust settings.</div>
+                            <h4 class="cw-page-settings-title">[[t:settings.security.sessions.title]] &amp; network</h4>
+                            <div class="sub">[[t:settings.security.sessions.intro]]</div>
                           </div>
                         </div>
                         <div class="cw-page-session-list">
                           <div class="cw-page-session-row">
                             <div class="cw-page-session-copy">
                               <div class="cw-field-label-row">
-                                <strong>Current session</strong>
-                                <button type="button" class="cw-field-help material-symbols-rounded" title="Current session: Shows the browser session you are using now and lets you log it out." aria-label="Current session help">help</button>
+                                <strong>[[t:settings.security.sessions.current]]</strong>
+                                <button type="button" class="cw-field-help material-symbols-rounded" title="[[t:settings.security.sessions.currentHelp]]" aria-label="[[t:settings.security.sessions.currentHelpLabel]]">help</button>
                               </div>
                               <div class="sub" id="app_auth_state">&mdash;</div>
                             </div>
-                            <button class="btn" id="btn-auth-logout" onclick="cwAppLogout?.()">Log out</button>
+                            <button class="btn" id="btn-auth-logout" onclick="cwAppLogout?.()">[[t:common.actions.logOut]]</button>
                           </div>
                           <div class="cw-page-session-row">
                             <div class="cw-page-session-copy">
                               <div class="cw-field-label-row">
-                                <strong>Other browser sessions</strong>
-                                <button type="button" class="cw-field-help material-symbols-rounded" title="Other browser sessions: Shows remembered logins from other browsers or devices and lets you revoke them." aria-label="Other browser sessions help">help</button>
+                                <strong>[[t:settings.security.sessions.others]]</strong>
+                                <button type="button" class="cw-field-help material-symbols-rounded" title="[[t:settings.security.sessions.othersHelp]]" aria-label="[[t:settings.security.sessions.othersHelpLabel]]">help</button>
                               </div>
-                              <div class="sub" id="app_auth_other_sessions_state">Logged in from: 0 browser sessions</div>
+                              <div class="sub" id="app_auth_other_sessions_state">[[t:settings.security.sessions.othersInitial]]</div>
                               <div class="sub" id="app_auth_other_sessions_detail">
                               </div>
                             </div>
-                            <button class="btn" id="btn-auth-logout-others" onclick="cwAppLogoutOthers?.()">Log out other sessions</button>
+                            <button class="btn" id="btn-auth-logout-others" onclick="cwAppLogoutOthers?.()">[[t:settings.security.sessions.logoutOthers]]</button>
                           </div>
                           <div class="cw-page-security-expanded">
                             <div class="cw-auth-session-row">
                               <div id="app_auth_session_fields">
                                 <div class="cw-field-label-row">
-                                  <label class="cw-page-settings-label" for="app_auth_remember_enabled">Stay signed in</label>
-                                  <button type="button" class="cw-field-help material-symbols-rounded" title="Session caching: Keeps you signed in across browser restarts. Browser session only signs out when the browser session ends." aria-label="Session caching setting help">help</button>
+                                  <label class="cw-page-settings-label" for="app_auth_remember_enabled">[[t:settings.security.sessions.staySignedIn]]</label>
+                                  <button type="button" class="cw-field-help material-symbols-rounded" title="[[t:settings.security.sessions.cachingHelp]]" aria-label="[[t:settings.security.sessions.cachingHelpLabel]]">help</button>
                                 </div>
                                 <select id="app_auth_remember_enabled" name="app_auth_remember_enabled">
-                                  <option value="true">Enabled</option>
-                                  <option value="false">Browser session only</option>
+                                  <option value="true">[[t:common.status.enabled]]</option>
+                                  <option value="false">[[t:settings.security.sessions.browserOnly]]</option>
                                 </select>
-                                <div class="sub" style="margin-top:0.35rem">Browser session only means sign-in is required again after closing the browser.</div>
+                                <div class="sub" style="margin-top:0.35rem">[[t:settings.security.sessions.browserOnlyHint]]</div>
                               </div>
                               <div id="app_auth_remember_days_wrap">
                                 <div class="cw-field-label-row">
-                                  <label class="cw-page-settings-label" for="app_auth_remember_days">Remember for (days)</label>
-                                  <button type="button" class="cw-field-help material-symbols-rounded" title="Session timeout: Number of days a remembered login remains valid when session caching is enabled." aria-label="Session timeout setting help">help</button>
+                                  <label class="cw-page-settings-label" for="app_auth_remember_days">[[t:settings.security.sessions.rememberDays]]</label>
+                                  <button type="button" class="cw-field-help material-symbols-rounded" title="[[t:settings.security.sessions.timeoutHelp]]" aria-label="[[t:settings.security.sessions.timeoutHelpLabel]]">help</button>
                                 </div>
                                 <input id="app_auth_remember_days" name="app_auth_remember_days" type="text" inputmode="numeric" pattern="[0-9]{1,3}" maxlength="3" autocomplete="off" placeholder="30">
                                 <div id="app_auth_remember_days_error" class="cw-field-inline-error hidden" role="alert">
                                 </div>
-                                <div class="sub" style="margin-top:0.35rem">Used only when session caching is enabled. Maximum 365 days.</div>
+                                <div class="sub" style="margin-top:0.35rem">[[t:settings.security.sessions.rememberDaysHint]]</div>
                               </div>
                             </div>
                           </div>
@@ -2040,8 +2059,8 @@ __CW_NAV_PROFILE_MENU__
                             <summary>
                               <span class="material-symbols-rounded cw-page-security-icon" aria-hidden="true">lan</span>
                               <span class="cw-page-security-copy">
-                                <strong>Advanced network settings</strong>
-                                <span class="sub">Trusted reverse proxies</span>
+                                <strong>[[t:settings.security.network.title]]</strong>
+                                <span class="sub">[[t:settings.security.network.proxies]]</span>
                               </span>
 
                               <span class="material-symbols-rounded cw-page-security-chevron" aria-hidden="true">expand_more</span>
@@ -2049,13 +2068,12 @@ __CW_NAV_PROFILE_MENU__
                             <div class="cw-page-security-expanded">
                               <div class="cw-auth-proxy-field">
                                 <div class="cw-field-label-row">
-                                  <label class="cw-page-settings-label" for="trusted_proxies">Trusted reverse proxies (optional)</label>
-                                  <button type="button" class="cw-field-help material-symbols-rounded" title="Trusted reverse proxies: Enter proxy IPs or CIDR ranges so CrossWatch can read the real client IP for login rate limiting." aria-label="Trusted reverse proxies setting help">help</button>
+                                  <label class="cw-page-settings-label" for="trusted_proxies">[[t:settings.security.network.proxiesOptional]]</label>
+                                  <button type="button" class="cw-field-help material-symbols-rounded" title="[[t:settings.security.network.proxiesHelp]]" aria-label="[[t:settings.security.network.proxiesHelpLabel]]">help</button>
                                 </div>
                                 <input id="trusted_proxies" name="trusted_proxies" type="text" placeholder="127.0.0.1;192.168.2.1;192.168.2.0/16">
                                 <div class="sub" style="margin-top:0.35rem">
-                                  Only needed when behind a reverse proxy and you want accurate IP-based login rate limiting.
-                                  Enter proxy IPs or CIDR ranges separated by <code>;</code>
+                                  [[t:settings.security.network.proxiesHint]] <code>;</code>
                                 </div>
                               </div>
                             </div>
@@ -2067,8 +2085,8 @@ __CW_NAV_PROFILE_MENU__
                       <summary>
                         <span class="material-symbols-rounded cw-page-security-icon" aria-hidden="true">auto_awesome</span>
                         <span class="cw-page-security-copy">
-                          <strong>AI help</strong>
-                          <span class="sub">Read-only help with syncs, scrobbling, logs and settings.</span>
+                          <strong>[[t:settings.ai.title]]</strong>
+                          <span class="sub">[[t:settings.ai.intro]]</span>
                         </span>
 
                         <span class="material-symbols-rounded cw-page-security-chevron" aria-hidden="true">expand_more</span>
@@ -2077,110 +2095,110 @@ __CW_NAV_PROFILE_MENU__
                         <form class="cw-ai-panel" id="assistant_settings" autocomplete="off" onsubmit="return false">
                           <div class="cw-ai-panel-head">
                             <div>
-                              <h4>Assistant in CrossWatch</h4>
-                              <p>Ask questions right here, from any browser or phone. You bring the AI model.</p>
+                              <h4>[[t:settings.ai.assistant.title]]</h4>
+                              <p>[[t:settings.ai.assistant.intro]]</p>
                             </div>
-                            <span class="cw-ai-pill" id="assistant_pill">Off</span>
+                            <span class="cw-ai-pill" id="assistant_pill">[[t:common.status.off]]</span>
                           </div>
-                          <div class="cw-ai-caption" id="assistant_presets_label">AI provider</div>
+                          <div class="cw-ai-caption" id="assistant_presets_label">[[t:settings.ai.assistant.provider]]</div>
                           <div class="cw-ai-choices" id="assistant_presets" role="radiogroup" aria-labelledby="assistant_presets_label">
                             <button type="button" class="cw-ai-choice" role="radio" aria-checked="false" data-assistant-preset="gemini">
                               <strong>Google Gemini</strong>
-                              <small>Cloud, free tier, recommended</small>
+                              <small>[[t:settings.ai.presets.gemini]]</small>
                             </button>
                             <button type="button" class="cw-ai-choice" role="radio" aria-checked="false" data-assistant-preset="openai">
                               <strong>OpenAI</strong>
-                              <small>Cloud, paid key</small>
+                              <small>[[t:settings.ai.presets.openai]]</small>
                             </button>
                             <button type="button" class="cw-ai-choice" role="radio" aria-checked="false" data-assistant-preset="openrouter">
                               <strong>OpenRouter</strong>
-                              <small>Cloud, many models</small>
+                              <small>[[t:settings.ai.presets.openrouter]]</small>
                             </button>
                             <button type="button" class="cw-ai-choice" role="radio" aria-checked="false" data-assistant-preset="ollama">
                               <strong>Ollama</strong>
-                              <small>Local, free</small>
+                              <small>[[t:settings.ai.presets.local]]</small>
                             </button>
                             <button type="button" class="cw-ai-choice" role="radio" aria-checked="false" data-assistant-preset="lmstudio">
                               <strong>LM Studio</strong>
-                              <small>Local, free</small>
+                              <small>[[t:settings.ai.presets.local]]</small>
                             </button>
                             <button type="button" class="cw-ai-choice" role="radio" aria-checked="false" data-assistant-preset="custom">
-                              <strong>Other</strong>
-                              <small>Any OpenAI style API</small>
+                              <strong>[[t:common.labels.other]]</strong>
+                              <small>[[t:settings.ai.presets.other]]</small>
                             </button>
                           </div>
                           <div class="cw-ai-fields">
                             <div class="cw-ai-field" id="assistant_url_field">
-                              <label class="cw-page-settings-label" for="assistant_base_url">Address</label>
+                              <label class="cw-page-settings-label" for="assistant_base_url">[[t:settings.ai.assistant.address]]</label>
                               <input id="assistant_base_url" type="url" autocomplete="off" spellcheck="false" placeholder="http://192.168.1.10:11434/v1">
-                              <small>Where the model answers, as seen from CrossWatch. For a model on another computer use its network address, not localhost.</small>
+                              <small>[[t:settings.ai.assistant.addressHint]]</small>
                             </div>
                             <div class="cw-ai-field" id="assistant_key_field">
-                              <label class="cw-page-settings-label" for="assistant_api_key">API key</label>
-                              <input id="assistant_api_key" type="password" autocomplete="new-password" spellcheck="false" placeholder="Paste your key">
-                              <small id="assistant_key_note">From the provider's developer page. A ChatGPT or Claude subscription does not include one.</small>
+                              <label class="cw-page-settings-label" for="assistant_api_key">[[t:settings.ai.assistant.apiKey]]</label>
+                              <input id="assistant_api_key" type="password" autocomplete="new-password" spellcheck="false" placeholder="[[t:settings.ai.assistant.apiKeyPlaceholder]]">
+                              <small id="assistant_key_note">[[t:settings.ai.assistant.apiKeyNote]]</small>
                             </div>
                             <div class="cw-ai-field">
-                              <label class="cw-page-settings-label" for="assistant_model">Model</label>
-                              <input id="assistant_model" type="text" list="assistant_models" autocomplete="off" spellcheck="false" placeholder="Search or type a model name">
+                              <label class="cw-page-settings-label" for="assistant_model">[[t:settings.ai.assistant.model]]</label>
+                              <input id="assistant_model" type="text" list="assistant_models" autocomplete="off" spellcheck="false" placeholder="[[t:settings.ai.assistant.modelPlaceholder]]">
                               <datalist id="assistant_models">
                               </datalist>
                               <details>
-                                <summary>Advanced</summary>
+                                <summary>[[t:common.labels.advanced]]</summary>
                                 <div class="cw-ai-field">
                                   <div class="cw-ai-inline">
                                     <button type="button" class="btn" id="btn-assistant-models">
                                       <span class="material-symbols-rounded" aria-hidden="true">refresh</span>
-                                      <span>Load models</span>
+                                      <span>[[t:settings.ai.assistant.loadModels]]</span>
                                     </button>
                                   </div>
-                                  <small>Lists the models your provider offers, to pick another one.</small>
-                                  <label class="cw-page-settings-label" for="assistant_models_all">Model list</label>
+                                  <small>[[t:settings.ai.assistant.loadModelsHint]]</small>
+                                  <label class="cw-page-settings-label" for="assistant_models_all">[[t:settings.ai.assistant.modelList]]</label>
                                   <select id="assistant_models_all">
-                                    <option value="chat">Chat models</option>
-                                    <option value="all">All models</option>
+                                    <option value="chat">[[t:settings.ai.assistant.chatModels]]</option>
+                                    <option value="all">[[t:settings.ai.assistant.allModels]]</option>
                                   </select>
-                                  <small>The chat filter uses model names; compatibility can vary.</small>
+                                  <small>[[t:settings.ai.assistant.filterHint]]</small>
                                   <div class="cw-ai-inline">
-                                    <button type="button" class="btn" id="btn-assistant-test">Test model</button>
+                                    <button type="button" class="btn" id="btn-assistant-test">[[t:settings.ai.assistant.testModel]]</button>
                                   </div>
-                                  <small id="assistant_model_test" role="status">Optional check. Uses two short requests; provider charges may apply.</small>
+                                  <small id="assistant_model_test" role="status">[[t:settings.ai.assistant.testHint]]</small>
                                 </div>
                               </details>
                             </div>
                             <div class="cw-ai-field">
-                              <label class="cw-page-settings-label" for="assistant_wiki_help">Without an AI provider</label>
+                              <label class="cw-page-settings-label" for="assistant_wiki_help">[[t:settings.ai.assistant.withoutProvider]]</label>
                               <select id="assistant_wiki_help">
-                                <option value="on">Answer from the CrossWatch wiki</option>
-                                <option value="off">Turn Ask CrossWatch off</option>
+                                <option value="on">[[t:settings.ai.assistant.wikiAnswers]]</option>
+                                <option value="off">[[t:settings.ai.assistant.turnOffAsk]]</option>
                               </select>
                             </div>
                           </div>
                           <div class="cw-ai-status" id="assistant_state" role="status">
                           </div>
                           <div class="cw-ai-actions">
-                            <button type="button" class="btn primary" id="btn-assistant-save">Save and turn on</button>
+                            <button type="button" class="btn primary" id="btn-assistant-save">[[t:settings.ai.assistant.saveOn]]</button>
                             <button type="button" class="btn" id="btn-assistant-open" disabled>
                               <span class="material-symbols-rounded" aria-hidden="true">forum</span>
-                              <span>Ask a question</span>
+                              <span>[[t:settings.ai.assistant.ask]]</span>
                             </button>
-                            <button type="button" class="btn cw-ai-quiet hidden" id="btn-assistant-off">Turn off</button>
+                            <button type="button" class="btn cw-ai-quiet hidden" id="btn-assistant-off">[[t:settings.ai.assistant.turnOff]]</button>
                           </div>
                           <p class="cw-ai-note">
                             <span class="material-symbols-rounded" aria-hidden="true">shield</span>
-                            <span>With a cloud provider, your questions and the log lines and settings needed to answer them go to that provider. Secrets are removed first. A local model keeps everything at home.</span>
+                            <span>[[t:settings.ai.assistant.privacy]]</span>
                           </p>
                         </form>
                         <div class="cw-ai-panel" id="mcp_access">
                           <div class="cw-ai-panel-head">
                             <div>
-                              <h4>Use your own AI app (MCP server)</h4>
-                              <p>Connect an AI app on your computer, such as Claude, Codex or Cursor, to this CrossWatch.</p>
+                              <h4>[[t:settings.ai.mcp.title]]</h4>
+                              <p>[[t:settings.ai.mcp.intro]]</p>
                             </div>
                           </div>
                           <div class="cw-ai-label">
-                            <span class="cw-ai-step">1</span>Choose your app</div>
-                          <div class="cw-ai-choices cw-ai-choices-compact" id="mcp_clients" role="radiogroup" aria-label="AI app">
+                            <span class="cw-ai-step">1</span>[[t:settings.ai.mcp.chooseApp]]</div>
+                          <div class="cw-ai-choices cw-ai-choices-compact" id="mcp_clients" role="radiogroup" aria-label="[[t:settings.ai.mcp.app]]">
                             <button type="button" class="cw-ai-choice" role="radio" aria-checked="false" data-mcp-client="claude-code">
                               <strong>Claude Code</strong>
                             </button>
@@ -2203,16 +2221,16 @@ __CW_NAV_PROFILE_MENU__
                               <strong>VS Code</strong>
                             </button>
                             <button type="button" class="cw-ai-choice" role="radio" aria-checked="false" data-mcp-client="other">
-                              <strong>Other</strong>
+                              <strong>[[t:common.labels.other]]</strong>
                             </button>
                           </div>
-                          <div class="cw-ai-where hidden" id="mcp_desktop_where" role="radiogroup" aria-label="Where CrossWatch runs">
-                            <span>CrossWatch runs on</span>
-                            <button type="button" class="cw-ai-toggle" role="radio" aria-checked="true" data-mcp-where="remote">a NAS or other computer</button>
-                            <button type="button" class="cw-ai-toggle" role="radio" aria-checked="false" data-mcp-where="local">this computer, in Docker</button>
+                          <div class="cw-ai-where hidden" id="mcp_desktop_where" role="radiogroup" aria-label="[[t:settings.ai.mcp.where]]">
+                            <span>[[t:settings.ai.mcp.runsOn]]</span>
+                            <button type="button" class="cw-ai-toggle" role="radio" aria-checked="true" data-mcp-where="remote">[[t:settings.ai.mcp.nas]]</button>
+                            <button type="button" class="cw-ai-toggle" role="radio" aria-checked="false" data-mcp-where="local">[[t:settings.ai.mcp.docker]]</button>
                           </div>
                           <div class="cw-ai-label">
-                            <span class="cw-ai-step">2</span>Create a read-only token</div>
+                            <span class="cw-ai-step">2</span>[[t:settings.ai.mcp.createToken]]</div>
                           <div class="cw-ai-tokens" id="mcp_tokens">
                           </div>
                           <div class="cw-ai-status" id="mcp_token_state" role="status">
@@ -2220,12 +2238,12 @@ __CW_NAV_PROFILE_MENU__
                           <div class="cw-ai-actions">
                             <button type="button" class="btn primary" id="btn-mcp-token-create" disabled>
                               <span class="material-symbols-rounded" aria-hidden="true">key</span>
-                              <span>Create token</span>
+                              <span>[[t:settings.ai.mcp.createTokenButton]]</span>
                             </button>
                           </div>
                           <div class="cw-ai-label">
                             <span class="cw-ai-step">3</span>
-                            <span id="mcp_client_note">Paste this into your app</span>
+                            <span id="mcp_client_note">[[t:settings.ai.mcp.paste]]</span>
                           </div>
                           <div class="cw-ai-code">
                             <pre>
@@ -2234,7 +2252,7 @@ __CW_NAV_PROFILE_MENU__
                             </pre>
                             <button type="button" class="cw-ai-copy" id="btn-mcp-copy">
                               <span class="material-symbols-rounded" aria-hidden="true">content_copy</span>
-                              <span>Copy</span>
+                              <span>[[t:common.actions.copy]]</span>
                             </button>
                           </div>
                         </div>
@@ -2249,33 +2267,33 @@ __CW_NAV_PROFILE_MENU__
         </section>
 
         <section class="cw-settings-pane cw-page-maintenance" data-pane="maintenance">
-          <div class="mt-page-head"><h3>Maintenance</h3><p>Cleanup and diagnostics.</p></div>
+          <div class="mt-page-head"><h3>[[t:settings.panes.maintenance.title]]</h3><p>[[t:settings.maintenance.intro]]</p></div>
           <div id="sec-troubleshoot" data-accordion="off">
             <section class="cw-page-panel mt-debug">
-              <div><h4>Debug logging</h4><p>Choose the detail included in logs.</p></div>
-              <label class="mt-field" for="debug"><span>Level</span>
+              <div><h4>[[t:settings.maintenance.debug.title]]</h4><p>[[t:settings.maintenance.debug.intro]]</p></div>
+              <label class="mt-field" for="debug"><span>[[t:settings.maintenance.debug.level]]</span>
                 <select id="debug" name="debug" class="cw-page-input">
-                  <option value="off">Off</option><option value="on">Standard</option>
-                  <option value="mods">Include provider debug</option><option value="full">Full debug (requires restart)</option>
+                  <option value="off">[[t:common.status.off]]</option><option value="on">[[t:settings.maintenance.debug.standard]]</option>
+                  <option value="mods">[[t:settings.maintenance.debug.provider]]</option><option value="full">[[t:settings.maintenance.debug.full]]</option>
                 </select>
               </label>
             </section>
-            <div class="cw-page-panel mt-tool-list" aria-label="Maintenance actions">
+            <div class="cw-page-panel mt-tool-list" aria-label="[[t:settings.maintenance.actions]]">
               <button class="mt-tool" type="button" onclick="openMaintenance()">
-                <span><strong>Maintenance tools</strong><small>Check local data, clear caches and reset sync state.</small></span><span class="mt-open" aria-hidden="true">Open</span>
+                <span><strong>[[t:navigation.pages.maintenance]]</strong><small>[[t:settings.maintenance.toolsCopy]]</small></span><span class="mt-open" aria-hidden="true">[[t:common.actions.open]]</span>
               </button>
               <button class="mt-tool" type="button" onclick="openProviderCleanupModal()">
-                <span><strong>Provider cleanup</strong><small>Remove selected data from a provider instance.</small></span><span class="mt-open" aria-hidden="true">Open</span>
+                <span><strong>[[t:settings.maintenance.cleanup]]</strong><small>[[t:settings.maintenance.cleanupCopy]]</small></span><span class="mt-open" aria-hidden="true">[[t:common.actions.open]]</span>
               </button>
               <button class="mt-tool" type="button" onclick="openSupportModal()">
-                <span><strong>Support</strong><small>Download sync state or a diagnostic bundle.</small></span><span class="mt-open" aria-hidden="true">Open</span>
+                <span><strong>[[t:settings.maintenance.support]]</strong><small>[[t:settings.maintenance.supportCopy]]</small></span><span class="mt-open" aria-hidden="true">[[t:common.actions.open]]</span>
               </button>
             </div>
             <div class="mt-restart">
-              <div><h4>Restart CrossWatch</h4><p>Temporarily interrupts access to CW.</p></div>
-              <button class="cw-page-button mt-button mt-danger" type="button" onclick="restartCrossWatch()">Restart</button>
+              <div><h4>[[t:settings.maintenance.restart]]</h4><p>[[t:settings.maintenance.restartCopy]]</p></div>
+              <button class="cw-page-button mt-button mt-danger" type="button" onclick="restartCrossWatch()">[[t:common.actions.restart]]</button>
             </div>
-            <div id="tb_msg" class="msg ok hidden">Done</div>
+            <div id="tb_msg" class="msg ok hidden">[[t:common.status.done]]</div>
           </div>
         </section>
       </div>
@@ -2287,8 +2305,8 @@ __CW_NAV_PROFILE_MENU__
 
 <div id="cw-help-overlay" class="hidden" aria-hidden="true">
   <div id="cw-help-card">
-    <button id="cw-help-close" class="btn" type="button" onclick="window.cwCloseHelp()">Close</button>
-    <iframe id="cw-help-frame" title="CrossWatch Help" loading="lazy" referrerpolicy="no-referrer"></iframe>
+    <button id="cw-help-close" class="btn" type="button" onclick="window.cwCloseHelp()">[[t:common.actions.close]]</button>
+    <iframe id="cw-help-frame" title="[[t:navigation.help.title]]" loading="lazy" referrerpolicy="no-referrer"></iframe>
   </div>
 </div>
 
@@ -2300,7 +2318,7 @@ __CW_ASSET_BLOCK__
 <script>document.addEventListener('DOMContentLoaded',()=>{try{if(typeof openSummaryStream==='function')openSummaryStream()}catch(e){}});</script>
 
 <div id="save-frost" class="hidden" aria-hidden="true"></div>
-<div id="save-fab" class="hidden" role="toolbar" aria-label="Sticky save"><button id="save-fab-btn" class="btn" onclick="saveSettings(this)"><span class="btn-label">SAVE</span></button></div>
+<div id="save-fab" class="hidden" role="toolbar" aria-label="[[t:common.actions.stickySave]]"><button id="save-fab-btn" class="btn" onclick="saveSettings(this)"><span class="btn-label">[[t:settings.saveFab]]</span></button></div>
 
 <script>(()=>{const list=p=>[...p.querySelectorAll(':scope>.section')].filter(s=>s.dataset.accordion!=='off'),set=(s,on)=>{s.classList.toggle('open',!!on);s.querySelector('.head')?.setAttribute('aria-expanded',String(!!on));const c=s.querySelector('.chev');if(c)c.textContent=''},siblings=s=>s?.parentElement?list(s.parentElement):[];window.toggleSection=id=>{const s=document.getElementById(id);if(!s||s.dataset.accordion==='off')return;const on=!s.classList.contains('open');siblings(s).forEach(x=>set(x,x===s&&on))};window.openSection=id=>{const s=document.getElementById(id);if(!s||s.dataset.accordion==='off')return;siblings(s).forEach(x=>set(x,x===s))};document.addEventListener('click',e=>{const h=e.target?.closest?.('[data-toggle-section]');if(!h)return;e.preventDefault();window.toggleSection?.(h.dataset.toggleSection)},true);document.addEventListener('DOMContentLoaded',()=>[...new Set([...document.querySelectorAll('.section')].map(s=>s.parentElement).filter(Boolean))].forEach(p=>{const open=list(p).find(s=>s.classList.contains('open'));list(p).forEach(s=>set(s,s===open))}),{once:true})})();</script>
 
@@ -2323,7 +2341,7 @@ __CW_ASSET_BLOCK__
     if (el) el.style.width = value;
   };
   const setDone = (selector, done) => document.querySelector(selector)?.classList.toggle("is-done", !!done);
-  const plural = (n, singular, pluralForm) => `${n} ${n === 1 ? singular : (pluralForm || `${singular}s`)}`;
+  const T = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.t?.(key, vars) ?? key;
   const state = { primary: "auth" };
 
   const open = (key) => {
@@ -2363,7 +2381,7 @@ __CW_ASSET_BLOCK__
     card.classList.toggle("is-done", !!opts.done);
     card.classList.toggle("is-active", !!opts.active);
     card.classList.toggle("is-optional", !!opts.optional);
-    const statusKey = String(opts.status || "").trim().toLowerCase();
+    const statusKey = String(opts.tone || "").trim().toLowerCase();
     card.classList.toggle("is-inactive", statusKey === "inactive");
     card.classList.toggle("is-warning", ["missing", "needs setup", "disabled", "inactive"].includes(statusKey));
 
@@ -2407,74 +2425,79 @@ __CW_ASSET_BLOCK__
     if (ring) ring.style.setProperty("--cw-setup-progress", `${percent}%`);
     setText("cw-settings-progress-count", `${doneCount}/4`);
     setText("cw-settings-progress-percent", `${percent}%`);
-    setText("cw-settings-progress-text", `${doneCount} of 4 steps ready`);
+    setText("cw-settings-progress-text", T("settings.overviewLive.stepsReady", { done: doneCount, total: 4 }));
     setWidth("cw-settings-progress-bar", `${Math.max(6, Math.min(100, percent))}%`);
-    setText("cw-settings-scrobbler-cta", scrobOn ? "Scrobbler settings" : "Open scrobbler");
+    setText("cw-settings-scrobbler-cta", scrobOn ? T("settings.overviewLive.scrobblerSettings") : T("settings.overviewLive.openScrobbler"));
     order.forEach((step) => setDone(`[data-step-node="${step}"]`, steps[step]));
 
     if (!steps.auth) {
-      setText("cw-settings-hero-title", "Connect a service");
-      setText("cw-settings-hero-copy", "Start by signing into at least one media server or tracker.");
-      setText("cw-settings-primary-cta", "Open connections");
+      setText("cw-settings-hero-title", T("settings.overviewLive.hero.connectTitle"));
+      setText("cw-settings-hero-copy", T("settings.overviewLive.hero.connectCopy"));
+      setText("cw-settings-primary-cta", T("settings.overviewLive.openConnections"));
     } else if (!steps.meta) {
-      setText("cw-settings-hero-title", "Add metadata");
-      setText("cw-settings-hero-copy", "TMDb is enough to get started and makes matching work better.");
-      setText("cw-settings-primary-cta", "Open metadata");
+      setText("cw-settings-hero-title", T("settings.overviewLive.hero.metaTitle"));
+      setText("cw-settings-hero-copy", T("settings.overviewLive.hero.metaCopy"));
+      setText("cw-settings-primary-cta", T("settings.overviewLive.openMetadata"));
     } else if (!steps.sync) {
-      setText("cw-settings-hero-title", "Set up sync pairs or scrobbler");
-      setText("cw-settings-hero-copy", "Both are optional, but most people use at least one of them.");
-      setText("cw-settings-primary-cta", "Open sync pairs");
+      setText("cw-settings-hero-title", T("settings.overviewLive.hero.syncTitle"));
+      setText("cw-settings-hero-copy", T("settings.overviewLive.hero.syncCopy"));
+      setText("cw-settings-primary-cta", T("settings.overviewLive.openSyncPairs"));
     } else if (!steps.scheduling) {
-      setText("cw-settings-hero-title", "Add scheduling or scrobbler");
-      setText("cw-settings-hero-copy", "Optional. Turn on scheduling, scrobbler, or both.");
-      setText("cw-settings-primary-cta", "Open scheduling");
+      setText("cw-settings-hero-title", T("settings.overviewLive.hero.schedTitle"));
+      setText("cw-settings-hero-copy", T("settings.overviewLive.hero.schedCopy"));
+      setText("cw-settings-primary-cta", T("settings.overviewLive.openScheduling"));
     } else {
-      setText("cw-settings-hero-title", "You're set");
-      setText("cw-settings-hero-copy", "The basic setup is done. Anything else is extra.");
-      setText("cw-settings-primary-cta", "Open scheduling");
+      setText("cw-settings-hero-title", T("settings.overviewLive.hero.doneTitle"));
+      setText("cw-settings-hero-copy", T("settings.overviewLive.hero.doneCopy"));
+      setText("cw-settings-primary-cta", T("settings.overviewLive.openScheduling"));
     }
 
     setText("cw-settings-stat-auth", String(authCount));
-    setText("cw-settings-stat-auth-copy", authCount ? `${plural(authCount, "provider profile")} connected` : "No providers connected yet");
+    setText("cw-settings-stat-auth-copy", authCount ? T("settings.overviewLive.profilesConnected", { count: authCount }) : T("settings.overviewLive.noProvidersYet"));
     setText("cw-settings-stat-pairs", String(pairActive));
-    setText("cw-settings-stat-pairs-copy", pairTotal ? (pairDisabled ? `${pairActive} active, ${pairDisabled} disabled` : `${plural(pairActive, "pair")} active`) : "No sync pairs yet");
-    setText("cw-settings-stat-automation", automationOn ? "Live" : "Off");
-    setText("cw-settings-stat-automation-copy", scheduleOn && scrobOn ? "Scheduling and scrobbler are on" : scheduleOn ? "Scheduling is on" : scrobOn ? "Scrobbler is on" : "Scheduling and scrobbler are off");
+    setText("cw-settings-stat-pairs-copy", pairTotal ? (pairDisabled ? T("settings.overviewLive.activeDisabled", { active: pairActive, disabled: pairDisabled }) : T("settings.overviewLive.pairsActive", { count: pairActive })) : T("settings.overviewLive.noPairsYet"));
+    setText("cw-settings-stat-automation", automationOn ? T("settings.overviewLive.live") : T("settings.overviewLive.off"));
+    setText("cw-settings-stat-automation-copy", T(scheduleOn && scrobOn ? "settings.overviewLive.bothOn" : scheduleOn ? "settings.overviewLive.schedOn" : scrobOn ? "settings.overviewLive.scrobOn" : "settings.overviewLive.bothOff"));
     setStep("auth", {
-      status: steps.auth ? "Connected" : "Needs setup",
-      copy: steps.auth ? `${plural(authCount, "provider profile")} connected` : "Connect provider instances first",
-      detail: steps.auth ? `${plural(authCount, "provider")} connected` : "No providers connected",
-      link: "Manage",
+      tone: steps.auth ? "connected" : "needs setup",
+      status: T(steps.auth ? "settings.overviewLive.status.connected" : "settings.overviewLive.status.needsSetup"),
+      copy: steps.auth ? T("settings.overviewLive.profilesConnected", { count: authCount }) : T("settings.overviewLive.connectFirst"),
+      detail: steps.auth ? T("settings.overviewLive.providersConnected", { count: authCount }) : T("settings.overviewLive.noProviders"),
+      link: T("settings.overviewLive.manage"),
       done: steps.auth,
       active: next === "auth"
     });
 
     setStep("meta", {
-      status: steps.meta ? (metaDetected > metaConfigured ? `Partial ${metaConfigured}/${Math.max(metaDetected, metaConfigured)}` : "Ready") : "Missing",
-      copy: steps.meta ? (metaDetected > metaConfigured ? `${metaConfigured} of ${Math.max(metaDetected, metaConfigured)} metadata providers configured` : "TMDb configured and ready") : "Configure TMDb for matching and enrichment",
-      detail: steps.meta ? (metaDetected > metaConfigured ? `${metaConfigured} of ${Math.max(metaDetected, metaConfigured)} ready` : "TMDb configured") : "Metadata provider needed",
-      link: "Manage",
+      tone: steps.meta ? (metaDetected > metaConfigured ? "partial" : "ready") : "missing",
+      status: steps.meta ? (metaDetected > metaConfigured ? T("settings.overviewLive.status.partial", { done: metaConfigured, total: Math.max(metaDetected, metaConfigured) }) : T("settings.overviewLive.status.ready")) : T("settings.overviewLive.status.missing"),
+      copy: steps.meta ? (metaDetected > metaConfigured ? T("settings.overviewLive.metaPartial", { done: metaConfigured, total: Math.max(metaDetected, metaConfigured) }) : T("settings.overviewLive.tmdbReady")) : T("settings.overviewLive.configureTmdb"),
+      detail: steps.meta ? (metaDetected > metaConfigured ? T("settings.overviewLive.partialReady", { done: metaConfigured, total: Math.max(metaDetected, metaConfigured) }) : T("settings.overviewLive.tmdbConfigured")) : T("settings.overviewLive.metaNeeded"),
+      link: T("settings.overviewLive.manage"),
       done: steps.meta,
       active: next === "meta"
     });
 
-    const syncStatus = pairActive > 0 ? "Active" : pairTotal > 0 ? "Disabled" : "Optional";
-    const syncCopy = pairTotal ? (pairDisabled ? `${pairActive} active, ${pairDisabled} disabled` : `${plural(pairActive, "sync pair")} active`) : "No sync pairs active";
+    const syncTone = pairActive > 0 ? "active" : pairTotal > 0 ? "disabled" : "optional";
+    const syncStatus = T(`settings.overviewLive.status.${syncTone}`);
+    const syncCopy = pairTotal ? (pairDisabled ? T("settings.overviewLive.activeDisabled", { active: pairActive, disabled: pairDisabled }) : T("settings.overviewLive.syncPairsActive", { count: pairActive })) : T("settings.overviewLive.noPairsActive");
     setStep("sync", {
+      tone: syncTone,
       status: syncStatus,
       copy: syncCopy,
-      detail: pairTotal ? (pairDisabled ? `${pairActive} active, ${pairDisabled} disabled` : `${plural(pairActive, "active pair")}`) : "No sync pairs configured",
-      link: "Manage",
+      detail: pairTotal ? (pairDisabled ? T("settings.overviewLive.activeDisabled", { active: pairActive, disabled: pairDisabled }) : T("settings.overviewLive.activePairs", { count: pairActive })) : T("settings.overviewLive.noPairsConfigured"),
+      link: T("settings.overviewLive.manage"),
       done: steps.sync,
       active: next === "sync",
       optional: !steps.sync
     });
 
     setStep("scheduling", {
-      status: scheduleOn && scrobOn ? "Both on" : scheduleOn ? "Scheduling on" : scrobOn ? "Scrobbler on" : "Optional",
-      copy: scheduleOn && scrobOn ? "Scheduling and scrobbler enabled" : scheduleOn ? "Scheduling enabled" : scrobOn ? "Scrobbler enabled" : "Scheduling and scrobbler optional",
-      detail: scheduleOn && scrobOn ? "2 of 2 enabled" : scheduleOn || scrobOn ? "1 of 2 enabled" : "No automation configured",
-      link: "Manage",
+      tone: scheduleOn || scrobOn ? "on" : "optional",
+      status: T(scheduleOn && scrobOn ? "settings.overviewLive.status.bothOn" : scheduleOn ? "settings.overviewLive.status.schedOn" : scrobOn ? "settings.overviewLive.status.scrobOn" : "settings.overviewLive.status.optional"),
+      copy: T(scheduleOn && scrobOn ? "settings.overviewLive.bothEnabled" : scheduleOn ? "settings.overviewLive.schedEnabled" : scrobOn ? "settings.overviewLive.scrobEnabled" : "settings.overviewLive.bothOptional"),
+      detail: scheduleOn || scrobOn ? T("settings.overviewLive.enabledOf", { done: scheduleOn && scrobOn ? 2 : 1, total: 2 }) : T("settings.overviewLive.noAutomation"),
+      link: T("settings.overviewLive.manage"),
       done: steps.scheduling,
       active: next === "scheduling",
       optional: !steps.scheduling
@@ -2491,7 +2514,7 @@ __CW_ASSET_BLOCK__
 
 <script>(()=>{const $=id=>document.getElementById(id),fab=$('save-fab'),frost=$('save-frost'),page=$('page-settings'),tab=$('tab-settings'),noSave=new Set(['overview','providers','sync']),pane=()=>String(window.__cwSettingsPane||'overview').toLowerCase(),visible=()=>{if(!page||noSave.has(pane()))return false;const cs=getComputedStyle(page);return!page.classList.contains('hidden')&&cs.display!=='none'&&cs.visibility!=='hidden'},update=()=>{const on=visible();fab?.classList.toggle('hidden',!on);frost?.classList.toggle('hidden',!on)},watch=(el,attrs)=>el&&new MutationObserver(update).observe(el,{attributes:true,attributeFilter:attrs});document.addEventListener('DOMContentLoaded',()=>{watch(page,['class','style']);watch(tab,['class']);update()},{once:true});document.addEventListener('tab-changed',update);document.addEventListener('cw-settings-pane-changed',update);window.addEventListener('hashchange',update);document.querySelector('.tabs')?.addEventListener('click',update,true)})();</script>
 
-<script>(()=>{const install=()=>{const orig=window.saveSettings;if(typeof orig!=='function'||orig._wrapped)return;window.saveSettings=Object.assign(async function(btnOrEvent){const btn=btnOrEvent instanceof HTMLElement?btnOrEvent:document.getElementById('save-fab-btn');if(btn&&!btn.dataset.defaultHtml)btn.dataset.defaultHtml=btn.innerHTML;if(btn)btn.disabled=true;try{const ret=orig.apply(this,arguments);await(ret&&typeof ret.then==='function'?ret:Promise.resolve());window.invalidateConfigCache?.();window.manualRefreshStatus?.();if(btn){btn.innerHTML='Settings saved';setTimeout(()=>{btn.innerHTML=btn.dataset.defaultHtml||'<span class="btn-label">SAVE</span>';btn.disabled=false},1600)}return ret}catch(e){if(btn){btn.innerHTML='Save failed';setTimeout(()=>{btn.innerHTML=btn.dataset.defaultHtml||'<span class="btn-label">SAVE</span>';btn.disabled=false},2000)}throw e}},{_wrapped:true})};document.readyState==='complete'?install():window.addEventListener('load',install,{once:true})})();</script>
+<script>(()=>{const install=()=>{const orig=window.saveSettings;if(typeof orig!=='function'||orig._wrapped)return;window.saveSettings=Object.assign(async function(btnOrEvent){const btn=btnOrEvent instanceof HTMLElement?btnOrEvent:document.getElementById('save-fab-btn');if(btn&&!btn.dataset.defaultHtml)btn.dataset.defaultHtml=btn.innerHTML;if(btn)btn.disabled=true;try{const ret=orig.apply(this,arguments);await(ret&&typeof ret.then==='function'?ret:Promise.resolve());window.invalidateConfigCache?.();window.manualRefreshStatus?.();const T=k=>window.CW.I18n.t(k),label=()=>{const s=document.createElement('span');s.className='btn-label';s.textContent=T('settings.saveFab');return s.outerHTML};if(btn){btn.textContent=T('settings.saved');setTimeout(()=>{btn.innerHTML=btn.dataset.defaultHtml||label();btn.disabled=false},1600)}return ret}catch(e){if(btn){btn.textContent=T('settings.saveFailed');setTimeout(()=>{btn.innerHTML=btn.dataset.defaultHtml||label();btn.disabled=false},2000)}throw e}},{_wrapped:true})};document.readyState==='complete'?install():window.addEventListener('load',install,{once:true})})();</script>
 </body></html>
 
 """
@@ -2514,7 +2537,17 @@ def _seed_media_card_style(html: str, user: dict | None = None) -> str:
     return html.replace('<html lang="en"', f'<html lang="en" data-cw-media-card="{style}" data-cw-art="{art_version(cfg)}" data-cw-art-ov="{html_lib.escape(chosen, quote=True)}"', 1)
 
 
-def get_index_html(include_admin: bool = True, user: dict | None = None) -> str:
+def _localize_page(html: str, user: dict | None, language: str | None) -> str:
+    lang = i18n.clean_language(language) if language else i18n.request_language(None, user)
+    signed_in = isinstance(user, dict) and bool(user.get("username") or user.get("id"))
+    head = i18n.head_tags(lang, _asset_version_token(), signed_in=signed_in)
+    html = html.replace("__CW_I18N_HEAD__", head, 1).replace('<html lang="en"', f'<html lang="{lang}"', 1)
+    html = html.replace("__CW_LANGUAGE_OPTIONS__", i18n.language_options_html(lang))
+    html = html.replace("__CW_LANGUAGE_HINT__", "[[t:common.language.hintAccount]]" if signed_in else "[[t:common.language.hintBrowser]]")
+    return i18n.localize_html(html, lang)
+
+
+def get_index_html(include_admin: bool = True, user: dict | None = None, language: str | None = None) -> str:
     html = _get_index_html_static().replace("__CW_ASSET_BLOCK__", _asset_block(include_admin=include_admin, user=user))
     html = html.replace("__CW_NAV_PROFILE_MENU__", _nav_profile_link(user if user is not None else {"is_admin": include_admin}))
     html = html.replace("__CW_TOOLS_MENU__", _tools_menu(maintenance=include_admin))
@@ -2536,22 +2569,24 @@ def get_index_html(include_admin: bool = True, user: dict | None = None) -> str:
         html = _managed_user_shell(html, user)
     else:
         html = _seed_nav_profile_avatar(html, user)
-    return (
+    return _localize_page(
         _seed_media_card_style(html, user)
         .replace("__CW_CURRENT_VERSION__", CURRENT_VERSION)
-        .replace("__CW_VERSION__", _asset_version_token())
+        .replace("__CW_VERSION__", _asset_version_token()),
+        user,
+        language,
     )
 
 
-def get_profile_html(user: dict | None = None) -> str:
-    return _get_user_page_html(user, hub=False)
+def get_profile_html(user: dict | None = None, language: str | None = None) -> str:
+    return _get_user_page_html(user, hub=False, language=language)
 
 
-def get_hub_html(user: dict | None = None) -> str:
-    return _get_user_page_html(user, hub=True)
+def get_hub_html(user: dict | None = None, language: str | None = None) -> str:
+    return _get_user_page_html(user, hub=True, language=language)
 
 
-def _get_user_page_html(user: dict | None, *, hub: bool) -> str:
+def _get_user_page_html(user: dict | None, *, hub: bool, language: str | None = None) -> str:
     is_admin = bool(isinstance(user, dict) and user.get("is_admin"))
     shared_header_scripts = ""
     if is_admin:
@@ -2559,29 +2594,29 @@ def _get_user_page_html(user: dict | None, *, hub: bool) -> str:
     perms = {"dashboard": True, "watchlist": True, "playback": True, "write": True} if is_admin else _managed_user_permissions(user)
     esc = lambda value: html_lib.escape(str(value or ""), quote=True)
     role = "admin" if is_admin else "user"
-    role_label = "Administrator" if is_admin else "Managed User"
+    role_label = "[[t:profile.role.admin]]" if is_admin else "[[t:profile.role.managed]]"
     profile_id = "" if is_admin else esc((user or {}).get("profile_id"))
     username = esc((user or {}).get("username"))
-    display_name = esc((user or {}).get("display_name") or (user or {}).get("label") or (user or {}).get("username") or ("Administrator" if is_admin else "Profile"))
+    display_name = esc((user or {}).get("display_name") or (user or {}).get("label") or (user or {}).get("username") or "") or ("[[t:profile.role.admin]]" if is_admin else "[[t:navigation.account.profileFallback]]")
     write = "on" if perms.get("write") else "off"
     preferences_allowed = is_admin or bool(perms.get("write"))
     settings_interface_nav = (
-        '        <button type="button" data-settings-nav="interface"><span class="material-symbols-rounded" aria-hidden="true">tune</span><span>Display</span></button>'
+        '        <button type="button" data-settings-nav="interface"><span class="material-symbols-rounded" aria-hidden="true">tune</span><span>[[t:profile.settings.display.title]]</span></button>'
     )
     settings_interface_controls = """          <label class="cw-set-row cw-set-toggle">
-            <span class="cw-set-copy"><strong>Now playing card</strong><small>Show a small card with what you are watching.</small></span>
+            <span class="cw-set-copy"><strong>[[t:profile.settings.display.playingCard]]</strong><small>[[t:profile.settings.display.playingCardHint]]</small></span>
             <input id="profile-pref-playing-card" type="checkbox" checked role="switch"><span class="cw-set-switch" aria-hidden="true"></span>
           </label>
           <label class="cw-set-row cw-set-toggle">
-            <span class="cw-set-copy"><strong>Quick add button</strong><small>Show a shortcut to add something you watched by hand.</small></span>
+            <span class="cw-set-copy"><strong>[[t:profile.settings.display.quickAdd]]</strong><small>[[t:profile.settings.display.quickAddHint]]</small></span>
             <input id="profile-pref-quick-add" type="checkbox" checked role="switch"><span class="cw-set-switch" aria-hidden="true"></span>
           </label>
 """ if preferences_allowed else ""
-    settings_interface = f"""        <section id="settings-interface" class="cw-set-card" data-settings-section="interface" hidden>
-          <header class="cw-set-head"><div><h2>Display</h2><p>Choose how media is displayed.</p></div></header>
+    settings_interface = f"""        <section id="settings-interface" class="cw-set-card" data-settings-section="interface" data-cw-autosave hidden>
+          <header class="cw-set-head"><div><h2>[[t:profile.settings.display.title]]</h2><p>[[t:profile.settings.display.intro]]</p></div></header>
 {settings_interface_controls}          <div class="cw-set-row">
-            <label class="cw-set-copy" for="profile-media-card"><strong>Media details</strong><small>Choose the full or compact card on Main and Hub.</small></label>
-            <span class="cw-set-inline"><select id="profile-media-card" class="cw-set-input" data-cw-media-card><option value="full">Full media card</option><option value="compact">Compact media card</option></select></span>
+            <label class="cw-set-copy" for="profile-media-card"><strong>[[t:settings.ui.appearance.mediaDetails]]</strong><small>[[t:profile.settings.display.mediaDetailsHint]]</small></label>
+            <span class="cw-set-inline"><select id="profile-media-card" class="cw-set-input" data-cw-media-card><option value="full">[[t:settings.ui.appearance.mediaCardFull]]</option><option value="compact">[[t:settings.ui.appearance.mediaCardCompact]]</option></select></span>
           </div>
         </section>"""
     dashboard = "on" if perms.get("dashboard") else "off"
@@ -2594,76 +2629,76 @@ def _get_user_page_html(user: dict | None, *, hub: bool) -> str:
     profile_avatar_inner = _profile_avatar_inner(user)
     settings_nav = (
         '<div class="cw-tabmenu" id="tab-settings-menu">'
-        '<button id="tab-settings" class="tab" type="button" aria-haspopup="menu" aria-expanded="false" onclick="window.cwToggleSettingsMenu(event)"><span>Settings</span><span class="tab-caret" aria-hidden="true"></span></button>'
+        '<button id="tab-settings" class="tab" type="button" aria-haspopup="menu" aria-expanded="false" onclick="window.cwToggleSettingsMenu(event)"><span>[[t:navigation.tabs.settings]]</span><span class="tab-caret" aria-hidden="true"></span></button>'
         '<div class="cw-menu hidden" id="cw-settings-menu" role="menu" aria-labelledby="tab-settings">'
-        '<button class="cw-menu-item active" data-settings-pane="overview" type="button" role="menuitem" aria-current="page" onclick="window.cwSettingsMenuSelect(\'overview\')"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">grid_view</span><span>Settings overview</span></button>'
+        '<button class="cw-menu-item active" data-settings-pane="overview" type="button" role="menuitem" aria-current="page" onclick="window.cwSettingsMenuSelect(\'overview\')"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">grid_view</span><span>[[t:navigation.settingsMenu.overview]]</span></button>'
         '<div class="cw-menu-sep" role="separator" aria-hidden="true"></div>'
-        '<button class="cw-menu-item" data-settings-pane="providers" type="button" role="menuitem" onclick="window.cwSettingsMenuSelect(\'providers\')"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">device_hub</span><span>Connections</span></button>'
-        '<button class="cw-menu-item" data-settings-pane="sync" type="button" role="menuitem" onclick="window.cwSettingsMenuSelect(\'pairs\')"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">sync_alt</span><span>Sync pairs</span></button>'
-        '<button class="cw-menu-item" data-settings-pane="scrobbler" type="button" role="menuitem" onclick="window.cwSettingsMenuSelect(\'scrobbler\')"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">sensors</span><span>Scrobbler</span></button>'
-        '<button class="cw-menu-item" data-settings-pane="scheduling" type="button" role="menuitem" onclick="window.cwSettingsMenuSelect(\'scheduling\')"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">schedule</span><span>Scheduling</span></button>'
-        '<button class="cw-menu-item" data-settings-pane="app" type="button" role="menuitem" onclick="window.cwSettingsMenuSelect(\'app\')"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">security</span><span>UI and Security</span></button>'
-        '<button class="cw-menu-item" data-settings-pane="maintenance" type="button" role="menuitem" onclick="window.cwSettingsMenuSelect(\'maintenance\')"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">build</span><span>Maintenance</span></button>'
+        '<button class="cw-menu-item" data-settings-pane="providers" type="button" role="menuitem" onclick="window.cwSettingsMenuSelect(\'providers\')"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">device_hub</span><span>[[t:navigation.settingsMenu.connections]]</span></button>'
+        '<button class="cw-menu-item" data-settings-pane="sync" type="button" role="menuitem" onclick="window.cwSettingsMenuSelect(\'pairs\')"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">sync_alt</span><span>[[t:navigation.settingsMenu.pairs]]</span></button>'
+        '<button class="cw-menu-item" data-settings-pane="scrobbler" type="button" role="menuitem" onclick="window.cwSettingsMenuSelect(\'scrobbler\')"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">sensors</span><span>[[t:navigation.settingsMenu.scrobbler]]</span></button>'
+        '<button class="cw-menu-item" data-settings-pane="scheduling" type="button" role="menuitem" onclick="window.cwSettingsMenuSelect(\'scheduling\')"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">schedule</span><span>[[t:navigation.settingsMenu.scheduling]]</span></button>'
+        '<button class="cw-menu-item" data-settings-pane="app" type="button" role="menuitem" onclick="window.cwSettingsMenuSelect(\'app\')"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">security</span><span>[[t:navigation.settingsMenu.app]]</span></button>'
+        '<button class="cw-menu-item" data-settings-pane="maintenance" type="button" role="menuitem" onclick="window.cwSettingsMenuSelect(\'maintenance\')"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">build</span><span>[[t:navigation.settingsMenu.maintenance]]</span></button>'
         '</div></div>'
     )
     nav_items: list[str] = []
     if is_admin:
         nav_items.extend([
-            _profile_nav_tab("Main", "/"),
-            _profile_nav_tab("Tracker", "/#tracker"),
-            _profile_nav_tab("Hub", "/hub", active=hub),
-            _profile_nav_tab("Captures", "/#snapshots"),
-            _profile_nav_tab("Playlists", "/#playlists"),
+            _profile_nav_tab("main", "/"),
+            _profile_nav_tab("tracker", "/#tracker"),
+            _profile_nav_tab("profile", "/hub", active=hub),
+            _profile_nav_tab("snapshots", "/#snapshots"),
+            _profile_nav_tab("playlists", "/#playlists"),
             _tools_menu(href_prefix="/"),
             settings_nav,
         ])
     elif write_nav:
         nav_items.extend([
-            _profile_nav_tab("Main", "/?main=1#main"),
-            *([_profile_nav_tab("Tracker", "/?main=1#tracker")] if _managed_tracker_allowed(user) else []),
-            _profile_nav_tab("Hub", "/hub", active=hub),
-            _profile_nav_tab("Captures", "/?main=1#snapshots"),
-            _profile_nav_tab("Playlists", "/?main=1#playlists"),
+            _profile_nav_tab("main", "/?main=1#main"),
+            *([_profile_nav_tab("tracker", "/?main=1#tracker")] if _managed_tracker_allowed(user) else []),
+            _profile_nav_tab("profile", "/hub", active=hub),
+            _profile_nav_tab("snapshots", "/?main=1#snapshots"),
+            _profile_nav_tab("playlists", "/?main=1#playlists"),
             _tools_menu(maintenance=False, href_prefix="/?main=1"),
         ])
     else:
-        nav_items.append(_profile_nav_tab("Hub", "/hub", active=hub))
+        nav_items.append(_profile_nav_tab("profile", "/hub", active=hub))
     nav_items.append(_nav_profile_link(user).strip())
     profile_nav = "\n    ".join(nav_items)
     history_panel = _profile_timeline_panel(
         "history",
-        title="History",
+        title="profile.history.title",
         lede="",
-        search="Search synced history...",
+        search="profile.history.search",
         sources=(
-            ("synced", "Synced history"),
-            ("scrobble", "Scrobbles"),
+            ("synced", "profile.history.sourceSynced"),
+            ("scrobble", "profile.history.sourceScrobbles"),
         ),
-        coverage=(("all", "Any coverage"), ("partial", "Missing somewhere"), ("full", "On every provider")),
+        coverage=(("all", "profile.records.coverageAny"), ("partial", "profile.records.coveragePartial"), ("full", "profile.records.coverageFull")),
         bulk=True,
     )
     ratings_panel = _profile_timeline_panel(
         "ratings",
-        title="Ratings",
+        title="profile.ratings.title",
         lede="",
-        search="Search ratings...",
-        sources=(("ratings", "Ratings"),),
-        coverage=(("all", "Any coverage"), ("partial", "Missing somewhere"), ("full", "On every provider"), ("mismatch", "Scores differ")),
+        search="profile.ratings.search",
+        sources=(("ratings", "profile.ratings.title"),),
+        coverage=(("all", "profile.records.coverageAny"), ("partial", "profile.records.coveragePartial"), ("full", "profile.records.coverageFull"), ("mismatch", "profile.records.coverageMismatch")),
         scores=True,
         bulk=True,
     )
     playback_allowed = bool(perms.get("playback"))
-    playback_tab = '    <button id="profile-tab-playback" type="button" data-profile-tab="playback"><span class="material-symbols-rounded" aria-hidden="true">play_circle</span><span data-tab-label>Progress</span></button>' if playback_allowed else ""
+    playback_tab = '    <button id="profile-tab-playback" type="button" data-profile-tab="playback"><span class="material-symbols-rounded" aria-hidden="true">play_circle</span><span data-tab-label>[[t:profile.playback.title]]</span></button>' if playback_allowed else ""
     playback_panel = _profile_playback_panel() if playback_allowed else ""
     watchlist_allowed = bool(perms.get("watchlist"))
-    watchlist_tab = '    <button id="profile-tab-watchlist" type="button" data-profile-tab="watchlist"><span class="material-symbols-rounded" aria-hidden="true">bookmark</span><span data-tab-label>Watchlist</span></button>' if watchlist_allowed else ""
+    watchlist_tab = '    <button id="profile-tab-watchlist" type="button" data-profile-tab="watchlist"><span class="material-symbols-rounded" aria-hidden="true">bookmark</span><span data-tab-label>[[t:common.media.watchlist]]</span></button>' if watchlist_allowed else ""
     watchlist_panel = _profile_timeline_panel(
         "watchlist",
-        title="Watchlist",
+        title="common.media.watchlist",
         lede="",
-        search="Filter by title, id or provider...",
-        sources=(("watchlist", "Watchlist"),),
-        coverage=(("all", "Any coverage"), ("partial", "Missing somewhere"), ("full", "On every provider")),
+        search="profile.watchlist.search",
+        sources=(("watchlist", "common.media.watchlist"),),
+        coverage=(("all", "profile.records.coverageAny"), ("partial", "profile.records.coveragePartial"), ("full", "profile.records.coverageFull")),
         bulk=True,
         timeline=False,
     ) if watchlist_allowed else ""
@@ -2671,8 +2706,8 @@ def _get_user_page_html(user: dict | None, *, hub: bool) -> str:
     remove_dialog = _profile_remove_dialog()
     view_as_banner = """  <div id="profile-view-as-banner" class="cw-profile-viewas" role="status" hidden>
     <span class="material-symbols-rounded" aria-hidden="true">visibility</span>
-    <span class="cw-profile-viewas-copy">Viewing <strong id="profile-view-as-name"></strong> as read-only</span>
-    <button id="profile-view-as-exit" class="cw-profile-viewas-exit" type="button">Back to my profile</button>
+    <span class="cw-profile-viewas-copy">[[t:profile.viewAs.viewing]] <strong id="profile-view-as-name"></strong> [[t:profile.viewAs.readOnly]]</span>
+    <button id="profile-view-as-exit" class="cw-profile-viewas-exit" type="button">[[t:profile.viewAs.back]]</button>
   </div>""" if is_admin else ""
     page_content = f"""  <section class="cw-profile-hero cw-media-hero" id="profile-hero">
     <div class="cw-profile-hero-art" id="profile-hero-art"></div>
@@ -2680,9 +2715,9 @@ def _get_user_page_html(user: dict | None, *, hub: bool) -> str:
     <div class="cw-profile-hero-shade"></div>
     <div class="cw-media-hero-topbar">
       <div class="cw-media-hero-brand">
-        <h1 class="cw-media-hero-kicker">My Media Hub</h1>
+        <h1 class="cw-media-hero-kicker">[[t:profile.hero.title]]</h1>
         <div class="cw-profile-identity cw-media-hero-identity">
-          <a id="profile-hero-avatar" class="cw-media-hero-avatar" href="/profile" aria-label="Open user settings" title="User settings">{profile_avatar_inner}</a>
+          <a id="profile-hero-avatar" class="cw-media-hero-avatar" href="/profile" aria-label="[[t:profile.hero.openUserSettings]]" title="[[t:profile.hero.userSettings]]">{profile_avatar_inner}</a>
           <div class="cw-profile-nameblock">
             <span id="profile-role" class="cw-profile-role" hidden>{role_label}</span>
             <div id="profile-display-name">{display_name}</div>
@@ -2692,25 +2727,25 @@ def _get_user_page_html(user: dict | None, *, hub: bool) -> str:
           </div>
         </div>
       </div>
-    <article class="cw-profile-last hidden" role="button" tabindex="0" aria-label="Show last watched details">
+    <article class="cw-profile-last hidden" role="button" tabindex="0" aria-label="[[t:profile.hero.lastWatchedDetails]]">
       <div class="cw-profile-last-copy">
         <div class="cw-profile-last-head">
-          <span class="cw-profile-last-kicker">Last watched</span>
-          <strong id="profile-last-title">Nothing watched yet</strong>
-          <span id="profile-last-meta">History will appear here.</span>
+          <span class="cw-profile-last-kicker">[[t:profile.hero.lastWatched]]</span>
+          <strong id="profile-last-title">[[t:profile.hero.nothingWatched]]</strong>
+          <span id="profile-last-meta">[[t:profile.hero.historyAppears]]</span>
         </div>
       </div>
     </article>
     </div>
     <div id="profile-hero-media" class="cw-media-hero-context" aria-live="polite">
-      <span class="cw-media-hero-heading"><strong>Everything you watch, across your providers</strong><img class="cw-media-hero-logo" alt="" hidden></span>
+      <span class="cw-media-hero-heading"><strong>[[t:profile.hero.tagline]]</strong><img class="cw-media-hero-logo" alt="" hidden></span>
       <div class="cw-media-hero-details"><span id="profile-hero-summary"></span><span id="profile-hero-extra" class="cw-media-hero-extra"></span></div>
     </div>
-    <div id="profile-hub-summary" class="cw-hub-summary" aria-label="Hub summary">
+    <div id="profile-hub-summary" class="cw-hub-summary" aria-label="[[t:profile.hero.summary]]">
       <div id="profile-hub-metrics" class="cw-hub-summary-metrics"></div>
       <div class="cw-hub-summary-tools">
-        <span id="profile-hub-freshness" role="status">Not checked yet</span>
-        <button id="profile-hub-refresh" type="button" class="cw-btn" aria-label="Refresh Overview"><span class="material-symbols-rounded" aria-hidden="true">refresh</span><span>Refresh</span></button>
+        <span id="profile-hub-freshness" role="status">[[t:profile.hero.notChecked]]</span>
+        <button id="profile-hub-refresh" type="button" class="cw-btn" aria-label="[[t:profile.hero.refreshOverview]]"><span class="material-symbols-rounded" aria-hidden="true">refresh</span><span>[[t:common.actions.refresh]]</span></button>
         <details id="profile-hub-issues" hidden><summary></summary><div></div></details>
       </div>
     </div>
@@ -2718,7 +2753,7 @@ def _get_user_page_html(user: dict | None, *, hub: bool) -> str:
       <div class="cw-profile-now-copy">
         <div class="cw-profile-now-head">
           <span class="cw-profile-now-dot" aria-hidden="true"></span>
-          <span class="cw-profile-now-kicker">Now Playing</span>
+          <span class="cw-profile-now-kicker">[[t:profile.hero.nowPlaying]]</span>
           <strong id="profile-now-title"></strong>
           <span id="profile-now-meta"></span>
           <span id="profile-now-provider"></span>
@@ -2730,48 +2765,48 @@ def _get_user_page_html(user: dict | None, *, hub: bool) -> str:
     </div>
   </section>
 {view_as_banner}
-  <div class="cw-profile-tabs" role="tablist" aria-label="Profile tabs">
-    <button id="profile-tab-overview" class="active" type="button" data-profile-tab="overview"><span class="material-symbols-rounded" aria-hidden="true">space_dashboard</span><span data-tab-label>Overview</span></button>
+  <div class="cw-profile-tabs" role="tablist" aria-label="[[t:profile.tabs.label]]">
+    <button id="profile-tab-overview" class="active" type="button" data-profile-tab="overview"><span class="material-symbols-rounded" aria-hidden="true">space_dashboard</span><span data-tab-label>[[t:profile.tabs.overview]]</span></button>
 {watchlist_tab}
-    <button id="profile-tab-history" type="button" data-profile-tab="history"><span class="material-symbols-rounded" aria-hidden="true">history</span><span data-tab-label>History</span></button>
-    <button id="profile-tab-ratings" type="button" data-profile-tab="ratings"><span class="material-symbols-rounded" aria-hidden="true">star</span><span data-tab-label>Ratings</span></button>
+    <button id="profile-tab-history" type="button" data-profile-tab="history"><span class="material-symbols-rounded" aria-hidden="true">history</span><span data-tab-label>[[t:profile.history.title]]</span></button>
+    <button id="profile-tab-ratings" type="button" data-profile-tab="ratings"><span class="material-symbols-rounded" aria-hidden="true">star</span><span data-tab-label>[[t:profile.ratings.title]]</span></button>
 {playback_tab}
-    <button id="profile-tab-collection" type="button" data-profile-tab="collection"><span class="material-symbols-rounded" aria-hidden="true">video_library</span><span data-tab-label>Collection</span></button>
+    <button id="profile-tab-collection" type="button" data-profile-tab="collection"><span class="material-symbols-rounded" aria-hidden="true">video_library</span><span data-tab-label>[[t:profile.tabs.collection]]</span></button>
   </div>
   <section id="profile-panel-overview" class="cw-profile-panel active">
     <article class="cw-hub-section cw-hub-continue">
-      <div class="cw-hub-section-head"><h2>Continue watching</h2><a href="{playback_href}">View all</a></div>
+      <div class="cw-hub-section-head"><h2>[[t:profile.overview.continueWatching]]</h2><a href="{playback_href}">[[t:common.actions.viewAll]]</a></div>
       <div id="profile-progress"></div>
     </article>
     <article id="profile-airing" class="cw-hub-section" aria-labelledby="profile-airing-title">
-      <div class="cw-hub-section-head"><h2 id="profile-airing-title">Airing soon</h2><div class="trk-calendar-actions">
-        <button type="button" class="cw-btn" data-hub-calendar="today">Today</button>
-        <button type="button" class="cw-btn" data-hub-calendar="previous" aria-label="Previous days"><span class="material-symbols-rounded" aria-hidden="true">chevron_left</span></button>
-        <button type="button" class="cw-btn" data-hub-calendar="next" aria-label="Next days"><span class="material-symbols-rounded" aria-hidden="true">chevron_right</span></button>
+      <div class="cw-hub-section-head"><h2 id="profile-airing-title">[[t:profile.overview.airingSoon]]</h2><div class="trk-calendar-actions">
+        <button type="button" class="cw-btn" data-hub-calendar="today">[[t:common.time.today]]</button>
+        <button type="button" class="cw-btn" data-hub-calendar="previous" aria-label="[[t:profile.overview.previousDays]]"><span class="material-symbols-rounded" aria-hidden="true">chevron_left</span></button>
+        <button type="button" class="cw-btn" data-hub-calendar="next" aria-label="[[t:profile.overview.nextDays]]"><span class="material-symbols-rounded" aria-hidden="true">chevron_right</span></button>
       </div></div>
-      <div id="profile-airing-days" class="trk-calendar" role="region" aria-label="Upcoming episodes over the next 30 days" tabindex="0"></div>
+      <div id="profile-airing-days" class="trk-calendar" role="region" aria-label="[[t:profile.overview.upcoming30]]" tabindex="0"></div>
       <p id="profile-airing-notice" role="status" hidden></p>
     </article>
     <div class="cw-hub-secondary">
       <article class="cw-hub-section">
-        <div class="cw-hub-section-head"><h2>Recently added to watchlist</h2><a href="{watchlist_href}">View all</a></div>
+        <div class="cw-hub-section-head"><h2>[[t:profile.overview.recentWatchlist]]</h2><a href="{watchlist_href}">[[t:common.actions.viewAll]]</a></div>
         <div id="profile-watchlist"></div>
       </article>
       <article class="cw-hub-section">
-        <div class="cw-hub-section-head"><h2><span class="material-symbols-rounded cw-profile-activity-icon" aria-hidden="true">layers</span>Recent activity</h2><button id="profile-activity-view-all" type="button">View all</button></div>
+        <div class="cw-hub-section-head"><h2><span class="material-symbols-rounded cw-profile-activity-icon" aria-hidden="true">layers</span>[[t:profile.overview.recentActivity]]</h2><button id="profile-activity-view-all" type="button">[[t:common.actions.viewAll]]</button></div>
         <div id="profile-activity" class="cw-profile-activity-list"></div>
       </article>
     </div>
-  <section id="dashboard-widgets-card" class="cw-dashboard-widgets hidden" aria-label="Media widgets">
+  <section id="dashboard-widgets-card" class="cw-dashboard-widgets hidden" aria-label="[[t:dashboard.widgets.label]]">
     <article id="recent-history-widget" class="cw-dash-widget cw-dash-widget--history">
       <div class="cw-dash-widget-head">
         <div class="cw-dash-title-row">
           <span class="material-symbols-rounded" aria-hidden="true">play_arrow</span>
-          <h3>Recent History</h3>
+          <h3>[[t:dashboard.widgets.recentHistory]]</h3>
         </div>
         <div class="cw-dash-head-actions">
           <span id="recent-history-count-chip" class="cw-widget-count-chip hidden" aria-live="polite"></span>
-          <button id="recent-history-refresh" class="cw-dash-ghost" type="button" title="Refresh recent history" aria-label="Refresh recent history"><span class="material-symbols-rounded" aria-hidden="true">refresh</span></button>
+          <button id="recent-history-refresh" class="cw-dash-ghost" type="button" title="[[t:dashboard.widgets.refreshRecentHistory]]" aria-label="[[t:dashboard.widgets.refreshRecentHistory]]"><span class="material-symbols-rounded" aria-hidden="true">refresh</span></button>
         </div>
       </div>
       <div id="recent-history-list" class="cw-history-widget-list cw-widget-scrollbar" aria-live="polite"></div>
@@ -2781,11 +2816,11 @@ def _get_user_page_html(user: dict | None, *, hub: bool) -> str:
       <div class="cw-dash-widget-head">
         <div class="cw-dash-title-row">
           <span class="material-symbols-rounded" aria-hidden="true">star</span>
-          <h3>Latest Ratings</h3>
+          <h3>[[t:dashboard.widgets.latestRatings]]</h3>
         </div>
         <div class="cw-dash-head-actions">
           <span id="latest-ratings-count-chip" class="cw-widget-count-chip hidden" aria-live="polite"></span>
-          <button id="latest-ratings-refresh" class="cw-dash-ghost" type="button" title="Refresh latest ratings" aria-label="Refresh latest ratings"><span class="material-symbols-rounded" aria-hidden="true">refresh</span></button>
+          <button id="latest-ratings-refresh" class="cw-dash-ghost" type="button" title="[[t:dashboard.widgets.refreshLatestRatings]]" aria-label="[[t:dashboard.widgets.refreshLatestRatings]]"><span class="material-symbols-rounded" aria-hidden="true">refresh</span></button>
         </div>
       </div>
       <div id="latest-ratings-grid" class="cw-ratings-widget-grid" aria-live="polite"></div>
@@ -2795,11 +2830,11 @@ def _get_user_page_html(user: dict | None, *, hub: bool) -> str:
       <div class="cw-dash-widget-head">
         <div class="cw-dash-title-row">
           <span class="material-symbols-rounded" aria-hidden="true">sensors</span>
-          <h3>Recent Scrobble</h3>
+          <h3>[[t:dashboard.widgets.recentScrobble]]</h3>
         </div>
         <div class="cw-dash-head-actions">
           <span id="recent-scrobble-count-chip" class="cw-widget-count-chip hidden" aria-live="polite"></span>
-          <button id="recent-scrobble-refresh" class="cw-dash-ghost" type="button" title="Refresh recent scrobble" aria-label="Refresh recent scrobble"><span class="material-symbols-rounded" aria-hidden="true">refresh</span></button>
+          <button id="recent-scrobble-refresh" class="cw-dash-ghost" type="button" title="[[t:dashboard.widgets.refreshRecentScrobble]]" aria-label="[[t:dashboard.widgets.refreshRecentScrobble]]"><span class="material-symbols-rounded" aria-hidden="true">refresh</span></button>
         </div>
       </div>
       <div id="recent-scrobble-list" class="cw-history-widget-list cw-widget-scrollbar" aria-live="polite"></div>
@@ -2809,11 +2844,11 @@ def _get_user_page_html(user: dict | None, *, hub: bool) -> str:
       <div class="cw-dash-widget-head">
         <div class="cw-dash-title-row">
           <span class="material-symbols-rounded" aria-hidden="true">timelapse</span>
-          <h3>Recent Progress</h3>
+          <h3>[[t:dashboard.widgets.recentProgress]]</h3>
         </div>
         <div class="cw-dash-head-actions">
           <span id="recent-progress-count-chip" class="cw-widget-count-chip hidden" aria-live="polite"></span>
-          <button id="recent-progress-refresh" class="cw-dash-ghost" type="button" title="Refresh recent progress" aria-label="Refresh recent progress"><span class="material-symbols-rounded" aria-hidden="true">refresh</span></button>
+          <button id="recent-progress-refresh" class="cw-dash-ghost" type="button" title="[[t:dashboard.widgets.refreshRecentProgress]]" aria-label="[[t:dashboard.widgets.refreshRecentProgress]]"><span class="material-symbols-rounded" aria-hidden="true">refresh</span></button>
         </div>
       </div>
       <div id="recent-progress-list" class="cw-history-widget-list cw-widget-scrollbar" aria-live="polite"></div>
@@ -2823,11 +2858,11 @@ def _get_user_page_html(user: dict | None, *, hub: bool) -> str:
       <div class="cw-dash-widget-head">
         <div class="cw-dash-title-row">
           <span class="material-symbols-rounded" aria-hidden="true">queue_music</span>
-          <h3>Recent Playlists</h3>
+          <h3>[[t:dashboard.widgets.recentPlaylists]]</h3>
         </div>
         <div class="cw-dash-head-actions">
           <span id="recent-playlists-count-chip" class="cw-widget-count-chip hidden" aria-live="polite"></span>
-          <button id="recent-playlists-refresh" class="cw-dash-ghost" type="button" title="Refresh recent playlists" aria-label="Refresh recent playlists"><span class="material-symbols-rounded" aria-hidden="true">refresh</span></button>
+          <button id="recent-playlists-refresh" class="cw-dash-ghost" type="button" title="[[t:dashboard.widgets.refreshRecentPlaylists]]" aria-label="[[t:dashboard.widgets.refreshRecentPlaylists]]"><span class="material-symbols-rounded" aria-hidden="true">refresh</span></button>
         </div>
       </div>
       <div id="recent-playlists-list" class="cw-history-widget-list cw-widget-scrollbar" aria-live="polite"></div>
@@ -2837,54 +2872,54 @@ def _get_user_page_html(user: dict | None, *, hub: bool) -> str:
   <section id="profile-panel-collection" class="cw-profile-panel cw-hub-records cw-page-panel">
     <div class="cw-hub-records-head">
       <div class="cw-hub-records-headline">
-        <h2>Collections</h2>
+        <h2>[[t:profile.collection.title]]</h2>
       </div>
       <div class="cw-hub-records-tiles" id="profile-collection-metrics"></div>
     </div>
     <div class="cw-hub-records-toolbar">
       <label class="cw-hub-records-search">
         <span class="material-symbols-rounded" aria-hidden="true">search</span>
-        <input id="profile-collection-search" type="search" placeholder="Search collections...">
+        <input id="profile-collection-search" type="search" placeholder="[[t:profile.collection.search]]">
       </label>
-      <div class="cw-hub-records-chips" id="profile-collection-types" aria-label="Collection type filters"></div>
+      <div class="cw-hub-records-chips" id="profile-collection-types" aria-label="[[t:profile.collection.typeFilters]]"></div>
       <div class="cw-hub-records-controls">
-        <select id="profile-collection-shelf" aria-label="Collection source">
-          <option value="synced">Synced</option>
-          <option value="shelf">My shelf</option>
-          <option value="all">Synced and shelf</option>
-          <option value="unwatched">Shelf: never watched</option>
-          <option value="not_on_server">Shelf: not on a server</option>
-          <option value="not_on_shelf">Server: not on shelf</option>
+        <select id="profile-collection-shelf" aria-label="[[t:profile.collection.source]]">
+          <option value="synced">[[t:profile.collection.synced]]</option>
+          <option value="shelf">[[t:profile.collection.myShelf]]</option>
+          <option value="all">[[t:profile.collection.syncedAndShelf]]</option>
+          <option value="unwatched">[[t:profile.collection.shelfNeverWatched]]</option>
+          <option value="not_on_server">[[t:profile.collection.shelfNotOnServer]]</option>
+          <option value="not_on_shelf">[[t:profile.collection.serverNotOnShelf]]</option>
         </select>
-        <select id="profile-collection-shelf-filter" aria-label="Shelf filter" hidden><option value="">Whole shelf</option></select>
-        <select id="profile-collection-provider" aria-label="Provider filter"><option value="">All providers</option></select>
-        <select id="profile-collection-sort" aria-label="Collection sort">
-          <option value="collected_at">Recently added</option>
-          <option value="collected_at_asc">Oldest added</option>
-          <option value="title">Title A-Z</option>
-          <option value="title_desc">Title Z-A</option>
-          <option value="year_desc">Year: newest</option>
-          <option value="year_asc">Year: oldest</option>
-          <option value="price_desc">Price: highest</option>
-          <option value="purchased_desc">Bought: newest</option>
+        <select id="profile-collection-shelf-filter" aria-label="[[t:profile.collection.shelfFilter]]" hidden><option value="">[[t:profile.collection.wholeShelf]]</option></select>
+        <select id="profile-collection-provider" aria-label="[[t:profile.records.providerFilter]]"><option value="">[[t:profile.records.allProviders]]</option></select>
+        <select id="profile-collection-sort" aria-label="[[t:profile.collection.sort]]">
+          <option value="collected_at">[[t:profile.collection.sortRecent]]</option>
+          <option value="collected_at_asc">[[t:profile.collection.sortOldest]]</option>
+          <option value="title">[[t:profile.playback.sort.title]]</option>
+          <option value="title_desc">[[t:profile.collection.sortTitleDesc]]</option>
+          <option value="year_desc">[[t:profile.collection.sortYearNew]]</option>
+          <option value="year_asc">[[t:profile.collection.sortYearOld]]</option>
+          <option value="price_desc">[[t:profile.collection.sortPrice]]</option>
+          <option value="purchased_desc">[[t:profile.collection.sortBought]]</option>
         </select>
-        <div class="cw-hub-records-views" role="group" aria-label="View mode">
-          <button class="cw-view-shelf" type="button" data-collection-display="shelf" title="Show my shelf" aria-label="Show my shelf" aria-pressed="false"><span class="material-symbols-rounded" aria-hidden="true">shelves</span></button>
-          <button class="cw-view-timeline" type="button" data-collection-timeline title="Show timeline" aria-label="Show timeline" aria-pressed="false"><span class="material-symbols-rounded" aria-hidden="true">timeline</span></button>
-          <button class="active" type="button" data-collection-view="grid" title="Grid view" aria-label="Grid view" aria-pressed="true"><span class="material-symbols-rounded" aria-hidden="true">grid_view</span></button>
-          <button type="button" data-collection-view="list" title="List view" aria-label="List view" aria-pressed="false"><span class="material-symbols-rounded" aria-hidden="true">view_list</span></button>
+        <div class="cw-hub-records-views" role="group" aria-label="[[t:profile.records.viewMode]]">
+          <button class="cw-view-shelf" type="button" data-collection-display="shelf" title="[[t:profile.collection.showShelf]]" aria-label="[[t:profile.collection.showShelf]]" aria-pressed="false"><span class="material-symbols-rounded" aria-hidden="true">shelves</span></button>
+          <button class="cw-view-timeline" type="button" data-collection-timeline title="[[t:profile.records.showTimeline]]" aria-label="[[t:profile.records.showTimeline]]" aria-pressed="false"><span class="material-symbols-rounded" aria-hidden="true">timeline</span></button>
+          <button class="active" type="button" data-collection-view="grid" title="[[t:profile.records.gridView]]" aria-label="[[t:profile.records.gridView]]" aria-pressed="true"><span class="material-symbols-rounded" aria-hidden="true">grid_view</span></button>
+          <button type="button" data-collection-view="list" title="[[t:profile.records.listView]]" aria-label="[[t:profile.records.listView]]" aria-pressed="false"><span class="material-symbols-rounded" aria-hidden="true">view_list</span></button>
         </div>
-        <button id="profile-collection-refresh" class="cw-tl-ghost cw-collection-refresh" type="button" data-collection-refresh title="Refresh Collections" aria-label="Refresh Collections"><span class="material-symbols-rounded" aria-hidden="true">refresh</span></button>
+        <button id="profile-collection-refresh" class="cw-tl-ghost cw-collection-refresh" type="button" data-collection-refresh title="[[t:profile.collection.refresh]]" aria-label="[[t:profile.collection.refresh]]"><span class="material-symbols-rounded" aria-hidden="true">refresh</span></button>
       </div>
     </div>
-    <div id="profile-collection-timeline" class="cw-hist-timeline" aria-label="Collections per month" hidden></div>
+    <div id="profile-collection-timeline" class="cw-hist-timeline" aria-label="[[t:profile.collection.perMonth]]" hidden></div>
     <div id="profile-collection-shelfstats" class="cw-shelf-stats-host" hidden></div>
     <div id="profile-collection-grid" class="cw-collection-grid" data-view="grid" aria-live="polite"></div>
     <div id="profile-collection-footer" class="cw-collection-footer" hidden>
-      <nav id="profile-collection-pages" class="cw-collection-pages" aria-label="Collection pages"></nav>
+      <nav id="profile-collection-pages" class="cw-collection-pages" aria-label="[[t:profile.collection.pages]]"></nav>
       <div class="cw-collection-summary">
         <span id="profile-collection-page-label"></span>
-        <select id="profile-collection-page-size" aria-label="Items per page">
+        <select id="profile-collection-page-size" aria-label="[[t:profile.records.perPage]]">
           <option value="24">24</option>
           <option value="48">48</option>
           <option value="72">72</option>
@@ -2898,104 +2933,108 @@ def _get_user_page_html(user: dict | None, *, hub: bool) -> str:
 {playback_panel}
 {watchlist_panel}
 {remove_dialog}
-""" if hub else f"""  <section class="cw-account-header cw-page-account-header" aria-label="Your profile">
+""" if hub else f"""  <section class="cw-account-header cw-page-account-header" aria-label="[[t:profile.account.yourProfile]]">
     <div class="cw-account-picture">
       <span id="profile-settings-avatar" class="cw-account-avatar" aria-hidden="true">{profile_avatar_inner}</span>
-      <button id="profile-avatar-replace" class="cw-account-camera" type="button" aria-label="Change profile picture" title="Change profile picture"><span class="material-symbols-rounded" aria-hidden="true">photo_camera</span></button>
+      <button id="profile-avatar-replace" class="cw-account-camera" type="button" aria-label="[[t:profile.account.changePicture]]" title="[[t:profile.account.changePicture]]"><span class="material-symbols-rounded" aria-hidden="true">photo_camera</span></button>
       <input id="profile-avatar-input" type="file" accept="image/png,image/jpeg,image/webp" hidden>
     </div>
     <div class="cw-account-identity">
       <h1 id="profile-display-name">{display_name}</h1>
       <div class="cw-account-meta"><span id="profile-username">@{username}</span><span id="profile-role" class="cw-set-tag">{role_label}</span></div>
-      <button id="profile-avatar-remove" class="cw-account-remove cw-danger-confirm" type="button">Remove picture</button>
+      <button id="profile-avatar-remove" class="cw-account-remove cw-danger-confirm" type="button">[[t:profile.account.removePicture]]</button>
     </div>
   </section>
           <div id="profile-avatar-upload-status" class="cw-profile-upload hidden" role="status" aria-live="polite">
-            <div class="cw-profile-upload-head"><span id="profile-avatar-upload-label">Uploading picture</span><strong id="profile-avatar-upload-percent">0%</strong></div>
+            <div class="cw-profile-upload-head"><span id="profile-avatar-upload-label">[[t:profile.account.uploadingPicture]]</span><strong id="profile-avatar-upload-percent">0%</strong></div>
             <div class="cw-profile-upload-bar"><span id="profile-avatar-upload-bar"></span></div>
           </div>
   <section id="profile-panel-account" class="cw-profile-panel active">
     <div class="cw-set">
-      <nav class="cw-set-nav" aria-label="Settings sections">
-        <button type="button" class="active" data-settings-nav="profile"><span class="material-symbols-rounded" aria-hidden="true">person</span><span>Profile</span></button>
-        <button type="button" data-settings-nav="security"><span class="material-symbols-rounded" aria-hidden="true">lock</span><span>Security</span></button>
-        <button type="button" data-settings-nav="linked"><span class="material-symbols-rounded" aria-hidden="true">link</span><span>Linked accounts</span></button>
-        <button type="button" data-settings-nav="sessions"><span class="material-symbols-rounded" aria-hidden="true">devices</span><span>Devices</span></button>
+      <nav class="cw-set-nav" aria-label="[[t:settings.nav.sections]]">
+        <button type="button" class="active" data-settings-nav="profile"><span class="material-symbols-rounded" aria-hidden="true">person</span><span>[[t:profile.account.sections.profile]]</span></button>
+        <button type="button" data-settings-nav="security"><span class="material-symbols-rounded" aria-hidden="true">lock</span><span>[[t:profile.account.sections.security]]</span></button>
+        <button type="button" data-settings-nav="linked"><span class="material-symbols-rounded" aria-hidden="true">link</span><span>[[t:profile.account.sections.linked]]</span></button>
+        <button type="button" data-settings-nav="sessions"><span class="material-symbols-rounded" aria-hidden="true">devices</span><span>[[t:profile.account.sections.devices]]</span></button>
 {settings_interface_nav}
       </nav>
       <div class="cw-set-main">
         <div class="cw-set-col">
         <section id="settings-profile" class="cw-set-card" data-settings-section="profile">
-          <header class="cw-set-head"><div><h2>Personal details</h2></div></header>
+          <header class="cw-set-head"><div><h2>[[t:profile.account.personal]]</h2></div></header>
           <form id="profile-name-form" class="cw-set-row">
-            <label class="cw-set-copy" for="profile-display-input"><strong>Display name</strong><small>The name other people see.</small></label>
-            <span class="cw-set-inline"><input id="profile-display-input" class="cw-set-input" maxlength="64" autocomplete="name"><button class="cw-set-btn cw-set-btn--primary" type="submit">Save</button></span>
+            <label class="cw-set-copy" for="profile-display-input"><strong>[[t:profile.account.displayName]]</strong><small>[[t:profile.account.displayNameHint]]</small></label>
+            <span class="cw-set-inline"><input id="profile-display-input" class="cw-set-input" maxlength="64" autocomplete="name"><button class="cw-set-btn cw-set-btn--primary" type="submit">[[t:common.actions.save]]</button></span>
           </form>
           <div class="cw-set-row">
-            <label class="cw-set-copy" for="profile-username-input"><strong>Username</strong></label>
+            <label class="cw-set-copy" for="profile-username-input"><strong>[[t:settings.security.username]]</strong></label>
             <span class="cw-set-inline"><input id="profile-username-input" class="cw-set-input" value="@{username}" readonly aria-readonly="true"></span>
           </div>
         </section>
         <section id="settings-datetime" class="cw-set-card" data-settings-section="profile">
-          <header class="cw-set-head"><div><h2>Date &amp; time</h2></div></header>
+          <header class="cw-set-head"><div><h2>[[t:profile.settings.dateTime]]</h2></div></header>
           <div class="cw-set-row">
-            <label class="cw-set-copy" for="profile-pref-timezone"><strong>Timezone</strong><small>Used for dates and day/month grouping.</small></label>
+            <label class="cw-set-copy" for="profile-pref-language"><strong>[[t:common.language.label]]</strong><small id="profile-pref-language-hint" data-cw-language-status>[[t:common.language.hintAccount]]</small></label>
+            <span class="cw-set-inline"><select id="profile-pref-language" class="cw-set-input" data-cw-language-select aria-describedby="profile-pref-language-hint">__CW_LANGUAGE_OPTIONS__</select></span>
+          </div>
+          <div class="cw-set-row">
+            <label class="cw-set-copy" for="profile-pref-timezone"><strong>[[t:profile.settings.timezone]]</strong><small>[[t:profile.settings.timezoneHint]]</small></label>
             <div class="cw-set-inline cw-set-field">
-              <input id="profile-timezone-search" class="cw-set-input" type="search" placeholder="Search timezones" aria-label="Search timezones" aria-controls="profile-pref-timezone" autocomplete="off">
-              <select id="profile-pref-timezone" class="cw-set-input" data-cw-native-select="true"><option value="auto">Auto (browser settings)</option><option value="UTC">UTC</option></select>
+              <input id="profile-timezone-search" class="cw-set-input" type="search" placeholder="[[t:profile.settings.searchTimezones]]" aria-label="[[t:profile.settings.searchTimezones]]" aria-controls="profile-pref-timezone" autocomplete="off">
+              <select id="profile-pref-timezone" class="cw-set-input" data-cw-native-select="true"><option value="auto">[[t:profile.settings.autoBrowser]]</option><option value="UTC">UTC</option></select>
               <small id="profile-timezone-results" role="status" hidden></small>
             </div>
           </div>
           <div class="cw-set-row">
-            <label class="cw-set-copy" for="profile-pref-time-format"><strong>Time format</strong><small>Choose a 12-hour or 24-hour clock.</small></label>
-            <span class="cw-set-inline"><select id="profile-pref-time-format" class="cw-set-input"><option value="auto">Auto (browser settings)</option><option value="12h">12-hour (6:30 PM)</option><option value="24h">24-hour (18:30)</option></select></span>
+            <label class="cw-set-copy" for="profile-pref-time-format"><strong>[[t:profile.settings.timeFormat]]</strong><small>[[t:profile.settings.timeFormatHint]]</small></label>
+            <span class="cw-set-inline"><select id="profile-pref-time-format" class="cw-set-input"><option value="auto">[[t:profile.settings.autoBrowser]]</option><option value="12h">[[t:profile.settings.time12]]</option><option value="24h">[[t:profile.settings.time24]]</option></select></span>
           </div>
         </section>
         <section id="settings-security" class="cw-set-card" data-settings-section="security" hidden>
-          <header class="cw-set-head"><div><h2>Security</h2><p>Keep your account safe.</p></div></header>
+          <header class="cw-set-head"><div><h2>[[t:profile.account.sections.security]]</h2><p>[[t:profile.security.intro]]</p></div></header>
           <div class="cw-set-row">
-            <span class="cw-set-copy"><strong>Password</strong><small>Change the password you use to sign in.</small></span>
-            <span class="cw-set-actions"><button id="profile-password-toggle" class="cw-set-btn" type="button" aria-expanded="false" aria-controls="profile-password-form">Change</button></span>
+            <span class="cw-set-copy"><strong>[[t:settings.security.password.title]]</strong><small>[[t:profile.security.passwordHint]]</small></span>
+            <span class="cw-set-actions"><button id="profile-password-toggle" class="cw-set-btn" type="button" aria-expanded="false" aria-controls="profile-password-form">[[t:common.actions.change]]</button></span>
           </div>
           <form id="profile-password-form" class="cw-set-drawer" hidden>
             <input type="text" name="username" value="{username}" autocomplete="username" hidden>
-            <label class="cw-set-field"><span>Current password</span><input id="profile-current-password" class="cw-set-input" type="password" autocomplete="current-password"></label>
-            <label class="cw-set-field"><span>New password</span><input id="profile-new-password" class="cw-set-input" type="password" autocomplete="new-password"></label>
-            <span class="cw-set-drawer-actions"><button id="profile-password-cancel" class="cw-set-btn" type="button">Cancel</button><button class="cw-set-btn cw-set-btn--primary" type="submit">Save password</button></span>
+            <label class="cw-set-field"><span>[[t:profile.security.currentPassword]]</span><input id="profile-current-password" class="cw-set-input" type="password" autocomplete="current-password"></label>
+            <label class="cw-set-field"><span>[[t:settings.security.password.new]]</span><input id="profile-new-password" class="cw-set-input" type="password" autocomplete="new-password"></label>
+            <span class="cw-set-drawer-actions"><button id="profile-password-cancel" class="cw-set-btn" type="button">[[t:common.actions.cancel]]</button><button class="cw-set-btn cw-set-btn--primary" type="submit">[[t:profile.security.savePassword]]</button></span>
           </form>
           <div class="cw-set-row">
-            <span class="cw-set-copy"><strong>Two-step verification</strong><small id="profile-2fa-copy">Ask for a code from your phone when you sign in.</small></span>
+            <span class="cw-set-copy"><strong>[[t:profile.security.twoStep]]</strong><small id="profile-2fa-copy">[[t:profile.security.twoStepHint]]</small></span>
             <span class="cw-set-actions">
-              <span id="profile-2fa-state" class="cw-set-status">Off</span>
-              <button id="profile-2fa-setup-btn" class="cw-set-btn cw-set-btn--primary" type="button">Turn on</button>
-              <button id="profile-recovery-btn" class="cw-set-btn" type="button" hidden>Backup codes</button>
-              <button id="profile-2fa-disable-btn" class="cw-set-btn cw-set-btn--danger" type="button" hidden>Turn off</button>
+              <span id="profile-2fa-state" class="cw-set-status">[[t:common.status.off]]</span>
+              <button id="profile-2fa-setup-btn" class="cw-set-btn cw-set-btn--primary" type="button">[[t:common.actions.turnOn]]</button>
+              <button id="profile-recovery-btn" class="cw-set-btn" type="button" hidden>[[t:profile.security.backupCodes]]</button>
+              <button id="profile-2fa-disable-btn" class="cw-set-btn cw-set-btn--danger" type="button" hidden>[[t:settings.ai.assistant.turnOff]]</button>
             </span>
           </div>
           <div id="profile-2fa-confirm" class="cw-set-drawer" hidden>
-            <label class="cw-set-field"><span id="profile-2fa-confirm-label">Enter your password</span><input id="profile-2fa-confirm-password" class="cw-set-input" type="password" autocomplete="current-password"></label>
-            <span class="cw-set-drawer-actions"><button id="profile-2fa-confirm-cancel" class="cw-set-btn" type="button">Cancel</button><button id="profile-2fa-confirm-go" class="cw-set-btn cw-set-btn--primary" type="button">Continue</button></span>
+            <label class="cw-set-field"><span id="profile-2fa-confirm-label">[[t:profile.security.enterPassword]]</span><input id="profile-2fa-confirm-password" class="cw-set-input" type="password" autocomplete="current-password"></label>
+            <span class="cw-set-drawer-actions"><button id="profile-2fa-confirm-cancel" class="cw-set-btn" type="button">[[t:common.actions.cancel]]</button><button id="profile-2fa-confirm-go" class="cw-set-btn cw-set-btn--primary" type="button">[[t:common.actions.continue]]</button></span>
           </div>
           <div id="profile-2fa-setup" class="cw-profile-2fa"></div>
         </section>
         <section id="settings-linked" class="cw-set-card" data-settings-section="linked" hidden>
-          <header class="cw-set-head"><div><h2>Linked accounts</h2><p>Sign in with another account. Your password keeps working.</p></div></header>
+          <header class="cw-set-head"><div><h2>[[t:profile.account.sections.linked]]</h2><p>[[t:profile.linked.intro]]</p></div></header>
           <div class="cw-set-row">
             <span class="cw-set-logo"><img id="profile-plex-logo" alt="" hidden><span class="material-symbols-rounded" aria-hidden="true">play_circle</span></span>
-            <span class="cw-set-copy"><strong>Plex</strong><small id="profile-plex-summary">Not linked</small></span>
+            <span class="cw-set-copy"><strong>Plex</strong><small id="profile-plex-summary">[[t:settings.security.plex.notLinked]]</small></span>
             <span class="cw-set-actions">
-              <span id="profile-plex-state" class="cw-set-status">Off</span>
-              <button id="profile-plex-link" class="cw-set-btn cw-set-btn--primary" type="button">Link</button>
-              <button id="profile-plex-unlink" class="cw-set-btn cw-set-btn--danger cw-danger-confirm" type="button" hidden>Unlink</button>
+              <span id="profile-plex-state" class="cw-set-status">[[t:common.status.off]]</span>
+              <button id="profile-plex-link" class="cw-set-btn cw-set-btn--primary" type="button">[[t:common.actions.link]]</button>
+              <button id="profile-plex-unlink" class="cw-set-btn cw-set-btn--danger cw-danger-confirm" type="button" hidden>[[t:common.actions.unlink]]</button>
             </span>
           </div>
           <div class="cw-set-row">
             <span class="cw-set-logo"><span class="material-symbols-rounded" aria-hidden="true">key</span></span>
-            <span class="cw-set-copy"><strong>Single sign-on</strong><small id="profile-oidc-summary">Not linked</small></span>
+            <span class="cw-set-copy"><strong>[[t:profile.linked.sso]]</strong><small id="profile-oidc-summary">[[t:settings.security.plex.notLinked]]</small></span>
             <span class="cw-set-actions">
-              <span id="profile-oidc-state" class="cw-set-status">Off</span>
-              <button id="profile-oidc-link" class="cw-set-btn cw-set-btn--primary" type="button">Link</button>
-              <button id="profile-oidc-unlink" class="cw-set-btn cw-set-btn--danger cw-danger-confirm" type="button" hidden>Unlink</button>
+              <span id="profile-oidc-state" class="cw-set-status">[[t:common.status.off]]</span>
+              <button id="profile-oidc-link" class="cw-set-btn cw-set-btn--primary" type="button">[[t:common.actions.link]]</button>
+              <button id="profile-oidc-unlink" class="cw-set-btn cw-set-btn--danger cw-danger-confirm" type="button" hidden>[[t:common.actions.unlink]]</button>
             </span>
           </div>
         </section>
@@ -3003,7 +3042,7 @@ def _get_user_page_html(user: dict | None, *, hub: bool) -> str:
         <div class="cw-set-col">
 {settings_interface}
         <section id="settings-sessions" class="cw-set-card" data-settings-section="sessions" hidden>
-          <header class="cw-set-head"><div><h2>Devices</h2><p>Where you are signed in right now.</p></div><button id="profile-revoke-sessions" class="cw-set-btn cw-set-btn--danger cw-danger-confirm" type="button" hidden>Sign out everywhere else</button></header>
+          <header class="cw-set-head"><div><h2>[[t:profile.account.sections.devices]]</h2><p>[[t:profile.devices.intro]]</p></div><button id="profile-revoke-sessions" class="cw-set-btn cw-set-btn--danger cw-danger-confirm" type="button" hidden>[[t:profile.devices.signOutOthers]]</button></header>
           <div id="profile-sessions" class="cw-set-sessions"></div>
         </section>
         </div>
@@ -3012,7 +3051,7 @@ def _get_user_page_html(user: dict | None, *, hub: bool) -> str:
   </section>
 """
     page_name = "hub" if hub else "profile"
-    page_title = "Hub" if hub else "Profile"
+    page_title = "[[t:navigation.tabs.hub]]" if hub else "[[t:navigation.account.profileFallback]]"
     media_scripts = """<script src="/assets/helpers/selection-bar.js?v=__CW_VERSION__" defer></script>
 <script src="/assets/helpers/card-actions.js?v=__CW_VERSION__" defer></script>
 <script src="/assets/helpers/airing-card.js?v=__CW_VERSION__" defer></script>
@@ -3035,6 +3074,7 @@ def _get_user_page_html(user: dict | None, *, hub: bool) -> str:
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="dark light">
 <title>{page_title} | CrossWatch</title>
+__CW_I18N_HEAD__
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="apple-touch-icon" sizes="180x180" href="/assets/pwa/apple-touch-icon.png?v=__CW_VERSION__">
 <meta name="application-name" content="CrossWatch">
@@ -3088,14 +3128,14 @@ def _get_user_page_html(user: dict | None, *, hub: bool) -> str:
 </head>
 <body class="cw-profile-page{' cw-account-page' if not hub else ''}">
 <header>
-  <div class="brand" role="button" tabindex="0" title="Go to Hub" onclick="location.href='/hub'" onkeypress="if(event.key==='Enter'||event.key===' ')location.href='/hub'">
+  <div class="brand" role="button" tabindex="0" title="[[t:navigation.brand.goHub]]" onclick="location.href='/hub'" onkeypress="if(event.key==='Enter'||event.key===' ')location.href='/hub'">
     <img class="logo" src="/assets/img/CROSSWATCH.svg?v=__CW_VERSION__" alt="CrossWatch">
     <span class="brand-text">
       <span class="name cw-wordmark">CrossWatch<span class="brand-dot" aria-hidden="true">.</span></span>
       <span class="version">__CW_CURRENT_VERSION__</span>
     </span>
   </div>
-  <nav class="tabs" aria-label="Primary navigation">
+  <nav class="tabs" aria-label="[[t:navigation.primary]]">
     {profile_nav}
   </nav>
 </header>
@@ -3105,8 +3145,8 @@ def _get_user_page_html(user: dict | None, *, hub: bool) -> str:
 <div id="profile-toast" class="cw-profile-toast hidden" role="status" aria-live="polite"></div>
 <div id="cw-help-overlay" class="hidden" aria-hidden="true">
   <div id="cw-help-card">
-    <button id="cw-help-close" class="btn" type="button" onclick="window.cwCloseHelp()">Close</button>
-    <iframe id="cw-help-frame" title="CrossWatch Help" loading="lazy" referrerpolicy="no-referrer"></iframe>
+    <button id="cw-help-close" class="btn" type="button" onclick="window.cwCloseHelp()">[[t:common.actions.close]]</button>
+    <iframe id="cw-help-frame" title="[[t:navigation.help.title]]" loading="lazy" referrerpolicy="no-referrer"></iframe>
   </div>
 </div>
 <script>
@@ -3222,8 +3262,10 @@ def _get_user_page_html(user: dict | None, *, hub: bool) -> str:
 <script src="/assets/js/theme-flat-runtime.js?v=__CW_VERSION__" defer></script>
 </body>
 </html>"""
-    return (
+    return _localize_page(
         _seed_media_card_style(html, user)
         .replace("__CW_CURRENT_VERSION__", CURRENT_VERSION)
-        .replace("__CW_VERSION__", _asset_version_token())
+        .replace("__CW_VERSION__", _asset_version_token()),
+        user,
+        language,
     )

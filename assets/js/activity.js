@@ -2,6 +2,8 @@
 /* CrossWatch Recent Scrobble UI */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude */
 (function () {
+  const T = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.t?.(key, vars) ?? key;
+  const TH = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.html?.(key, vars) ?? key;
   const $ = (sel, root = document) => root.querySelector(sel);
   const DEFAULT_RECENT_LIMIT = 3;
   const PAGE_SIZE = 50;
@@ -54,7 +56,7 @@
   }
 
   function titleOf(item) {
-    const title = String(item?.title || "Untitled");
+    const title = String(item?.title || T("common.media.untitled"));
     if (String(item?.media_type || "").toLowerCase() !== "episode") {
       return item?.year ? `${title} (${item.year})` : title;
     }
@@ -70,7 +72,7 @@
 
   function providerLabel(value) {
     const meta = providerMeta();
-    return meta.label?.(value) || String(value || "").trim().toUpperCase() || "Provider";
+    return meta.label?.(value) || String(value || "").trim().toUpperCase() || T("common.labels.provider");
   }
 
   function providerLogo(value) {
@@ -92,7 +94,7 @@
 
   function profileLabel(value, provider) {
     const text = String(value || "default").trim() || "default";
-    if (text.toLowerCase() === "default") return "Default";
+    if (text.toLowerCase() === "default") return T("common.labels.default");
     const user = syncUserLabels?.[String(provider || "").toUpperCase()]?.[text];
     if (user !== undefined && text.includes("~")) return `${profileLabel(text.split("~")[0], provider)} · ${user || text.split("~").slice(1).join("~")}`;
     return text;
@@ -160,21 +162,21 @@
       ? `<picture><source media="(max-width:760px)" srcset="${esc(poster)}"><img src="/assets/img/placeholder_poster.svg?v=2" alt="" loading="lazy" decoding="async"></picture>`
       : `<span class="material-symbols-rounded" aria-hidden="true">${kind === "movie" ? "movie" : "tv"}</span>`;
     const episode = String(item?.media_type || "").toLowerCase() === "episode";
-    const detail = episode ? [item?.season != null ? `Season ${item.season}` : "", item?.episode != null ? `Episode ${item.episode}` : ""].filter(Boolean).join(" \u00b7 ") : [item?.year, "Movie"].filter(Boolean).join(" \u00b7 ");
+    const detail = episode ? [item?.season != null ? T("common.media.seasonN", { n: String(item.season) }) : "", item?.episode != null ? T("common.media.episodeN", { n: String(item.episode) }) : ""].filter(Boolean).join(" \u00b7 ") : [item?.year, T("common.media.movie")].filter(Boolean).join(" \u00b7 ");
     const targets = Array.isArray(item?.targets) && item.targets.length ? item.targets : [{target:item?.target,target_instance:item?.target_instance}];
     const endpoint = (provider, instance) => `<span title="${esc(`${providerLabel(provider)} \u00b7 ${profileLabel(instance, provider)}`)}">${esc(providerLabel(provider))}</span>`;
     const route = `${endpoint(item?.source, item?.source_instance)} <span aria-hidden="true">&#8594;</span> ${targets.filter(target => target?.target).map(target => endpoint(target.target, target.target_instance)).join(" \u00b7 ")}`;
     const progress = Number(item?.progress);
     const pct = Math.round(Math.max(0, Math.min(100, Number.isFinite(progress) ? progress : 0)));
     const hasProgress = item?.progress != null && item.progress !== "" && Number.isFinite(progress);
-    return `<div class="activity-mobile" data-recent-media="${index}" role="button" tabindex="0" aria-label="${esc(`View ${item?.title || "media"} details`)}">
+    return `<div class="activity-mobile" data-recent-media="${index}" role="button" tabindex="0" aria-label="${TH("dashboard.activity.viewDetails", { title: item?.title || T("dashboard.activity.media") })}">
       <div class="activity-art">${thumbnail}</div>
       <div class="activity-mobile-copy">
-        <div class="activity-mobile-title">${esc(item?.title || "Untitled")}</div>
+        <div class="activity-mobile-title">${esc(item?.title || T("common.media.untitled"))}</div>
         <div class="activity-mobile-detail"><span>${esc(detail)}</span><span>${esc(time)}</span></div>
-        ${hasProgress ? `<div class="activity-mobile-progress"><span role="progressbar" aria-label="Playback progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}"><span style="width:${pct}%"></span></span><span>${pct}%</span></div>` : ""}
+        ${hasProgress ? `<div class="activity-mobile-progress"><span role="progressbar" aria-label="${TH("dashboard.activity.playbackProgress")}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}"><span style="width:${pct}%"></span></span><span>${pct}%</span></div>` : ""}
         <div class="activity-mobile-route">${route}</div>
-        <div class="activity-mobile-method${status !== "ok" ? " is-error" : ""}">${methodOf(item) === "webhook" ? "Webhook" : "Watcher"}${status !== "ok" ? " \u00b7 Failed to scrobble" : ""}</div>
+        <div class="activity-mobile-method${status !== "ok" ? " is-error" : ""}">${methodOf(item) === "webhook" ? TH("dashboard.widgets.activity.webhook") : TH("dashboard.widgets.activity.watcher")}${status !== "ok" ? ` \u00b7 ${TH("dashboard.activity.failedScrobble")}` : ""}</div>
       </div>
     </div>`;
   }
@@ -300,7 +302,7 @@
 
 
     if (authSetupPending()) {
-      if (!host.children.length) host.innerHTML = `<div class="activity-empty">Loading scrobble...</div>`;
+      if (!host.children.length) host.innerHTML = `<div class="activity-empty">${TH("dashboard.activity.loading")}</div>`;
       scheduleRetry();
       return;
     }
@@ -329,7 +331,7 @@
       recentItems = items;
       const html = items.length
         ? items.map((item, index) => rowHTML(item, true, index)).join("")
-        : `<div class="activity-empty">${display.mode === "hours" ? `No recent scrobble in the last ${display.hours} hours.` : "No recent scrobble yet."}</div>`;
+        : `<div class="activity-empty">${TH(display.mode === "hours" ? "dashboard.activity.noneInHours" : "dashboard.activity.noneYet", {count: Number(display.hours) || 0})}</div>`;
       const template = document.createElement("template");
       template.innerHTML = html;
       const previous = [...host.children], next = [...template.content.children];
@@ -339,8 +341,8 @@
         else if (!previous[index].isEqualNode(next[index])) previous[index].replaceWith(next[index]);
       }
     } catch {
-      if (!host.children.length || host.textContent.trim() === "Loading scrobble...") {
-        host.innerHTML = `<div class="activity-empty">Recent scrobble could not be loaded.</div>`;
+      if (!host.children.length || host.textContent.trim() === T("dashboard.activity.loading")) {
+        host.innerHTML = `<div class="activity-empty">${TH("dashboard.activity.loadFailed")}</div>`;
       }
       scheduleRetry(2500);
     }
@@ -352,23 +354,23 @@
     const modal = document.createElement("div");
     modal.className = "activity-modal hidden";
     modal.innerHTML = `
-      <div class="activity-dialog" role="dialog" aria-modal="true" aria-label="Activity Log">
+      <div class="activity-dialog" role="dialog" aria-modal="true" aria-label="${TH("dashboard.activity.dialog")}">
         <div class="activity-head">
           <div>
-            <div class="activity-head-title">Scrobble Activity</div>
-            <div class="activity-head-sub">Local CrossWatch records for scrobbled movies and episodes.</div>
+            <div class="activity-head-title">${TH("dashboard.activity.title")}</div>
+            <div class="activity-head-sub">${TH("dashboard.activity.subtitle")}</div>
           </div>
-          <button type="button" class="activity-close">Close</button>
+          <button type="button" class="activity-close">${TH("common.actions.close")}</button>
         </div>
         <div class="activity-filters">
-          <input id="activity-q" type="search" placeholder="Search title, provider or instance">
-          <select id="activity-media"><option value="all">All media</option><option value="movie">Movies</option><option value="episode">Episodes</option></select>
-          <select id="activity-status"><option value="all">All statuses</option><option value="ok">Scrobbled</option><option value="failed">Failed</option></select>
+          <input id="activity-q" type="search" placeholder="${TH("dashboard.activity.search")}">
+          <select id="activity-media"><option value="all">${TH("dashboard.activity.allMedia")}</option><option value="movie">${TH("common.media.movies")}</option><option value="episode">${TH("common.media.episodes")}</option></select>
+          <select id="activity-status"><option value="all">${TH("dashboard.activity.allStatuses")}</option><option value="ok">${TH("dashboard.activity.scrobbled")}</option><option value="failed">${TH("common.status.failed")}</option></select>
         </div>
         <div id="activity-list" class="activity-list"></div>
         <div class="activity-foot">
           <div id="activity-count" class="activity-count"></div>
-          <button type="button" id="activity-load" class="activity-load">Load more</button>
+          <button type="button" id="activity-load" class="activity-load">${TH("common.actions.loadMore")}</button>
         </div>
       </div>
     `;
@@ -416,7 +418,7 @@
     const count = $("#activity-count", modal);
     const load = $("#activity-load", modal);
     if (load) load.disabled = true;
-    if (reset && list) list.innerHTML = `<div class="activity-empty">Loading...</div>`;
+    if (reset && list) list.innerHTML = `<div class="activity-empty">${TH("common.status.loading")}</div>`;
 
     try {
       await loadSyncUserLabels();
@@ -428,17 +430,17 @@
       state.total = Number(data?.total || 0);
       const html = items.map((item) => rowHTML(item)).join("");
       if (list) {
-        if (reset) list.innerHTML = html || `<div class="activity-empty">No activity matches this view.</div>`;
+        if (reset) list.innerHTML = html || `<div class="activity-empty">${TH("dashboard.activity.noMatches")}</div>`;
         else list.insertAdjacentHTML("beforeend", html);
       }
       state.offset += items.length;
       if (count) count.textContent = `${Math.min(state.offset, state.total)} of ${state.total}`;
       if (load) {
         load.disabled = !data?.has_more;
-        load.textContent = data?.has_more ? "Load more" : "All loaded";
+        load.textContent = data?.has_more ? T("common.actions.loadMore") : T("dashboard.activity.allLoaded");
       }
     } catch {
-      if (list) list.innerHTML = `<div class="activity-empty">Recent scrobble could not be loaded.</div>`;
+      if (list) list.innerHTML = `<div class="activity-empty">${TH("dashboard.activity.loadFailed")}</div>`;
       if (count) count.textContent = "";
     } finally {
       state.busy = false;

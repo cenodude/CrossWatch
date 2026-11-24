@@ -1,5 +1,7 @@
 // assets/auth/auth.publicmetadb.js
 (function () {
+  const T = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.t?.(key, vars) ?? key;
+  const TH = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.html?.(key, vars) ?? key;
   if (window._publicMetaDBPatched) return;
   window._publicMetaDBPatched = true;
 
@@ -62,13 +64,13 @@
     box.className = "publicmetadb-tmdb-rec hidden";
     box.innerHTML =
       '<div class="publicmetadb-tmdb-rec-copy">' +
-        '<div class="publicmetadb-tmdb-rec-kicker">Recommended for PublicMetaDB</div>' +
-        '<strong>Configure TMDb Metadata</strong>' +
-        '<div class="muted">Adds titles and release years to PublicMetaDB history, ratings, watchlist, and progress.</div>' +
+        '<div class="publicmetadb-tmdb-rec-kicker">' + TH("connections.auth.pmdb.recommended") + '</div>' +
+        '<strong>' + TH("connections.auth.configureTmdb") + '</strong>' +
+        '<div class="muted">' + TH("connections.auth.pmdb.adds") + '</div>' +
       '</div>' +
       '<div class="publicmetadb-tmdb-rec-actions">' +
-        '<button class="btn primary" type="button" id="btn-publicmetadb-configure-tmdb">Configure TMDb Metadata</button>' +
-        '<button class="btn" type="button" id="btn-publicmetadb-dismiss-tmdb">Not now</button>' +
+        '<button class="btn primary" type="button" id="btn-publicmetadb-configure-tmdb">' + TH("connections.auth.configureTmdb") + '</button>' +
+        '<button class="btn" type="button" id="btn-publicmetadb-dismiss-tmdb">' + TH("connections.auth.notNow") + '</button>' +
       '</div>';
 
     const grid = sub.querySelector(".grid2");
@@ -157,16 +159,16 @@
 
   function friendlyError(code) {
     switch (String(code || "")) {
-      case "api_key_required": return "Enter your PublicMetaDB API key";
-      case "invalid_api_key": return "Invalid PublicMetaDB API key";
-      case "validation_timeout": return "PublicMetaDB validation timed out";
-      case "validation_failed": return "Could not validate PublicMetaDB API key";
-      case "validation_bad_response": return "PublicMetaDB validation returned an unexpected response";
+      case "api_key_required": return T("connections.validation.apiKeyRequired", {provider: "PublicMetaDB"});
+      case "invalid_api_key": return T("connections.validation.invalidApiKey", {provider: "PublicMetaDB"});
+      case "validation_timeout": return T("connections.validation.timeout", {provider: "PublicMetaDB"});
+      case "validation_failed": return T("connections.validation.validateKeyFailed", {provider: "PublicMetaDB"});
+      case "validation_bad_response": return T("connections.validation.badResponse", {provider: "PublicMetaDB"});
       default:
         if (String(code || "").startsWith("validation_http_")) {
-          return "PublicMetaDB validation failed";
+          return T("connections.validation.httpFailed", {provider: "PublicMetaDB"});
         }
-        return "Saving PublicMetaDB key failed";
+        return T("connections.validation.saveKeyFailed", {provider: "PublicMetaDB"});
     }
   }
 
@@ -183,12 +185,12 @@
       publicMetaDBConnected = ok;
       setConn(ok, ok || reason === "api_key_required" ? "" : friendlyError(reason));
       renderTmdbRecommendation();
-      note(ok ? "PublicMetaDB connected" : "PublicMetaDB not connected");
+      note(ok ? T("connections.auth.gen.connected", {provider: "PublicMetaDB"}) : T("connections.auth.gen.notConnected", {provider: "PublicMetaDB"}));
     } catch {
       publicMetaDBConnected = false;
-      setConn(false, "PublicMetaDB verify failed");
+      setConn(false, T("connections.auth.gen.verifyFailedShort", {provider: "PublicMetaDB"}));
       renderTmdbRecommendation();
-      note("PublicMetaDB verify failed");
+      note(T("connections.auth.gen.verifyFailedShort", {provider: "PublicMetaDB"}));
     }
   }
 
@@ -212,17 +214,17 @@
     const i = el("publicmetadb_key");
     const keyState = readSecretField(i);
     if (!keyState.value) {
-      if (keyState.masked || (i && i.dataset.hasKey === "1")) { await refresh(); note("Key unchanged"); return; }
-      note("Enter your PublicMetaDB API key"); return;
+      if (keyState.masked || (i && i.dataset.hasKey === "1")) { await refresh(); note(T("connections.auth.keyUnchanged")); return; }
+      note(T("connections.validation.apiKeyRequired", {provider: "PublicMetaDB"})); return;
     }
     try {
       await saveKey(keyState.value);
       maskInput(i, true);
       el("publicmetadb_hint")?.classList.add("hidden");
-      note("PublicMetaDB key saved");
+      note(T("connections.auth.gen.keySaved", {provider: "PublicMetaDB"}));
       await refresh();
     } catch (e) {
-      const msg = e && e.message ? e.message : "Saving PublicMetaDB key failed";
+      const msg = e && e.message ? e.message : T("connections.validation.saveKeyFailed", {provider: "PublicMetaDB"});
       setConn(false, msg);
       note(msg);
     }
@@ -238,9 +240,9 @@
       publicMetaDBConnected = false;
       setConn(false);
       renderTmdbRecommendation();
-      note("PublicMetaDB disconnected");
+      note(T("connections.auth.gen.disconnected", {provider: "PublicMetaDB"}));
     } catch {
-      note("PublicMetaDB disconnect failed");
+      note(T("connections.auth.gen.disconnectFailed", {provider: "PublicMetaDB"}));
     }
   }
 

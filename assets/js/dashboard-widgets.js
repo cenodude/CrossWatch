@@ -2,6 +2,8 @@
 /* CrossWatch dashboard media widgets */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude */
 (function () {
+  const T = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.t?.(key, vars) ?? key;
+  const TH = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.html?.(key, vars) ?? key;
   const $ = (sel, root = document) => root.querySelector(sel);
   const esc = (value) => String(value ?? "").replace(/[&<>"]/g, (m) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;" }[m]));
   const authSetupPending = () => window.cwIsAuthSetupPending?.() === true;
@@ -47,13 +49,13 @@
   const latestTotals = { history: 0, ratings: 0, scrobble: 0, progress: 0, playlists: 0 };
   const loadedWidgetKinds = new Set();
   const EMPTY_META = {
-    history: { title: "No history yet", copy: "Watched items will appear here." },
-    ratings: { title: "No ratings yet", copy: "Your ratings and scores will appear here." },
-    scrobble: { title: "No scrobbles yet", copy: "Recent scrobbles from your providers will appear here." },
-    progress: { title: "No progress syncs yet", copy: "Resume position sync activity will appear here." },
-    playlists: { title: "No playlist syncs yet", copy: "Recent playlist sync activity will appear here." },
-    watchlist: { title: "No watchlist items yet", copy: "Synced watchlist titles will appear here." },
-    error: { title: "Could not load this widget", copy: "Try refreshing again in a moment." },
+    history: { title: T("dashboard.widgets.empty.historyTitle"), copy: T("dashboard.widgets.empty.historyCopy") },
+    ratings: { title: T("dashboard.widgets.empty.ratingsTitle"), copy: T("dashboard.widgets.empty.ratingsCopy") },
+    scrobble: { title: T("dashboard.widgets.empty.scrobbleTitle"), copy: T("dashboard.widgets.empty.scrobbleCopy") },
+    progress: { title: T("dashboard.widgets.empty.progressTitle"), copy: T("dashboard.widgets.empty.progressCopy") },
+    playlists: { title: T("dashboard.widgets.empty.playlistsTitle"), copy: T("dashboard.widgets.empty.playlistsCopy") },
+    watchlist: { title: T("dashboard.widgets.empty.watchlistTitle"), copy: T("dashboard.widgets.empty.watchlistCopy") },
+    error: { title: T("dashboard.widgets.empty.errorTitle"), copy: T("dashboard.widgets.empty.errorCopy") },
   };
   const ON_PROFILE_PAGE = !!document.getElementById("profile-hero");
   const LAYOUT_KEY = ON_PROFILE_PAGE ? "cw.profileWidgets.layout.v3" : "cw.dashboardWidgets.layout.v3";
@@ -63,12 +65,12 @@
   const SETTINGS_KEY = "cw.dashboardWidgets.settings.v1";
   const DATA_CACHE_KEY = ON_PROFILE_PAGE ? "cw.profileWidgets.data.v1" : "cw.dashboardWidgets.data.v1";
   const ALL_WIDGETS = [
-    { key: "watchlist", id: "placeholder-card", label: "Watchlist" },
-    { key: "history", id: "recent-history-widget", label: "Recent History" },
-    { key: "ratings", id: "latest-ratings-widget", label: "Latest Ratings" },
-    { key: "scrobble", id: "recent-scrobble-widget", label: "Recent Scrobble" },
-    { key: "progress", id: "recent-progress-widget", label: "Recent Progress" },
-    { key: "playlists", id: "recent-playlists-widget", label: "Recent Playlists" },
+    { key: "watchlist", id: "placeholder-card", label: T("common.media.watchlist") },
+    { key: "history", id: "recent-history-widget", label: T("dashboard.widgets.recentHistory") },
+    { key: "ratings", id: "latest-ratings-widget", label: T("dashboard.widgets.latestRatings") },
+    { key: "scrobble", id: "recent-scrobble-widget", label: T("dashboard.widgets.recentScrobble") },
+    { key: "progress", id: "recent-progress-widget", label: T("dashboard.widgets.recentProgress") },
+    { key: "playlists", id: "recent-playlists-widget", label: T("dashboard.widgets.recentPlaylists") },
   ];
   const WIDGETS = ON_PROFILE_PAGE ? ALL_WIDGETS.filter((widget) => widget.key !== "watchlist") : ALL_WIDGETS;
   const WIDGET_KEYS = WIDGETS.map((widget) => widget.key);
@@ -654,7 +656,7 @@
       : (block?.instances && typeof block.instances === "object" ? block.instances[inst] : null);
     const friendly = String(node?.label || "").trim();
     if (friendly) return friendly;
-    return inst.toLowerCase() === "default" ? "Default" : inst;
+    return inst.toLowerCase() === "default" ? T("common.labels.default") : inst;
   }
 
   function hideDashboardWidgets() {
@@ -662,9 +664,9 @@
   }
 
   const LAYOUT_TOOLS = [
-    ["customize", "tune", "Customize widgets"],
-    ["show-all", "visibility", "Show all widgets"],
-    ["reset", "restart_alt", "Reset widget layout"],
+    ["customize", "tune", T("dashboard.widgets.menu.customize")],
+    ["show-all", "visibility", T("dashboard.widgets.menu.showAll")],
+    ["reset", "restart_alt", T("dashboard.widgets.menu.reset")],
   ];
 
   function updateLayoutToolbar() {
@@ -696,11 +698,11 @@
       const section = document.createElement('div');
       section.className = 'cw-mobile-widget-options cw-mobile-dashboard-options';
       section.innerHTML = `
-          <h3>Dashboard widgets</h3><p>${ON_PROFILE_PAGE ? "Choose what appears on this device's mobile dashboard. Desktop settings stay separate." : "Media widgets are available in My Media Hub. Main focuses on sync activity."}</p>
-          <label><input type="checkbox" data-mobile-sync-results><span class="material-symbols-rounded cw-mobile-widget-icon" aria-hidden="true">sync_alt</span><span>Sync results</span><small>Watchlist, ratings, history and other sync-result cards</small></label>
-          <label><input type="checkbox" data-mobile-provider-stats><span class="material-symbols-rounded cw-mobile-widget-icon" aria-hidden="true">bar_chart</span><span>Provider statistics</span><small>Provider totals and feature selector</small></label>
+          <h3>${TH("settings.ui.widgets.title")}</h3><p>${ON_PROFILE_PAGE ? TH("dashboard.widgets.mobileHint") : TH("dashboard.widgets.mainHint")}</p>
+          <label><input type="checkbox" data-mobile-sync-results><span class="material-symbols-rounded cw-mobile-widget-icon" aria-hidden="true">sync_alt</span><span>${TH("dashboard.widgets.mobile.syncResults")}</span><small>${TH("dashboard.widgets.mobile.syncResultsHint")}</small></label>
+          <label><input type="checkbox" data-mobile-provider-stats><span class="material-symbols-rounded cw-mobile-widget-icon" aria-hidden="true">bar_chart</span><span>${TH("dashboard.widgets.mobile.providerStats")}</span><small>${TH("dashboard.widgets.mobile.providerStatsHint")}</small></label>
           ${WIDGETS.map(({ key, label }) => `<label><input type="checkbox" data-mobile-widget="${key}"><span class="material-symbols-rounded cw-mobile-widget-icon" aria-hidden="true">${({watchlist:"movie",history:"history",ratings:"star",scrobble:"sensors",progress:"play_circle",playlists:"queue_music"})[key]}</span><span>${esc(label)}</span><small></small></label>`).join("")}
-          <button type="button" class="cw-mobile-widget-reset">Reset mobile widgets</button>
+          <button type="button" class="cw-mobile-widget-reset">${TH("dashboard.widgets.mobile.reset")}</button>
 `;
       picker.appendChild(section);
       const providerStats = picker.querySelector('[data-mobile-provider-stats]');
@@ -737,7 +739,7 @@
       const enabled = settings[key] !== false;
       input.checked = enabled && !widgetLayout[key]?.hidden;
       input.disabled = !enabled;
-      input.parentElement.querySelector("small").textContent = enabled ? "" : key === 'watchlist' && cfg.ui?.show_watchlist_preview !== false ? 'No watchlist content available' : 'Disabled in main settings';
+      input.parentElement.querySelector("small").textContent = enabled ? "" : key === 'watchlist' && cfg.ui?.show_watchlist_preview !== false ? T("dashboard.widgets.watchlist.empty") : T("dashboard.widgets.watchlist.disabled");
     }
   }
 
@@ -933,14 +935,14 @@
         spanBtn.hidden = size === "large";
         const wide = effectiveSpan(widget.key) === 2;
         spanIcon.textContent = wide ? "close_fullscreen" : "open_in_full";
-        spanBtn.title = `${wide ? "Shrink" : "Enlarge"} ${widget.label}`;
+        spanBtn.title = T(wide ? "dashboard.widgets.shrink" : "dashboard.widgets.enlarge", {name: widget.label});
         spanBtn.setAttribute("aria-label", spanBtn.title);
       }
       if (sizeBtn) {
         sizeBtn.textContent = size === "large" ? "view_compact" : "view_agenda";
         const sizeButton = sizeBtn.closest("button");
         if (sizeButton) {
-          sizeButton.title = `Switch ${widget.label} to ${size === "large" ? "compact" : "horizontal"} mode`;
+          sizeButton.title = T(size === "large" ? "dashboard.widgets.switchCompact" : "dashboard.widgets.switchHorizontal", { name: widget.label });
           sizeButton.setAttribute("aria-label", sizeButton.title);
         }
       }
@@ -951,10 +953,10 @@
           const view = widgetView(widget.key);
           if (size === "large") {
             viewIcon.textContent = view === "media" ? "view_module" : "view_carousel";
-            viewBtn.title = `Switch ${widget.label} to ${view === "media" ? "poster" : "media card"} view`;
+            viewBtn.title = T(view === "media" ? "dashboard.widgets.switchPoster" : "dashboard.widgets.switchMediaCard", { name: widget.label });
           } else {
             viewIcon.textContent = view === "icon" ? "view_list" : "grid_view";
-            viewBtn.title = `Switch ${widget.label} to ${view === "icon" ? "grid" : "poster"} view`;
+            viewBtn.title = T(view === "icon" ? "dashboard.widgets.switchGrid" : "dashboard.widgets.switchPoster", { name: widget.label });
           }
           viewBtn.setAttribute("aria-label", viewBtn.title);
         }
@@ -962,7 +964,7 @@
       if (hideBtn && hideIcon) {
         const hidden = !!widgetLayout[widget.key]?.hidden;
         hideIcon.textContent = hidden ? "visibility" : "visibility_off";
-        hideBtn.title = `${hidden ? "Show" : "Hide"} ${widget.label}`;
+        hideBtn.title = T(hidden ? "dashboard.widgets.showNamed" : "dashboard.widgets.hideNamed", {name: widget.label});
         hideBtn.setAttribute("aria-label", hideBtn.title);
       }
     }
@@ -1005,14 +1007,14 @@
 
   function sourceLabel({ provider, instance, instanceLabel }) {
     const label = String(instanceLabel || configuredInstanceLabel(provider, instance)).trim();
-    return instance.toLowerCase() === "default" && label === "Default" ? providerLabel(provider) : `${providerLabel(provider)} (${label})`;
+    return instance.toLowerCase() === "default" && (label === "Default" || label === T("common.labels.default")) ? providerLabel(provider) : `${providerLabel(provider)} (${label})`;
   }
 
   function sourceRouteTitle(sources) {
     const rows = sourceRows(sources, 8);
     if (!rows.length) return "";
     const labels = rows.map(sourceLabel);
-    return labels.length > 1 ? `Route: ${labels.join(" -> ")}` : `Source: ${labels[0]}`;
+    return labels.length > 1 ? T("dashboard.widgets.route", { route: labels.join(" -> ") }) : T("dashboard.widgets.source", { name: labels[0] });
   }
 
   const actionKinds = new Set(["history", "ratings", "progress", "scrobble"]);
@@ -1047,7 +1049,7 @@
 
   function scrobbleProfileLabel(instance) {
     const raw = String(instance || "default").trim() || "default";
-    if (raw.toLowerCase() === "default") return "Default";
+    if (raw.toLowerCase() === "default") return T("common.labels.default");
     const profile = raw.toUpperCase().match(/(?:^|[^A-Z0-9])(P\d{1,3})$/);
     return profile?.[1] || raw;
   }
@@ -1095,7 +1097,7 @@
 
   function scrobbleRouteIcons(item, action = false) {
     const rows = scrobbleRouteRows(item);
-    const route = rows.length ? `Route: ${rows.map(sourceLabel).join(" -> ")}` : "No scrobble route";
+    const route = rows.length ? T("dashboard.widgets.route", { route: rows.map(sourceLabel).join(" -> ") }) : T("dashboard.widgets.noScrobbleRoute");
     return {
       html: ratingSourceIcons(rows, 8, action),
       route,
@@ -1104,7 +1106,7 @@
 
   function scrobbleSinkIcons(targets, action = false) {
     const sinkRows = sourceRows(targets, 8).filter(({ provider }) => providerMeta().get?.(provider)?.scrobblerSink === true);
-    const route = sinkRows.length ? `Sinks: ${sinkRows.map(sourceLabel).join(", ")}` : "No scrobble sinks";
+    const route = sinkRows.length ? T("dashboard.widgets.sinks", { list: sinkRows.map(sourceLabel).join(", ") }) : T("dashboard.widgets.noScrobbleSinks");
     return {
       html: sourceIcons(sinkRows, 8, action),
       route,
@@ -1128,17 +1130,17 @@
 
   function typeLabel(item) {
     const raw = String(item?.type || "").toLowerCase();
-    if (raw === "episode") return item?.episode_label || "Episode";
-    if (raw === "season") return "Season";
-    if (String(item?.art_type || "").toLowerCase() === "movie") return "Movie";
-    if (raw === "show") return "Show";
-    return "Movie";
+    if (raw === "episode") return item?.episode_label || T("common.media.episode");
+    if (raw === "season") return T("common.media.season");
+    if (String(item?.art_type || "").toLowerCase() === "movie") return T("common.media.movie");
+    if (raw === "show") return T("common.media.show");
+    return T("common.media.movie");
   }
 
   function mediaLabel(item, meta = null) {
     const resolved = String(meta?.resolved_type || "").toLowerCase();
-    if (resolved === "movie") return "Movie";
-    if (resolved === "tv") return String(item?.type || "").toLowerCase() === "episode" ? (item?.episode_label || "Episode") : "Show";
+    if (resolved === "movie") return T("common.media.movie");
+    if (resolved === "tv") return String(item?.type || "").toLowerCase() === "episode" ? (item?.episode_label || T("common.media.episode")) : T("common.media.show");
     return typeLabel(item);
   }
 
@@ -1163,10 +1165,10 @@
     for (const [name, seconds] of units) {
       if (delta >= seconds) {
         const n = Math.floor(delta / seconds);
-        return `${n} ${name}${n === 1 ? "" : "s"} ago`;
+        return (window.CW?.I18n || window.__cwI18n)?.relative?.(ts * 1000) ?? `${n} ${name}${n === 1 ? "" : "s"} ago`;
       }
     }
-    return "just now";
+    return T("common.time.justNow");
   }
 
   function artTmdbId(item, meta = null) {
@@ -1245,7 +1247,7 @@
     const rawRating = Number(meta?.vote_average ?? meta?.detail?.vote_average);
     const ratingValue = Number.isFinite(rawRating) ? rawRating : Number.isFinite(rawScore) ? rawScore / 10 : null;
     return {
-      title: item?.title || meta?.title || "Unknown title",
+      title: item?.title || meta?.title || T("common.media.unknownTitle"),
       year: "",
       isMovie,
       chips: [
@@ -1254,7 +1256,7 @@
         { text: window.CW?.PlayingCard?.fmt?.runtimeLabel?.(meta?.runtime_minutes) || "" },
         { text: meta?.certification || meta?.release?.cert || meta?.detail?.certification || "" },
       ],
-      overview: meta?.overview || meta?.detail?.overview || meta?.detail?.tagline || (loading ? "Loading details..." : "No description available."),
+      overview: meta?.overview || meta?.detail?.overview || meta?.detail?.tagline || (loading ? T("dashboard.widgets.details.loading") : T("dashboard.widgets.details.noDescription")),
       poster: coverPoster(item, "w342") || "/assets/img/placeholder_poster.svg?v=2",
       posterHref: tmdbLink(item),
       backdrop: backdropPoster(item, meta),
@@ -1276,7 +1278,7 @@
       id: "cw-dashboard-widget-detail",
       variant: "watchlist",
       tabScope: "main",
-      label: "Dashboard media item details",
+      label: T("dashboard.widgets.details.label"),
       width: "min(860px,calc(100vw - 32px))",
       onClose: () => { detailKey = ""; detailCard?.hide(); },
       onTrailer: () => { void window.CW?.Trailer?.openFor?.(detailItem, detailMeta); },
@@ -1369,7 +1371,7 @@
     const rows = records.map((record, index) => {
       const provider = String(record?.provider || "").toUpperCase();
       const instance = String(record?.instance_id || "default");
-      const account = instance.toLowerCase() === "default" ? "Default" : String(record?.instance_label || instance);
+      const account = instance.toLowerCase() === "default" ? T("common.labels.default") : String(record?.instance_label || instance);
       const name = `${providerLabel(provider)} · ${account}`;
       return { rid: String(index), provider, instance, provider_label: name, label: episode && item.episode_label ? `${item.episode_label} on ${name}` : name, record };
     });
@@ -1401,7 +1403,7 @@
   }
 
   function historyCard(item, index = 0) {
-    const title = item?.title || "Untitled";
+    const title = item?.title || T("common.media.untitled");
     const age = relTime(item?.sort_epoch || item?.watched_at);
     const meta = [typeLabel(item), item?.year || "", age].filter(Boolean).join(" - ");
     const href = tmdbLink(item);
@@ -1419,17 +1421,17 @@
         </span>
         <span class="cw-history-copy">
           <strong>${esc(title)}</strong>
-          <span>${esc(meta || "Watched")}</span>
+          <span>${esc(meta || T("common.media.watched"))}</span>
         </span>
-        <span class="cw-history-sources" title="${esc(route)}" aria-label="${esc(route || "Sources")}">${sourceIcons(item?.sources, 3, iconActions("history"))}</span>
+        <span class="cw-history-sources" title="${esc(route)}" aria-label="${esc(route || T("dashboard.widgets.sources"))}">${sourceIcons(item?.sources, 3, iconActions("history"))}</span>
       </${tag}>`;
   }
 
   function profileWidgetCard(item, kind, index) {
     const playlist = kind === "playlists";
-    const title = item?.label || item?.title || "Untitled";
+    const title = item?.label || item?.title || T("common.media.untitled");
     const age = relTime(item?.sort_epoch || item?.captured_at || item?.watched_at || item?.ts);
-    const meta = playlist ? [item?.type || "Sync", item?.status || "completed", item?.details, age] : [typeLabel(item), kind === "history" ? item?.year : "", kind === "scrobble" ? activityLabel(item) : "", kind === "progress" && Number.isFinite(Number(item?.progress)) ? `${Math.round(Number(item.progress))}% watched` : "", age];
+    const meta = playlist ? [item?.type || T("dashboard.widgets.syncType"), item?.status || "completed", item?.details, age] : [typeLabel(item), kind === "history" ? item?.year : "", kind === "scrobble" ? activityLabel(item) : "", kind === "progress" && Number.isFinite(Number(item?.progress)) ? `${Math.round(Number(item.progress))}% watched` : "", age];
     const art = playlist ? "" : backdropPoster(item, null, "w300") || poster(item);
     const route = kind === "scrobble" ? {html:sourceIcons(scrobbleRouteRows(item), 8, iconActions(kind)),route:scrobbleRouteIcons(item).route} : {html:sourceIcons(item?.sources, 3, iconActions(kind)),route:sourceRouteTitle(item?.sources)};
     const tag = playlist ? "div" : "button";
@@ -1438,7 +1440,7 @@
       <span class="cw-hub-widget-copy">
         <span class="cw-hub-widget-title"><strong>${esc(title)}</strong>${kind === "ratings" && item?.rating != null ? `<span class="cw-hub-widget-rating" aria-label="Rating ${esc(item.rating)}">${esc(item.rating)}<small>/10</small></span>` : ""}</span>
         <span class="cw-hub-widget-meta">${esc(meta.filter(Boolean).join(" · "))}</span>
-        ${route.html ? `<span class="cw-hub-widget-providers cw-history-sources" aria-label="${esc(route.route || "Providers")}">${route.html}</span>` : ""}
+        ${route.html ? `<span class="cw-hub-widget-providers cw-history-sources" aria-label="${esc(route.route || T("dashboard.widgets.providers"))}">${route.html}</span>` : ""}
       </span>
     </${tag}>`;
   }
@@ -1446,10 +1448,10 @@
   function activityLabel(item) {
     const method = String(item?.method || "").toLowerCase();
     const event = String(item?.event || "").toLowerCase();
-    if (method === "webhook") return "Webhook";
-    if (event.includes("history")) return "History sync";
-    if (method === "watcher") return "Watcher";
-    return "Activity";
+    if (method === "webhook") return T("dashboard.widgets.activity.webhook");
+    if (event.includes("history")) return T("dashboard.widgets.activity.historySync");
+    if (method === "watcher") return T("dashboard.widgets.activity.watcher");
+    return T("dashboard.widgets.activity.generic");
   }
 
   function activityMethodPill(item) {
@@ -1464,7 +1466,7 @@
   }
 
   function activityCard(item, index = 0) {
-    const title = item?.title || "Untitled";
+    const title = item?.title || T("common.media.untitled");
     const age = relTime(item?.sort_epoch || item?.captured_at || item?.watched_at);
     const meta = [activityLabel(item), typeLabel(item), age].filter(Boolean).join(" - ");
     const href = tmdbLink(item);
@@ -1484,7 +1486,7 @@
         </span>
         <span class="cw-history-copy">
           <strong>${esc(title)}</strong>
-          <span>${esc(meta || "Activity")}</span>
+          <span>${esc(meta || T("dashboard.widgets.activity.generic"))}</span>
         </span>
         <span class="cw-scrobble-route">
           ${scrobbleSourcePill(source, iconActions("scrobble"))}
@@ -1494,11 +1496,11 @@
   }
 
   function progressCard(item, index = 0) {
-    const title = item?.title || "Untitled";
+    const title = item?.title || T("common.media.untitled");
     const progress = Number(item?.progress);
     const progressLabel = Number.isFinite(progress) ? `${Math.round(progress)}%` : "";
     const age = relTime(item?.sort_epoch);
-    const meta = [typeLabel(item), progressLabel ? `${progressLabel} progress` : "Progress sync", age].filter(Boolean).join(" - ");
+    const meta = [typeLabel(item), progressLabel ? T("dashboard.widgets.percentProgress", { percent: progressLabel }) : T("dashboard.widgets.progressSync"), age].filter(Boolean).join(" - ");
     const href = tmdbLink(item);
     const tag = href ? "a" : "div";
     const hrefAttr = href ? ` href="${esc(href)}" target="_blank" rel="noopener"` : "";
@@ -1513,16 +1515,16 @@
         </span>
         <span class="cw-history-copy">
           <strong>${esc(title)}</strong>
-          <span>${esc(meta || "Progress sync")}</span>
+          <span>${esc(meta || T("dashboard.widgets.progressSync"))}</span>
         </span>
-        <span class="cw-history-sources" title="${esc(route)}" aria-label="${esc(route || "Sources")}">${sourceIcons(item?.sources, 3, iconActions("progress"))}</span>
+        <span class="cw-history-sources" title="${esc(route)}" aria-label="${esc(route || T("dashboard.widgets.sources"))}">${sourceIcons(item?.sources, 3, iconActions("progress"))}</span>
       </${tag}>`;
   }
 
   function playlistCard(item) {
-    const title = item?.label || item?.title || "Playlist activity";
+    const title = item?.label || item?.title || T("dashboard.widgets.playlistActivity");
     const status = String(item?.status || "completed");
-    const meta = [item?.type || "Sync", item?.details || "", relTime(item?.ts)].filter(Boolean).join(" - ");
+    const meta = [item?.type || T("dashboard.widgets.syncType"), item?.details || "", relTime(item?.ts)].filter(Boolean).join(" - ");
     return `
       <div class="cw-history-widget-item cw-history-widget-item--plain cw-playlist-widget-item">
         <span class="cw-history-thumb cw-history-thumb--icon">
@@ -1530,16 +1532,16 @@
         </span>
         <span class="cw-history-copy">
           <strong>${esc(title)}</strong>
-          <span>${esc(meta || "Playlist sync")}</span>
+          <span>${esc(meta || T("dashboard.widgets.playlistSync"))}</span>
         </span>
         <span class="cw-dash-status-pill cw-dash-status-pill--${esc(status.toLowerCase())}">${esc(status)}</span>
       </div>`;
   }
 
   function playlistPosterCard(item) {
-    const title = item?.label || item?.title || "Playlist activity";
+    const title = item?.label || item?.title || T("dashboard.widgets.playlistActivity");
     const status = String(item?.status || "completed").toUpperCase();
-    const meta = [item?.type || "Sync", relTime(item?.ts)].filter(Boolean).join(" - ");
+    const meta = [item?.type || T("dashboard.widgets.syncType"), relTime(item?.ts)].filter(Boolean).join(" - ");
     return `
       <div class="cw-rating-widget-card cw-widget-poster-card cw-widget-poster-card--playlist" title="${esc([title, meta].filter(Boolean).join(" | "))}">
         <span class="cw-widget-poster-fallback material-symbols-rounded" aria-hidden="true">queue_music</span>
@@ -1548,7 +1550,7 @@
   }
 
   function mediaPosterCard(item, kind = "history", index = 0) {
-    const title = item?.title || "Untitled";
+    const title = item?.title || T("common.media.untitled");
     const href = tmdbLink(item);
     const tag = href ? "a" : "div";
     const hrefAttr = href ? ` href="${esc(href)}" target="_blank" rel="noopener"` : "";
@@ -1557,7 +1559,7 @@
     const progressLabel = Number.isFinite(progress) ? `${Math.round(progress)}%` : "";
     const age = relTime(item?.sort_epoch || item?.captured_at || item?.watched_at || 0);
     const meta = kind === "progress"
-      ? [progressLabel ? `${progressLabel} progress` : "Progress", age].filter(Boolean).join(" - ")
+      ? [progressLabel ? T("dashboard.widgets.percentProgress", { percent: progressLabel }) : T("profile.playback.title"), age].filter(Boolean).join(" - ")
       : kind === "scrobble"
         ? [activityLabel(item), typeLabel(item), age].filter(Boolean).join(" - ")
         : [typeLabel(item), age].filter(Boolean).join(" - ");
@@ -1569,12 +1571,12 @@
         <img src="${esc(coverPoster(item, "w342"))}" alt="" loading="lazy" onerror="this.onerror=null;this.src='/assets/img/placeholder_poster.svg?v=2'">
         ${corner ? `<span class="cw-widget-poster-chip">${esc(corner)}</span>` : ""}
         ${episodeChip ? `<span class="cw-widget-poster-chip cw-widget-poster-chip--episode">${esc(episodeChip)}</span>` : ""}
-        <span class="cw-rating-provider-icons" title="${esc(route.route || "Sources")}" aria-label="${esc(route.route || "Sources")}">${route.html}</span>
+        <span class="cw-rating-provider-icons" title="${esc(route.route || T("dashboard.widgets.sources"))}" aria-label="${esc(route.route || T("dashboard.widgets.sources"))}">${route.html}</span>
       </${tag}>`;
   }
 
   function mediaLandscapeCard(item, kind = "history", index = 0) {
-    const title = item?.title || "Untitled";
+    const title = item?.title || T("common.media.untitled");
     const href = tmdbLink(item);
     const tag = href ? "a" : "div";
     const hrefAttr = href ? ` href="${esc(href)}" target="_blank" rel="noopener"` : "";
@@ -1583,9 +1585,9 @@
     const progress = Number(item?.progress);
     const progressLabel = Number.isFinite(progress) ? `${Math.round(progress)}%` : "";
     const meta = kind === "ratings"
-      ? [typeLabel(item), item?.rating ? `Rated ${item.rating}` : "", age].filter(Boolean).join(" - ")
+      ? [typeLabel(item), item?.rating ? T("dashboard.widgets.rated", { value: String(item.rating) }) : "", age].filter(Boolean).join(" - ")
       : kind === "progress"
-        ? [typeLabel(item), progressLabel ? `${progressLabel} progress` : "Progress sync", age].filter(Boolean).join(" - ")
+        ? [typeLabel(item), progressLabel ? T("dashboard.widgets.percentProgress", { percent: progressLabel }) : T("dashboard.widgets.progressSync"), age].filter(Boolean).join(" - ")
         : kind === "scrobble"
           ? [activityLabel(item), typeLabel(item), age].filter(Boolean).join(" - ")
           : [typeLabel(item), item?.year || "", age].filter(Boolean).join(" - ");
@@ -1607,12 +1609,12 @@
           <strong>${esc(title)}</strong>
           <small>${esc(meta)}</small>
         </span>
-        <span class="cw-media-card-sources" title="${esc(route.route)}" aria-label="${esc(route.route || "Sources")}">${route.html}</span>
+        <span class="cw-media-card-sources" title="${esc(route.route)}" aria-label="${esc(route.route || T("dashboard.widgets.sources"))}">${route.html}</span>
       </${tag}>`;
   }
 
   function ratingCard(item, index = 0) {
-    const title = item?.title || "Untitled";
+    const title = item?.title || T("common.media.untitled");
     const href = tmdbLink(item);
     const tag = href ? "a" : "div";
     const hrefAttr = href ? ` href="${esc(href)}" target="_blank" rel="noopener"` : "";
@@ -1622,24 +1624,24 @@
     const season = item?.season === null || item?.season === undefined || item?.season === "" ? -1 : Number(item.season);
     const episode = Number(item?.episode || 0);
     const mediaDetail = rawType === "episode"
-      ? (item?.episode_label || (season >= 0 && episode ? `S${String(season).padStart(2, "0")}E${String(episode).padStart(2, "0")}` : "Episode"))
+      ? (item?.episode_label || (season >= 0 && episode ? `S${String(season).padStart(2, "0")}E${String(episode).padStart(2, "0")}` : T("common.media.episode")))
       : rawType === "season" && season >= 0
         ? `S${String(season).padStart(2, "0")}`
         : "";
-    const titleParts = [title, mediaDetail ? `${rawType === "season" ? "Season" : "Episode"}: ${mediaDetail}` : "", ratedLabel ? `Rated ${ratedLabel}` : ""].filter(Boolean);
+    const titleParts = [title, mediaDetail ? `${rawType === "season" ? T("common.media.season") : T("common.media.episode")}: ${mediaDetail}` : "", ratedLabel ? T("dashboard.widgets.rated", { value: ratedLabel }) : ""].filter(Boolean);
     return `
       <${tag} class="cw-rating-widget-card"${hrefAttr}${widgetItemAttrs("ratings", index)} title="${esc(titleParts.join(" | "))}">
         <img src="${esc(coverPoster(item, "w342"))}" alt="" loading="lazy" onerror="this.onerror=null;this.src='/assets/img/placeholder_poster.svg?v=2'">
         <span class="cw-rating-score"><span>${esc(item?.rating || "")}</span></span>
         ${ratedLabel ? `<span class="cw-rating-age-badge">${esc(ratedLabel)}</span>` : ""}
-        <span class="cw-rating-provider-icons" title="${esc(route)}" aria-label="${esc(route || "Sources")}">${ratingSourceIcons(item?.sources, 3, iconActions("ratings"))}</span>
+        <span class="cw-rating-provider-icons" title="${esc(route)}" aria-label="${esc(route || T("dashboard.widgets.sources"))}">${ratingSourceIcons(item?.sources, 3, iconActions("ratings"))}</span>
       </${tag}>`;
   }
 
   function ratingListCard(item, index = 0) {
-    const title = item?.title || "Untitled";
+    const title = item?.title || T("common.media.untitled");
     const ratedLabel = relTime(item?.sort_epoch || 0);
-    const meta = [typeLabel(item), item?.rating ? `Rated ${item.rating}` : "", ratedLabel].filter(Boolean).join(" - ");
+    const meta = [typeLabel(item), item?.rating ? T("dashboard.widgets.rated", { value: String(item.rating) }) : "", ratedLabel].filter(Boolean).join(" - ");
     const href = tmdbLink(item);
     const tag = href ? "a" : "div";
     const hrefAttr = href ? ` href="${esc(href)}" target="_blank" rel="noopener"` : "";
@@ -1655,9 +1657,9 @@
         </span>
         <span class="cw-history-copy">
           <strong>${esc(title)}</strong>
-          <span>${esc(meta || "Rating")}</span>
+          <span>${esc(meta || T("common.labels.rating"))}</span>
         </span>
-        <span class="cw-history-sources" title="${esc(route)}" aria-label="${esc(route || "Sources")}">${sourceIcons(item?.sources, 3, iconActions("ratings"))}</span>
+        <span class="cw-history-sources" title="${esc(route)}" aria-label="${esc(route || T("dashboard.widgets.sources"))}">${sourceIcons(item?.sources, 3, iconActions("ratings"))}</span>
       </${tag}>`;
   }
 
@@ -1774,15 +1776,15 @@
   }
 
   const HISTORY_PAGE_LINKS = {
-    history: { href: "/hub#history/synced", label: "Open synced history" },
-    scrobble: { href: "/hub#history/scrobble", label: "Open all scrobbles" },
-    ratings: { href: "/hub#ratings", label: "Open all ratings" },
+    history: { href: "/hub#history/synced", label: T("dashboard.widgets.links.history") },
+    scrobble: { href: "/hub#history/scrobble", label: T("dashboard.widgets.links.scrobbles") },
+    ratings: { href: "/hub#ratings", label: T("dashboard.widgets.links.ratings") },
   };
 
   function historyPageLink(kind) {
-    const link = HISTORY_PAGE_LINKS[kind] || (ON_PROFILE_PAGE ? {progress:{href:"/hub#playback",label:"View all progress"},playlists:{href:"/#playlists",label:"View all playlists"}}[kind] : null);
+    const link = HISTORY_PAGE_LINKS[kind] || (ON_PROFILE_PAGE ? {progress:{href:"/hub#playback",label:T("dashboard.widgets.links.progress")},playlists:{href:"/#playlists",label:T("dashboard.widgets.links.playlists")}}[kind] : null);
     if (!link || !(ON_PROFILE_PAGE || document.getElementById("cw-nav-profile-link"))) return "";
-    if (ON_PROFILE_PAGE) return `<a class="cw-hub-widget-more" href="${esc(link.href)}" aria-label="${esc(link.label)}">View all<span aria-hidden="true"> →</span></a>`;
+    if (ON_PROFILE_PAGE) return `<a class="cw-hub-widget-more" href="${esc(link.href)}" aria-label="${esc(link.label)}">${TH("common.actions.viewAll")}<span aria-hidden="true"> →</span></a>`;
     return `<a class="cw-dash-see-more cw-dash-history-link" href="${esc(link.href)}">
         <span class="cw-dash-see-more-label">${esc(link.label)}</span>
         <span class="material-symbols-rounded" aria-hidden="true">arrow_forward</span>
@@ -2039,11 +2041,11 @@
         }
       } catch {}
       const shouldShowWidgetError = (kind) => active[kind] && (!partialRefresh || requestedKinds.includes(kind));
-      if (shouldShowWidgetError("history")) setWidgetLoadError(historyHost, "Recent history could not be loaded.", preserve);
-      if (shouldShowWidgetError("ratings")) setWidgetLoadError(ratingsHost, "Latest ratings could not be loaded.", preserve);
-      if (shouldShowWidgetError("scrobble")) setWidgetLoadError(scrobbleHost, "Recent scrobble could not be loaded.", preserve);
-      if (shouldShowWidgetError("progress")) setWidgetLoadError(progressHost, "Recent progress could not be loaded.", preserve);
-      if (shouldShowWidgetError("playlists")) setWidgetLoadError(playlistsHost, "Recent playlists could not be loaded.", preserve);
+      if (shouldShowWidgetError("history")) setWidgetLoadError(historyHost, T("dashboard.widgets.loadError.history"), preserve);
+      if (shouldShowWidgetError("ratings")) setWidgetLoadError(ratingsHost, T("dashboard.widgets.loadError.ratings"), preserve);
+      if (shouldShowWidgetError("scrobble")) setWidgetLoadError(scrobbleHost, T("dashboard.widgets.loadError.scrobble"), preserve);
+      if (shouldShowWidgetError("progress")) setWidgetLoadError(progressHost, T("dashboard.widgets.loadError.progress"), preserve);
+      if (shouldShowWidgetError("playlists")) setWidgetLoadError(playlistsHost, T("dashboard.widgets.loadError.playlists"), preserve);
       return false;
     }
   }
@@ -2076,7 +2078,7 @@
         if (!ok && !loadedEnough) {
           visibleCounts[kind] = current;
           renderWidget(kind);
-          showWidgetToast("Could not load more items.");
+          showWidgetToast(T("dashboard.widgets.loadMoreFailed"));
           return;
         }
         afterRender();

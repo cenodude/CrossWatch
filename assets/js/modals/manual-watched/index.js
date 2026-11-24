@@ -1,13 +1,16 @@
 /* assets/js/modals/manual-watched/index.js */
 /* Manual watched item modal */
 
+const I18N = () => globalThis.window?.CW?.I18n || globalThis.window?.__cwI18n;
+const T = (key, vars) => I18N()?.t?.(key, vars) ?? key;
+const TH = (key, vars) => I18N()?.html?.(key, vars) ?? key;
 const STORAGE_KEY = "cw.manualWatched.providers";
 const MEDIA_SERVER_PROVIDERS = new Set(["PLEX", "JELLYFIN", "EMBY", "SILO", "TOFA"]);
 const ACTIONS = [
-  ["history", "History", "history", "Mark the item as watched", "history_enabled"],
-  ["watchlist", "Watchlist", "bookmark_add", "Add the item to watchlists", "watchlist_enabled"],
-  ["rating", "Rating", "star", "Send a score to providers", "ratings_enabled"],
-  ["collection", "Collection", "inventory_2", "Add the item to collections", "collection_enabled"],
+  ["history", T("library.quickAdd.history"), "history", T("library.quickAdd.historyHint"), "history_enabled"],
+  ["watchlist", T("library.quickAdd.watchlist"), "bookmark_add", T("library.quickAdd.watchlistHint"), "watchlist_enabled"],
+  ["rating", T("library.quickAdd.rating"), "star", T("library.quickAdd.ratingHint"), "ratings_enabled"],
+  ["collection", T("library.quickAdd.collection"), "inventory_2", T("library.quickAdd.collectionHint"), "collection_enabled"],
 ];
 
 const fjson = async (url, opts = {}) => {
@@ -15,15 +18,15 @@ const fjson = async (url, opts = {}) => {
   const data = await r.json().catch(() => ({}));
   if (!r.ok || data?.ok === false) {
     const invalid = (data.results || []).filter(row => row.rating?.error === "unsupported_rating");
-    if (invalid.length) throw new Error(`Rating not saved on ${invalid.map(row => row.provider).join(", ")}: choose a score supported by those providers.`);
-    throw new Error(data?.error || (opts.method && opts.method !== "GET" ? "One or more changes could not be saved." : "The requested information could not be loaded."));
+    if (invalid.length) throw new Error(T("library.quickAdd.ratingNotSaved", {names: invalid.map(row => row.provider).join(", ")}));
+    throw new Error(data?.error || (opts.method && opts.method !== "GET" ? T("library.quickAdd.notSaved") : T("library.quickAdd.notLoaded")));
   }
   return data || {};
 };
 
 const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (m) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m]));
 const providerKey = (item) => `${String(item?.provider || "").toUpperCase()}:${String(item?.instance || "default")}`;
-const mediaLabel = (type) => String(type || "").toLowerCase() === "show" ? "Show" : "Movie";
+const mediaLabel = (type) => String(type || "").toLowerCase() === "show" ? T("library.quickAdd.show") : T("library.quickAdd.movie");
 const artType = (type) => String(type || "").toLowerCase() === "show" ? "tv" : "movie";
 const todayLocal = () => new Date().toISOString().slice(0, 10);
 const closeModal = () => window.cxCloseModal?.();
@@ -67,10 +70,12 @@ const closeModalAfterTap = () => {
 };
 
 const HELD_SOURCES = { history: "synced", watchlist: "watchlist", rating: "ratings", collection: "collection" };
+const NOUN_KEYS = { history: "history", watchlist: "watchlist", rating: "ratings", ratings: "ratings", collection: "collection" };
+const noun = (key) => T(`library.actions.noun.${NOUN_KEYS[key] || key}`);
 
 const ONE_OFF_NOUNS = { history: "history", watchlist: "watchlist", rating: "ratings", collection: "collection" };
 
-const oneOffNote = (actions) => `Not in a sync pair for ${actions.map((key) => ONE_OFF_NOUNS[key]).join(" and ")}. This is added once and stays on that provider only.`;
+const oneOffNote = (actions) => T("library.quickAdd.oneOff", {nouns: actions.map((key) => noun(ONE_OFF_NOUNS[key])).join(` ${T("library.actions.and")} `)});
 
 const targetName = (target) => target.display || target.label || target.provider;
 
@@ -96,16 +101,16 @@ const heldNotes = (held, actions, targets, { show = false, picked = null } = {})
   if (action === "history") {
     if (show && !picked) {
       const names = watchedTargets(held, targets, null).map(targetName).join(", ");
-      return names ? [`Has watched episodes on ${names}.`] : [];
+      return names ? [T("library.quickAdd.hasWatched", {names})] : [];
     }
     const watched = watchedTargets(held, targets, picked);
     const again = watched.filter((target) => target.rewatch_write).map(targetName).join(", ");
     const once = watched.filter((target) => !target.rewatch_write).map(targetName).join(", ");
     return [
-      ...(again ? [`Already watched on ${again}. Sending adds a rewatch.`] : []),
+      ...(again ? [T("library.quickAdd.addsRewatch", {names: again})] : []),
       ...(once ? [picked
-        ? `Already watched on ${once}, which keeps one play. Those episodes are skipped there.`
-        : `Already watched on ${once}, which keeps one play. History is skipped there.`] : []),
+        ? T("library.quickAdd.keepsOneEpisodes", {names: once})
+        : T("library.quickAdd.keepsOneHistory", {names: once})] : []),
     ];
   }
   const refs = held?.[HELD_SOURCES[action]]?.present;
@@ -116,8 +121,8 @@ const heldNotes = (held, actions, targets, { show = false, picked = null } = {})
     return [action === "rating" && ref.rating != null ? `${targetName(target)} (${ref.rating}/10)` : targetName(target)];
   }).join(", ");
   if (!names) return [];
-  if (action === "rating") return [`Already rated on ${names}. Sending may replace the score.`];
-  return [`Already in your ${action} on ${names}.`];
+  if (action === "rating") return [T("library.quickAdd.alreadyRated", {names})];
+  return [T("library.quickAdd.alreadyIn", {noun: noun(action), names})];
 });
 
 export default {
@@ -206,7 +211,7 @@ export default {
       try { localStorage.setItem(STORAGE_KEY, JSON.stringify([...state.selectedProviders])); } catch {}
     };
     const renderPoster = (item) => !item?.tmdb
-      ? `<div class="cw-mw-poster"><div class="cw-mw-ghost">No art</div></div>`
+      ? `<div class="cw-mw-poster"><div class="cw-mw-ghost">${TH("library.quickAdd.noArt")}</div></div>`
       : `<div class="cw-mw-poster"><img src="/art/tmdb/${artType(item.type)}/${encodeURIComponent(String(item.tmdb))}?fallback=2&size=w185${window.CW?.ArtChoice?.param?.(artType(item.type), item.tmdb) || ""}" alt=""></div>`;
     const selectedTargets = () => state.providers.filter((item) => state.selectedProviders.has(providerKey(item)));
     const selectedActionKeys = () => ACTIONS.map(([key]) => key).filter((key) => !!state.actions[key]);
@@ -232,17 +237,17 @@ export default {
     };
     const ratingLabel = value => {
       const scale = ratingScale();
-      return value == null ? "Choose rating" : scale.labels?.[value] || `${value * scale.display_factor}/${scale.max}`;
+      return value == null ? T("library.quickAdd.chooseRating") : scale.labels?.[value] || `${value * scale.display_factor}/${scale.max}`;
     };
     const ratingChoices = () => {
       const scale = ratingScale();
-      if (scale.unavailable) return `<span class="cw-mw-muted">Rating choices are unavailable for a selected provider. Reload and try again.</span>`;
-      if (scale.labels) return `<div class="cw-mw-chips" role="group" aria-label="Rating">${scale.values.map(score => `<button type="button" class="cw-mw-chip cw-mw-reaction ${score === state.rating ? "active" : ""}" data-rating="${score}" aria-pressed="${score === state.rating}" aria-label="Rate ${esc(ratingLabel(score))}">${esc(scale.labels[score])}</button>`).join("")}</div>`;
-      if (!scale.values.length) return `<span class="cw-mw-muted">These providers have no shared rating choices. Rate each provider separately.</span>`;
+      if (scale.unavailable) return `<span class="cw-mw-muted">${TH("library.quickAdd.ratingUnavailable")}</span>`;
+      if (scale.labels) return `<div class="cw-mw-chips" role="group" aria-label="${TH("library.quickAdd.rating")}">${scale.values.map(score => `<button type="button" class="cw-mw-chip cw-mw-reaction ${score === state.rating ? "active" : ""}" data-rating="${score}" aria-pressed="${score === state.rating}" aria-label="${TH("library.quickAdd.rate", {value: String(ratingLabel(score))})}">${esc(scale.labels[score])}</button>`).join("")}</div>`;
+      if (!scale.values.length) return `<span class="cw-mw-muted">${TH("library.quickAdd.noShared")}</span>`;
       const half = scale.values.some(value => !Number.isInteger(value * scale.display_factor));
       const count = scale.max * (half ? 2 : 1);
       const slots = Array.from({length: count}, (_, i) => (i + 1) / (half ? 2 : 1) / scale.display_factor);
-      return `<div class="cw-mw-rating"><div class="cw-mw-rating-summary"><strong data-rating-value>${esc(ratingLabel(state.rating))}</strong><span>Your rating</span></div><div class="cw-mw-stars${half ? " is-half" : ""}" style="--mw-rating-slots:${count}" role="group" aria-label="Rating">${slots.map(score => `<button type="button" class="cw-mw-star${half && Number.isInteger(score * scale.display_factor) ? " is-right" : ""}${score <= state.rating ? " is-lit" : ""}" data-rating="${score}" aria-pressed="${score === state.rating}" aria-label="Rate ${esc(ratingLabel(score))}"${scale.values.includes(score) && !state.saving ? "" : " disabled"}><span class="material-symbols-rounded" aria-hidden="true">star</span></button>`).join("")}</div></div>`;
+      return `<div class="cw-mw-rating"><div class="cw-mw-rating-summary"><strong data-rating-value>${esc(ratingLabel(state.rating))}</strong><span>${TH("library.quickAdd.yourRating")}</span></div><div class="cw-mw-stars${half ? " is-half" : ""}" style="--mw-rating-slots:${count}" role="group" aria-label="${TH("library.quickAdd.rating")}">${slots.map(score => `<button type="button" class="cw-mw-star${half && Number.isInteger(score * scale.display_factor) ? " is-right" : ""}${score <= state.rating ? " is-lit" : ""}" data-rating="${score}" aria-pressed="${score === state.rating}" aria-label="${TH("library.quickAdd.rate", {value: String(ratingLabel(score))})}"${scale.values.includes(score) && !state.saving ? "" : " disabled"}><span class="material-symbols-rounded" aria-hidden="true">star</span></button>`).join("")}</div></div>`;
     };
     const previewRating = value => {
       const summary = root.querySelector("[data-rating-value]");
@@ -282,7 +287,7 @@ export default {
     const pad2 = (n) => String(n).padStart(2, "0");
     const epKey = (season, episode) => `${season}:${episode}`;
     const epCode = (season, episode) => `S${pad2(season)}E${pad2(episode)}`;
-    const seasonName = (season) => Number(season) === 0 ? "Specials" : `Season ${season}`;
+    const seasonName = (season) => Number(season) === 0 ? T("profile.media.specials") : T("profile.media.seasonN", {n: String(season)});
     const isShow = () => String(state.selectedItem?.type || "").toLowerCase() === "show";
     const episodeChoice = () => isShow() && !!state.actions.history;
     const dated = () => !!(state.actions.history || state.actions.collection);
@@ -310,19 +315,19 @@ export default {
       state.extraEpisode = "";
     };
     const validation = () => {
-      if (!state.selectedItem) return "Select a movie or show first.";
-      if (state.titleLoading) return "Checking this title...";
-      if (!selectedActionKeys().length) return "Select at least one action.";
-      if (!selectedCompatibleTargets().length) return "Select at least one compatible provider.";
-      if (dated() && state.dateMode === "custom" && !state.watchedOn) return "Choose a date.";
-      if (pickingEpisodes() && !state.picked.size) return "Pick at least one episode.";
+      if (!state.selectedItem) return T("library.quickAdd.selectItem");
+      if (state.titleLoading) return T("library.quickAdd.checking");
+      if (!selectedActionKeys().length) return T("library.quickAdd.selectAction");
+      if (!selectedCompatibleTargets().length) return T("library.quickAdd.selectProvider");
+      if (dated() && state.dateMode === "custom" && !state.watchedOn) return T("library.quickAdd.chooseDate");
+      if (pickingEpisodes() && !state.picked.size) return T("library.quickAdd.pickEpisode");
       if (pickingEpisodes() && state.listSource !== "tmdb") {
         const targets = selectedCompatibleTargets();
-        if (targets.length !== 1 || providerKey(targets[0]) !== state.listSource) return `Episodes from the ${sourceLabel()} list can only be sent to ${sourceLabel()}.`;
+        if (targets.length !== 1 || providerKey(targets[0]) !== state.listSource) return T("library.quickAdd.listOnly", {name: sourceLabel()});
       }
-      if (state.actions.rating && ratingScale().unavailable) return "Rating choices are unavailable for a selected provider. Reload and try again.";
-      if (state.actions.rating && !ratingScale().values.length) return "These providers have no shared rating choices. Rate them separately.";
-      if (state.actions.rating && !ratingScale().values.includes(Number(state.rating))) return "Choose a rating supported by the selected providers.";
+      if (state.actions.rating && ratingScale().unavailable) return T("library.quickAdd.ratingUnavailable");
+      if (state.actions.rating && !ratingScale().values.length) return T("library.quickAdd.noSharedShort");
+      if (state.actions.rating && !ratingScale().values.includes(Number(state.rating))) return T("library.quickAdd.chooseSupported");
       return "";
     };
     const setStatus = (text = "", tone = "") => {
@@ -331,24 +336,24 @@ export default {
       render();
     };
     const sendLabel = () => {
-      if (state.saving) return "Sending...";
+      if (state.saving) return T("library.quickAdd.sending");
       const keys = selectedActionKeys();
       const verb = keys.length === 1
-        ? { history: "Mark watched", watchlist: "Add to watchlist", rating: `Rate ${ratingLabel(state.rating)}`, collection: "Add to collection" }[keys[0]]
-        : "Save";
+        ? { history: T("library.quickAdd.markWatched"), watchlist: T("library.quickAdd.addWatchlist"), rating: T("library.quickAdd.rate", {value: String(ratingLabel(state.rating))}), collection: T("library.quickAdd.addCollection") }[keys[0]]
+        : T("library.quickAdd.save");
       const count = selectedCompatibleTargets().length;
-      return count ? `${verb} on ${count} provider${count === 1 ? "" : "s"}` : verb;
+      return count ? T("library.quickAdd.verbOn", {verb, count}) : verb;
     };
 
     const selectedItemHtml = () => `
       <div class="cw-mw-selected">
         ${renderPoster(state.selectedItem)}
         <div class="cw-mw-selected-title">
-          <span>${esc(state.selectedItem.title || "Untitled")}</span>
+          <span>${esc(state.selectedItem.title || T("library.quickAdd.untitled"))}</span>
           <span class="cw-mw-badge">${esc(mediaLabel(state.selectedItem.type))}</span>
           ${state.selectedItem.year ? `<span class="cw-mw-badge">${esc(state.selectedItem.year)}</span>` : ""}
         </div>
-        ${state.only ? "" : `<button type="button" class="cw-mw-chip" data-role="change">Change</button>`}
+        ${state.only ? "" : `<button type="button" class="cw-mw-chip" data-role="change">${TH("library.quickAdd.change")}</button>`}
       </div>
     `;
 
@@ -356,12 +361,12 @@ export default {
       <div class="cw-mw-form">
         <div class="cw-mw-searchbar">
           <div class="cw-mw-media-toggle">
-            <button type="button" class="cw-mw-chip ${state.type === "movie" ? "active" : ""}" data-type="movie">Movies</button>
-            <button type="button" class="cw-mw-chip ${state.type === "show" ? "active" : ""}" data-type="show">Shows</button>
+            <button type="button" class="cw-mw-chip ${state.type === "movie" ? "active" : ""}" data-type="movie">${TH("library.quickAdd.movies")}</button>
+            <button type="button" class="cw-mw-chip ${state.type === "show" ? "active" : ""}" data-type="show">${TH("library.quickAdd.shows")}</button>
           </div>
           <div class="cw-mw-search">
-            <input class="cw-mw-input" data-role="query" type="search" placeholder="Search title..." autocomplete="off" autocapitalize="none" spellcheck="false" inputmode="search" enterkeyhint="search" value="${esc(state.query)}">
-            <button type="button" class="cw-mw-btn primary" data-role="search" aria-label="Search"><span class="material-symbols-rounded">search</span></button>
+            <input class="cw-mw-input" data-role="query" type="search" placeholder="${TH("library.quickAdd.searchTitle")}" autocomplete="off" autocapitalize="none" spellcheck="false" inputmode="search" enterkeyhint="search" value="${esc(state.query)}">
+            <button type="button" class="cw-mw-btn primary" data-role="search" aria-label="${TH("library.quickAdd.search")}"><span class="material-symbols-rounded">search</span></button>
           </div>
         </div>
         <div class="cw-mw-results">${resultsHtml()}</div>
@@ -369,15 +374,15 @@ export default {
     `;
 
     const resultsHtml = () => {
-      if (state.searching) return `<div class="cw-mw-empty">Searching TMDb...</div>`;
+      if (state.searching) return `<div class="cw-mw-empty">${TH("library.quickAdd.searching")}</div>`;
       if (!state.query.trim()) return "";
-      if (!state.results.length) return `<div class="cw-mw-empty">No results found.</div>`;
+      if (!state.results.length) return `<div class="cw-mw-empty">${TH("library.quickAdd.noResults")}</div>`;
       return state.results.map((item) => {
         const active = state.selectedItem && String(state.selectedItem.tmdb) === String(item.tmdb) && state.selectedItem.type === item.type;
         return `<button type="button" class="cw-mw-result ${active ? "active" : ""}" data-result-tmdb="${esc(item.tmdb)}">
           ${renderPoster(item)}
           <div>
-            <div class="cw-mw-result-title"><span>${esc(item.title || "Untitled")}</span>${item.year ? `<span class="cw-mw-meta">${esc(item.year)}</span>` : ""}</div>
+            <div class="cw-mw-result-title"><span>${esc(item.title || T("library.quickAdd.untitled"))}</span>${item.year ? `<span class="cw-mw-meta">${esc(item.year)}</span>` : ""}</div>
             ${item.overview ? `<div class="cw-mw-overview">${esc(item.overview)}</div>` : ""}
           </div>
         </button>`;
@@ -386,8 +391,8 @@ export default {
 
     const actionChips = () => availableActions().map(([key, label, icon, note]) => `
       <button type="button" class="cw-mw-chip ${state.actions[key] ? "active" : ""}" data-action="${esc(key)}" aria-pressed="${state.actions[key] ? "true" : "false"}" title="${esc(note)}">
-        <span class="material-symbols-rounded" aria-hidden="true">${esc(icon)}</span><span>${esc(label === "History" ? "Watched" : label)}</span>
-      </button>`).join("") || `<span class="cw-mw-muted">No configured provider supports Quick add.</span>`;
+        <span class="material-symbols-rounded" aria-hidden="true">${esc(icon)}</span><span>${esc(key === "history" ? T("library.quickAdd.watched") : label)}</span>
+      </button>`).join("") || `<span class="cw-mw-muted">${TH("library.quickAdd.noProvider")}</span>`;
 
     const providerGroups = () => {
       const providers = compatibleProviders();
@@ -410,15 +415,15 @@ export default {
           ${logoHtml(item.provider)}<span class="cw-mw-provider-names"><span>${esc(item.label || item.provider)}</span>${account ? `<small>${esc(account)}</small>` : ""}</span>
         </button>`;
       };
-      if (!groups.main.length) return `<span class="cw-mw-muted">No configured provider supports this combination.</span>`;
+      if (!groups.main.length) return `<span class="cw-mw-muted">${TH("library.quickAdd.noCombination")}</span>`;
       const more = !groups.other.length ? "" : groups.open
-        ? `<div class="cw-mw-provider-sub">Other accounts</div><div class="cw-mw-provider-grid">${groups.other.map(chip).join("")}</div>`
+        ? `<div class="cw-mw-provider-sub">${TH("library.quickAdd.otherAccountsTitle")}</div><div class="cw-mw-provider-grid">${groups.other.map(chip).join("")}</div>`
         : "";
       return `<div class="cw-mw-provider-grid">${groups.main.map(chip).join("")}</div>${more}
         <div class="cw-mw-provider-links">
-          ${groups.other.length && !groups.open ? `<button type="button" class="cw-mw-link" data-role="more-accounts">${groups.other.length} other account${groups.other.length === 1 ? "" : "s"}</button>` : ""}
-          <button type="button" class="cw-mw-link" data-role="select-all">Select all</button>
-          <button type="button" class="cw-mw-link" data-role="clear-providers">Clear</button>
+          ${groups.other.length && !groups.open ? `<button type="button" class="cw-mw-link" data-role="more-accounts">${TH("library.quickAdd.otherAccounts", {count: groups.other.length})}</button>` : ""}
+          <button type="button" class="cw-mw-link" data-role="select-all">${TH("library.quickAdd.selectAll")}</button>
+          <button type="button" class="cw-mw-link" data-role="clear-providers">${TH("library.quickAdd.clear")}</button>
         </div>`;
     };
 
@@ -427,17 +432,17 @@ export default {
       return `<button type="button" class="cw-mw-ep ${on ? "active" : ""}" data-ep="${season}:${ep.episode}" aria-pressed="${on ? "true" : "false"}">
         <span class="cw-mw-ep-check material-symbols-rounded" aria-hidden="true">check</span>
         <span class="cw-mw-ep-num">E${pad2(ep.episode)}</span>
-        <span class="cw-mw-ep-name">${esc(ep.name || `Episode ${ep.episode}`)}</span>
+        <span class="cw-mw-ep-name">${esc(ep.name || T("profile.media.episodeN", {n: String(ep.episode)}))}</span>
         <span class="cw-mw-ep-date">${esc(ep.air_date || "")}</span>
       </button>`;
     };
 
     const seasonBlock = () => {
       const list = listState();
-      if (!list || list.loading) return `<div class="cw-mw-eps-state">Loading episodes...</div>`;
+      if (!list || list.loading) return `<div class="cw-mw-eps-state">${TH("library.quickAdd.loadingEpisodes")}</div>`;
       if (list.error) return `<div class="cw-mw-eps-state">${esc(list.error)}</div>`;
       const seasons = list.seasons || [];
-      if (!seasons.length) return `<div class="cw-mw-eps-state">No episodes found in this list.</div>`;
+      if (!seasons.length) return `<div class="cw-mw-eps-state">${TH("library.quickAdd.noEpisodesList")}</div>`;
       const current = activeSeasonNumber();
       const active = seasons.find((row) => row.season === current) || seasons[0];
       const picked = pickedRows();
@@ -448,14 +453,14 @@ export default {
       const eps = seasonState(active.season);
       const episodes = Array.isArray(eps?.episodes) ? eps.episodes : [];
       let body;
-      if (!eps || eps.loading) body = `<div class="cw-mw-eps-state">Loading ${esc(active.name || seasonName(active.season))}...</div>`;
+      if (!eps || eps.loading) body = `<div class="cw-mw-eps-state">${TH("library.quickAdd.loadingSeason", {name: active.name || seasonName(active.season)})}</div>`;
       else if (eps.error) body = `<div class="cw-mw-eps-state">${esc(eps.error)}</div>`;
-      else if (!episodes.length) body = `<div class="cw-mw-eps-state">No episodes in this season.</div>`;
+      else if (!episodes.length) body = `<div class="cw-mw-eps-state">${TH("library.quickAdd.noEpisodesSeason")}</div>`;
       else body = `<div class="cw-mw-eplist">${episodes.map((ep) => episodeRow(active.season, ep)).join("")}</div>`;
       const all = episodes.length && episodes.every((ep) => state.picked.has(epKey(active.season, ep.episode)));
-      const toggle = episodes.length ? `<button type="button" class="cw-mw-link" data-role="eps-season-all">${all ? "Clear season" : "Select season"}</button>` : "";
+      const toggle = episodes.length ? `<button type="button" class="cw-mw-link" data-role="eps-season-all">${TH(all ? "library.quickAdd.clearSeason" : "library.quickAdd.selectSeason")}</button>` : "";
       return `<div class="cw-mw-seasons">${tabs}</div>
-        <div class="cw-mw-eps-season-head"><b>${esc(active.name || seasonName(active.season))}</b><span class="cw-mw-muted">${esc(active.episode_count)} episodes</span>${toggle}</div>
+        <div class="cw-mw-eps-season-head"><b>${esc(active.name || seasonName(active.season))}</b><span class="cw-mw-muted">${TH("profile.media.count.episode", {count: Number(active.episode_count) || 0})}</span>${toggle}</div>
         ${body}`;
     };
 
@@ -468,12 +473,12 @@ export default {
         value.episodes.forEach((ep) => known.add(epKey(season, ep.episode)));
       }
       const extras = pickedRows().filter((row) => !known.has(epKey(row.season, row.episode)));
-      const tags = extras.map((row) => `<button type="button" class="cw-mw-eps-tag" data-remove-ep="${row.season}:${row.episode}" aria-label="Remove ${epCode(row.season, row.episode)}">${epCode(row.season, row.episode)}<span class="material-symbols-rounded" aria-hidden="true">close</span></button>`).join("");
+      const tags = extras.map((row) => `<button type="button" class="cw-mw-eps-tag" data-remove-ep="${row.season}:${row.episode}" aria-label="${TH("library.quickAdd.removeEpisode", {code: epCode(row.season, row.episode)})}">${epCode(row.season, row.episode)}<span class="material-symbols-rounded" aria-hidden="true">close</span></button>`).join("");
       return `<div class="cw-mw-eps-extra">
-        <span>Missing an episode? Add it by number</span>
-        <label>S <input type="number" min="0" inputmode="numeric" data-role="extra-season" value="${esc(state.extraSeason)}" aria-label="Season number"></label>
-        <label>E <input type="number" min="1" inputmode="numeric" data-role="extra-episode" value="${esc(state.extraEpisode)}" aria-label="Episode number"></label>
-        <button type="button" class="cw-mw-chip" data-role="extra-add">Add</button>
+        <span>${TH("library.quickAdd.missingEpisode")}</span>
+        <label>S <input type="number" min="0" inputmode="numeric" data-role="extra-season" value="${esc(state.extraSeason)}" aria-label="${TH("library.quickAdd.seasonNumber")}"></label>
+        <label>E <input type="number" min="1" inputmode="numeric" data-role="extra-episode" value="${esc(state.extraEpisode)}" aria-label="${TH("library.quickAdd.episodeNumber")}"></label>
+        <button type="button" class="cw-mw-chip" data-role="extra-add">${TH("library.quickAdd.add")}</button>
       </div>
       ${tags ? `<div class="cw-mw-eps-tags">${tags}</div>` : ""}`;
     };
@@ -481,23 +486,23 @@ export default {
     const episodesCard = () => {
       const sources = listSources();
       const sourceSelect = sources.length > 1
-        ? `<label class="cw-mw-eps-source">Episode list<select data-role="episode-source">${sources.map((row) => `<option value="${esc(row.key)}" ${row.key === state.listSource ? "selected" : ""}>${esc(row.label)}</option>`).join("")}</select></label>`
+        ? `<label class="cw-mw-eps-source">${TH("library.quickAdd.episodeList")}<select data-role="episode-source">${sources.map((row) => `<option value="${esc(row.key)}" ${row.key === state.listSource ? "selected" : ""}>${esc(row.label)}</option>`).join("")}</select></label>`
         : "";
       const count = state.picked.size;
       const note = state.listSource !== "tmdb"
-        ? `<div class="cw-mw-eps-note"><span class="material-symbols-rounded" aria-hidden="true">info</span><span>Episode numbers follow ${esc(sourceLabel())}, so these episodes are only sent to ${esc(sourceLabel())}.</span></div>`
+        ? `<div class="cw-mw-eps-note"><span class="material-symbols-rounded" aria-hidden="true">info</span><span>${TH("library.quickAdd.numbersFollow", {name: sourceLabel()})}</span></div>`
         : "";
       const picker = state.scope === "episodes" ? `
-        <div class="cw-mw-eps-bar">${sourceSelect}<span class="cw-mw-eps-count">${count} selected</span>${count ? `<button type="button" class="cw-mw-link" data-role="eps-clear">Clear</button>` : ""}</div>
+        <div class="cw-mw-eps-bar">${sourceSelect}<span class="cw-mw-eps-count">${TH("library.quickAdd.selected", {count})}</span>${count ? `<button type="button" class="cw-mw-link" data-role="eps-clear">${TH("library.quickAdd.clear")}</button>` : ""}</div>
         ${note}
         ${seasonBlock()}
         ${extraBlock()}` : "";
       return `<div class="cw-mw-card cw-mw-eps">
         <div class="cw-mw-eps-head">
-          <label class="cw-mw-label">What did you watch</label>
+          <label class="cw-mw-label">${TH("library.quickAdd.whatWatched")}</label>
           <div class="cw-mw-row">
-            <button type="button" class="cw-mw-chip ${state.scope === "show" ? "active" : ""}" data-scope="show">Whole show</button>
-            <button type="button" class="cw-mw-chip ${state.scope === "episodes" ? "active" : ""}" data-scope="episodes">Pick episodes</button>
+            <button type="button" class="cw-mw-chip ${state.scope === "show" ? "active" : ""}" data-scope="show">${TH("library.quickAdd.wholeShow")}</button>
+            <button type="button" class="cw-mw-chip ${state.scope === "episodes" ? "active" : ""}" data-scope="episodes">${TH("library.quickAdd.pickEpisodes")}</button>
           </div>
         </div>
         ${picker}
@@ -512,15 +517,15 @@ export default {
     const chooseView = () => `
       <div class="cw-mw-form">
         ${selectedItemHtml()}
-        ${state.only ? `<p class="cw-mw-muted">${esc(oneOffNote(selectedActionKeys()))}</p>` : `<div class="cw-mw-field"><span class="cw-mw-label">What</span><div class="cw-mw-chips">${actionChips()}</div></div>`}
-        <div class="cw-mw-field"><span class="cw-mw-label">Where</span><div class="cw-mw-where">${providerChips()}<div class="cw-mw-held">${heldHtml()}</div></div></div>
-        ${dated() ? `<div class="cw-mw-field"><span class="cw-mw-label">When</span><div class="cw-mw-chips">
-          <button type="button" class="cw-mw-chip ${state.dateMode === "today" ? "active" : ""}" data-date-mode="today">Today</button>
-          <button type="button" class="cw-mw-chip ${state.dateMode === "release" ? "active" : ""}" data-date-mode="release">Release date</button>
-          <button type="button" class="cw-mw-chip ${state.dateMode === "custom" ? "active" : ""}" data-date-mode="custom">Choose date</button>
+        ${state.only ? `<p class="cw-mw-muted">${esc(oneOffNote(selectedActionKeys()))}</p>` : `<div class="cw-mw-field"><span class="cw-mw-label">${TH("library.quickAdd.what")}</span><div class="cw-mw-chips">${actionChips()}</div></div>`}
+        <div class="cw-mw-field"><span class="cw-mw-label">${TH("library.quickAdd.where")}</span><div class="cw-mw-where">${providerChips()}<div class="cw-mw-held">${heldHtml()}</div></div></div>
+        ${dated() ? `<div class="cw-mw-field"><span class="cw-mw-label">${TH("library.quickAdd.when")}</span><div class="cw-mw-chips">
+          <button type="button" class="cw-mw-chip ${state.dateMode === "today" ? "active" : ""}" data-date-mode="today">${TH("library.quickAdd.today")}</button>
+          <button type="button" class="cw-mw-chip ${state.dateMode === "release" ? "active" : ""}" data-date-mode="release">${TH("library.quickAdd.releaseDate")}</button>
+          <button type="button" class="cw-mw-chip ${state.dateMode === "custom" ? "active" : ""}" data-date-mode="custom">${TH("library.quickAdd.chooseDateBtn")}</button>
           ${state.dateMode === "custom" ? `<input type="date" class="cw-mw-date" data-role="custom-date" value="${esc(state.watchedOn || "")}">` : ""}
         </div></div>` : ""}
-        ${state.actions.rating ? `<div class="cw-mw-field"><span class="cw-mw-label">Rating</span>${ratingChoices()}</div>` : ""}
+        ${state.actions.rating ? `<div class="cw-mw-field"><span class="cw-mw-label">${TH("library.quickAdd.rating")}</span>${ratingChoices()}</div>` : ""}
         ${episodeChoice() ? episodesCard() : ""}
       </div>
     `;
@@ -543,9 +548,9 @@ export default {
         <div class="cx-head">
           <div class="cw-mw-head">
             <span class="cw-mw-head-icon"><span class="material-symbols-rounded">add_circle</span></span>
-            <div><div class="cw-mw-title">Quick add</div></div>
+            <div><div class="cw-mw-title">${TH("library.quickAdd.title")}</div></div>
           </div>
-          <button type="button" class="cw-mw-close" data-role="close" aria-label="Close"><span class="material-symbols-rounded">close</span></button>
+          <button type="button" class="cw-mw-close" data-role="close" aria-label="${TH("library.quickAdd.close")}"><span class="material-symbols-rounded">close</span></button>
         </div>
         <div class="cw-mw-body">
           <main class="cw-mw-main"><section class="cw-mw-stage"><div class="cw-mw-stage-shell">${picked ? chooseView() : searchStep()}</div></section></main>
@@ -553,7 +558,7 @@ export default {
         <footer class="cw-mw-foot">
           <div class="cw-mw-status ${state.statusTone}">${esc(state.status || (picked ? err : ""))}</div>
           <div class="cw-mw-foot-actions">
-            <button type="button" class="cw-mw-btn" data-role="cancel">Cancel</button>
+            <button type="button" class="cw-mw-btn" data-role="cancel">${TH("library.quickAdd.cancel")}</button>
             ${picked ? `<button type="button" class="cw-mw-btn primary" data-role="send" ${err || state.saving ? "disabled" : ""}>${esc(sendLabel())}</button>` : ""}
           </div>
         </footer>
@@ -615,14 +620,14 @@ export default {
       try {
         const data = await fjson(`/api/metadata/search?q=${encodeURIComponent(q)}&typ=${encodeURIComponent(state.type)}&limit=12`);
         if (seq !== searchSeq || q !== state.query.trim()) return;
-        if (data?.ok === false) throw new Error(data.error || "Search failed");
+        if (data?.ok === false) throw new Error(data.error || T("library.quickAdd.searchFailed"));
         state.results = Array.isArray(data.results) ? data.results : [];
         state.status = "";
         state.statusTone = "";
       } catch (err) {
         if (seq !== searchSeq) return;
         state.results = [];
-        state.status = String(err?.message || "Search failed");
+        state.status = String(err?.message || T("library.quickAdd.searchFailed"));
         state.statusTone = "error";
       } finally {
         if (seq !== searchSeq) return;
@@ -638,10 +643,10 @@ export default {
     };
 
     const episodeError = (code) => ({
-      tmdb_unavailable: "TMDB is not set up, so episodes cannot be listed.",
-      episode_list_not_found: "This provider has no episode list for this show.",
-      episode_list_not_available: "This provider cannot list episodes.",
-    }[code] || "Episodes could not be loaded.");
+      tmdb_unavailable: T("library.quickAdd.tmdbMissing"),
+      episode_list_not_found: T("library.quickAdd.noList"),
+      episode_list_not_available: T("library.quickAdd.cannotList"),
+    }[code] || T("library.quickAdd.episodesFailed"));
 
     const loadEpisodeData = async () => {
       const tmdb = state.selectedItem?.tmdb;
@@ -688,7 +693,7 @@ export default {
       const season = Number.parseInt(state.extraSeason, 10);
       const episode = Number.parseInt(state.extraEpisode, 10);
       if (!(season >= 0) || !(episode >= 1)) {
-        setStatus("Enter a season and episode number.", "error");
+        setStatus(T("library.quickAdd.enterNumbers"), "error");
         return;
       }
       state.picked.set(epKey(season, episode), { season, episode, air_date: "" });
@@ -727,7 +732,7 @@ export default {
       } catch (err) {
         state.providers = [];
         state.selectedProviders = new Set();
-        state.status = String(err?.message || "Failed to load providers");
+        state.status = String(err?.message || T("library.quickAdd.providersFailed"));
         state.statusTone = "error";
       }
       if (!state.selectedItem && root.querySelector(".cw-mw-results")) {
@@ -772,12 +777,12 @@ export default {
         });
         saveSelection();
         state.saving = false;
-        setStatus(`Saved to ${providers.length} provider${providers.length === 1 ? "" : "s"}.`, "success");
+        setStatus(T("library.quickAdd.savedTo", {count: providers.length}), "success");
         window.dispatchEvent(new CustomEvent("cw:manual-watched-saved", { detail: data }));
         window.setTimeout(closeModal, 520);
       } catch (err2) {
         state.saving = false;
-        setStatus(String(err2?.message || "Save failed"), "error");
+        setStatus(String(err2?.message || T("library.quickAdd.saveFailed")), "error");
       }
     };
 

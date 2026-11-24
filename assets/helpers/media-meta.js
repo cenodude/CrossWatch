@@ -2,6 +2,8 @@
 /* Shared TMDB metadata fetcher and cache for the playing card and its watchlist variants */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 (function () {
+  const T = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.t?.(key, vars) ?? key;
+  const TH = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.html?.(key, vars) ?? key;
   const authSetupPending = () => window.cwIsAuthSetupPending?.() === true;
 
   const NEED = Object.freeze({
@@ -229,7 +231,7 @@
   window.CW.ArtChoice = { param: artParam, set: setArtChoice };
 
   const SHELF_FORMATS = { "4k_bluray": "4K UHD", bluray: "Blu-ray", hd_dvd: "HD DVD", dvd: "DVD", digital: "Digital", vcd: "VCD", vhs: "VHS", betamax: "Betamax", laserdisc: "LaserDisc" };
-  const SHELF_STATUSES = { owned: "Owned", ordered: "Ordered", wishlist: "Wishlist" };
+  const SHELF_STATUSES = Object.defineProperties({}, Object.fromEntries(["owned", "ordered", "wishlist"].map(key => [key, { enumerable: true, get: () => T(`library.shelf.status.${key}`) }])));
   const SHELF_DISCS = { "4k_bluray": "bluray", bluray: "bluray", dvd: "dvd" };
   const shelfIndex = { data: null, promise: null, currency: "" };
   const shelfEsc = (value) => String(value ?? "").replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
@@ -280,7 +282,7 @@
     const formats = Array.isArray(info.formats) ? info.formats : [];
     const first = SHELF_FORMATS[formats[0]] || "";
     if (first) return formats.length > 1 ? `${first} +${formats.length - 1}` : first;
-    return SHELF_STATUSES[info.status] || "On shelf";
+    return SHELF_STATUSES[info.status] || T("library.shelf.onShelf");
   }
 
   function shelfDiscUrl(type, id, format) {
@@ -329,7 +331,7 @@
   }
 
   function shelfCasesSwitch() {
-    return `<button type="button" class="cw-shelfv-cases" role="switch" aria-checked="${shelfCasesOn()}" title="Show disc cases around the posters" data-shelf-cases><span>Cases</span><span class="cw-shelfv-cases-ui" aria-hidden="true"></span></button>`;
+    return `<button type="button" class="cw-shelfv-cases" role="switch" aria-checked="${shelfCasesOn()}" title="${TH("library.shelf.casesTitle")}" data-shelf-cases><span>${TH("library.shelf.cases")}</span><span class="cw-shelfv-cases-ui" aria-hidden="true"></span></button>`;
   }
 
   document.addEventListener("click", (event) => {
@@ -379,15 +381,15 @@
     const edition = [info.edition, info.packaging === "steelbook" && String(info.edition || "").toLowerCase() !== "steelbook" ? "Steelbook" : ""].filter(Boolean).join(" · ");
     const bought = [shelfDate(info.purchased), Number(info.spent) > 0 ? shelfMoney(info.spent) : ""].filter(Boolean).join(" · ");
     const rows = [
-      ["Copies", copies ? `${new Intl.NumberFormat(window.__CW_LOCALE || undefined).format(copies)} · ${perFormat}` : ""],
-      ["Edition", edition],
-      ["Bought", bought],
-      ["Shelf", (info.shelves || []).join(", ")],
-      ["Status", info.status && info.status !== "owned" ? SHELF_STATUSES[info.status] || info.status : ""],
-      ["Lent out", info.lent ? "Yes" : ""],
+      [T("library.shelf.copies"), copies ? `${new Intl.NumberFormat(window.__CW_LOCALE || undefined).format(copies)} · ${perFormat}` : ""],
+      [T("library.shelf.edition"), edition],
+      [T("library.shelf.bought"), bought],
+      [T("library.shelf.shelf"), (info.shelves || []).join(", ")],
+      [T("library.shelf.statusLabel"), info.status && info.status !== "owned" ? SHELF_STATUSES[info.status] || info.status : ""],
+      [T("library.shelf.lent"), info.lent ? T("library.shelf.yes") : ""],
     ].filter(([, value]) => value);
     const pill = shelfPill({ format: (info.formats || [])[0] || "", media, service: info.service });
-    return `<h4>${shelfEsc(title)}</h4><span class="cw-shelfv-pop-sub">${shelfEsc(sub)}</span>${pill}${rows.length ? `<dl>${rows.map(([label, value]) => `<dt>${shelfEsc(label)}</dt><dd>${shelfEsc(value)}</dd>`).join("")}</dl>` : ""}<span class="cw-shelfv-pop-hint">Click for all details</span>`;
+    return `<h4>${shelfEsc(title)}</h4><span class="cw-shelfv-pop-sub">${shelfEsc(sub)}</span>${pill}${rows.length ? `<dl>${rows.map(([label, value]) => `<dt>${shelfEsc(label)}</dt><dd>${shelfEsc(value)}</dd>`).join("")}</dl>` : ""}<span class="cw-shelfv-pop-hint">${TH("library.shelf.clickDetails")}</span>`;
   }
 
   function shelfPopShow(anchor, html, target = anchor) {

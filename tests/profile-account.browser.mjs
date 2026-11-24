@@ -1,6 +1,7 @@
 /* tests/profile-account.browser.mjs */
 /* CrossWatch - Dedicated account settings and Hub routing */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude */
+import './i18n-browser-setup.mjs';
 import test, {before, after} from "node:test";
 import assert from "node:assert/strict";
 import {readFile, mkdir} from "node:fs/promises";

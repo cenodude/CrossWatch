@@ -2,6 +2,9 @@
 /* CrossWatch - Persisted topology acknowledgement */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 
+const I18N = () => globalThis.window?.CW?.I18n || globalThis.window?.__cwI18n;
+const T = (key, vars) => I18N()?.t?.(key, vars) ?? key;
+const TH = (key, vars) => I18N()?.html?.(key, vars) ?? key;
 const baselines = new Map();
 let revision = 0;
 const canonical = value => JSON.stringify(value, (_, item) => item && typeof item === "object" && !Array.isArray(item)
@@ -38,7 +41,7 @@ export async function loadBaseline(profileId) {
   const current = ++revision;
   try {
     const response = await fetch(`/api/sync/topology/baseline?profile_id=${encodeURIComponent(scope)}`, { cache: "no-store" });
-    if (!response.ok) throw new Error("Could not load topology acknowledgement.");
+    if (!response.ok) throw new Error(T("modals.topology.ackLoadFailed"));
     const data = await response.json();
     if (current === revision) baselines.set(scope, data.baseline);
   } catch {
@@ -54,7 +57,7 @@ export async function saveBaseline(result, reset = false) {
     ...(reset ? {} : { body: JSON.stringify(result.snapshot) })
   });
   const data = await response.json();
-  if (!response.ok) throw new Error(typeof data.detail === "string" ? data.detail : "Could not save topology acknowledgement.");
+  if (!response.ok) throw new Error(typeof data.detail === "string" ? data.detail : T("modals.topology.ackSaveFailed"));
   revision++;
   baselines.set(scope, data.baseline);
   document.dispatchEvent(new Event("cw:topology-baseline-changed"));
@@ -63,7 +66,7 @@ export async function saveBaseline(result, reset = false) {
 export function baselineCopy(result) {
   if (result.acknowledged) {
     const count = result.baseline.findings.filter(finding => !finding.informational).length;
-    return `${count} known ${count === 1 ? "finding" : "findings"} accepted on ${new Date(result.baseline.accepted_at).toLocaleString()}.`;
+    return T("modals.topology.knownAccepted", {count, date: new Date(result.baseline.accepted_at).toLocaleString(I18N()?.locale)});
   }
-  return result.baseline ? "Topology differs from the acknowledged baseline. Review the current routes." : "";
+  return result.baseline ? T("modals.topology.differs") : "";
 }

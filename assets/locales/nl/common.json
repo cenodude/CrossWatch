@@ -1,0 +1,224 @@
+{
+  "common": {
+    "actions": {
+      "viewAll": "Alles bekijken",
+      "refresh": "Vernieuwen",
+      "scrollLeft": "Naar links scrollen",
+      "scrollRight": "Naar rechts scrollen",
+      "manage": "Beheren",
+      "enable": "Inschakelen",
+      "unlink": "Ontkoppelen",
+      "logOut": "Uitloggen",
+      "copy": "Kopiëren",
+      "open": "Openen",
+      "restart": "Herstarten",
+      "close": "Sluiten",
+      "stickySave": "Vaste opslagknop",
+      "back": "Terug",
+      "clear": "Wissen",
+      "remove": "Verwijderen",
+      "clearAll": "Alles wissen",
+      "cancel": "Annuleren",
+      "apply": "Toepassen",
+      "resetDefaults": "Standaardwaarden herstellen",
+      "save": "Opslaan",
+      "change": "Wijzigen",
+      "turnOn": "Aanzetten",
+      "continue": "Doorgaan",
+      "link": "Koppelen",
+      "view": "Bekijken",
+      "tryAgain": "Opnieuw proberen",
+      "loadMore": "Meer laden",
+      "hide": "Verbergen",
+      "delete": "Verwijderen",
+      "confirm": "Bevestigen",
+      "edit": "Bewerken"
+    },
+    "media": {
+      "watchlist": "Watchlist",
+      "seasonN": "Seizoen {{n}}",
+      "episode": "Aflevering",
+      "season": "Seizoen",
+      "movie": "Film",
+      "show": "Serie",
+      "unknownTitle": "Onbekende titel",
+      "untitled": "Zonder titel",
+      "watched": "Bekeken",
+      "episodeN": "Aflevering {{n}}",
+      "movies": "Films",
+      "episodes": "Afleveringen",
+      "anime": "Anime",
+      "shows": "Series",
+      "seasons": "Seizoenen"
+    },
+    "status": {
+      "loading": "Laden...",
+      "disabled": "Uitgeschakeld",
+      "enabled": "Ingeschakeld",
+      "off": "Uit",
+      "done": "Klaar",
+      "configured": "Geconfigureerd",
+      "notConfigured": "Niet geconfigureerd",
+      "connected": "Verbonden",
+      "notConnected": "Niet verbonden",
+      "unknown": "Onbekend",
+      "pleaseWait": "Even geduld",
+      "on": "Aan",
+      "saving": "Opslaan...",
+      "unavailable": "Niet beschikbaar",
+      "loadingShort": "Laden",
+      "noData": "Geen gegevens",
+      "failed": "Mislukt"
+    },
+    "units": {
+      "minutes": "Minuten",
+      "hours": "Uren",
+      "secShort": "sec"
+    },
+    "labels": {
+      "advanced": "Geavanceerd",
+      "other": "Anders",
+      "filters": "Filters",
+      "provider": "Dienst",
+      "sort": "Sorteren",
+      "default": "Standaard",
+      "rating": "Beoordeling",
+      "yes": "Ja",
+      "no": "Nee"
+    },
+    "selection": {
+      "label": "Geselecteerde items",
+      "selected": "geselecteerd",
+      "visible": "Zichtbaar",
+      "allResults": "Alle resultaten",
+      "selectAll": "Alles selecteren",
+      "selectNone": "Niets selecteren",
+      "select": "Selecteren"
+    },
+    "time": {
+      "today": "Vandaag",
+      "last7Days": "Afgelopen 7 dagen",
+      "last30Days": "Afgelopen 30 dagen",
+      "olderThan30Days": "Ouder dan 30 dagen",
+      "justNow": "zojuist",
+      "tomorrow": "Morgen",
+      "yesterday": "Gisteren"
+    },
+    "language": {
+      "label": "Taal",
+      "hintAccount": "Wordt opgeslagen in je account. De pagina wordt opnieuw geladen om de taal toe te passen.",
+      "hintBrowser": "Wordt opgeslagen in deze browser. De pagina wordt opnieuw geladen om de taal toe te passen.",
+      "reloadPending": "Taal opgeslagen. Sla je wijzigingen op of verwerp ze en laad daarna de pagina opnieuw om de taal toe te passen.",
+      "reloadNow": "Nu opnieuw laden",
+      "saving": "Taal opslaan...",
+      "invalid": "Deze taal is niet beschikbaar.",
+      "saveFailed": "De taal kon niet worden opgeslagen."
+    },
+    "notifications": {
+      "newOne": "Nieuwe melding",
+      "newCount_one": "{{count}} nieuwe melding",
+      "newCount_other": "{{count}} nieuwe meldingen",
+      "titleWithNew_one": "Meldingen ({{count}} nieuw)",
+      "titleWithNew_other": "Meldingen ({{count}} nieuw)",
+      "clearOne": "Melding wissen: {{title}}",
+      "clear": "Melding wissen",
+      "title": "Meldingen",
+      "settings": "Meldingsinstellingen",
+      "close": "Meldingen sluiten",
+      "banner": "Banner voor nieuwe meldingen",
+      "pushDevice": "Pushmeldingen op dit apparaat",
+      "sendTest": "Testmelding versturen",
+      "view": "Meldingen bekijken",
+      "dismissBanner": "Meldingsbanner sluiten",
+      "new": "Nieuw",
+      "caughtUp": "Je bent helemaal bij",
+      "emptyHint": "Nieuwe meldingen verschijnen hier.",
+      "loading": "Meldingen laden…",
+      "viewReviews": "Syncbeoordelingen bekijken",
+      "push": {
+        "iosHomeScreen": "Voeg CrossWatch op iPhone en iPad toe aan het beginscherm en open het vandaar om pushmeldingen te gebruiken.",
+        "iosVersion": "Pushmeldingen vereisen iOS of iPadOS 16.4 of later.",
+        "unsupported": "Deze browser ondersteunt geen pushmeldingen.",
+        "needsHttps": "Vereist HTTPS. Open CrossWatch via een beveiligd adres om pushmeldingen te gebruiken.",
+        "blocked": "Meldingen zijn geblokkeerd voor deze site. Sta ze toe in de site-instellingen van de browser.",
+        "on": "Dit apparaat krijgt nieuwe meldingen, ook als CrossWatch gesloten is.",
+        "offer": "Ontvang nieuwe meldingen op dit apparaat, ook als CrossWatch gesloten is.",
+        "unavailable": "Pushmeldingen zijn op dit moment niet beschikbaar.",
+        "enableFailed": "Pushmeldingen konden niet worden ingeschakeld.",
+        "notAllowed": "Meldingen zijn niet toegestaan voor deze site.",
+        "changeFailed": "Pushmeldingen konden niet worden gewijzigd.",
+        "testSent": "Testmelding verstuurd. Verschijnt er niets, controleer dan of meldingen voor deze browser zijn toegestaan in de systeeminstellingen van het apparaat.",
+        "testFailed": "De testmelding kon niet worden verstuurd."
+      },
+      "unavailable": "Meldingen niet beschikbaar",
+      "loadFailed": "Meldingen konden niet worden geladen."
+    },
+    "copy": {
+      "failed": "Kopiëren mislukt",
+      "copiedCheck": "Gekopieerd ✓"
+    },
+    "paging": {
+      "previous": "Vorige pagina",
+      "next": "Volgende pagina",
+      "previousShort": "Vorige",
+      "nextShort": "Volgende"
+    },
+    "touchHelp": {
+      "information": "Informatie",
+      "close": "Sluiten",
+      "openSettings": "Instellingen openen"
+    },
+    "cardActions": {
+      "actions": "Acties"
+    },
+    "api": {
+      "busyDelete": "Er loopt een sync of databaseonderhoud. Wacht tot dat klaar is en verwijder het paar daarna opnieuw."
+    },
+    "profileSelect": {
+      "default": "Standaard"
+    },
+    "viewCache": {
+      "refreshFailed": "Vernieuwen mislukt. Opgeslagen resultaten worden getoond.",
+      "loadFailed": "{{label}} kon niet worden geladen.",
+      "notPrepared": "De weergave kon niet worden voorbereid. Probeer het opnieuw.",
+      "retry": "Opnieuw proberen"
+    },
+    "mobile": {
+      "confirmTitle": "Actie bevestigen",
+      "continue": "Doorgaan",
+      "filters": "Filters",
+      "done": "Klaar",
+      "remove": "Verwijderen",
+      "cancel": "Annuleren",
+      "ok": "OK",
+      "section": "Sectie"
+    },
+    "mobileSettings": {
+      "title": "Mobiele instellingen",
+      "visibility": "Zichtbaarheid",
+      "playingCard": "Afspeelkaart",
+      "showOnDevice": "Tonen in de mobiele weergave van dit apparaat",
+      "notifications": "Meldingen",
+      "alerts": "Meldingswaarschuwingen",
+      "alertsSub": "Banner en trilling indien ondersteund, terwijl geopend",
+      "push": "Pushmeldingen",
+      "pushSub": "Ontvang nieuwe meldingen op dit apparaat, ook als CrossWatch gesloten is",
+      "touch": "Aanraakfeedback",
+      "haptics": "Haptische feedback",
+      "hapticsSub": "Korte trilling bij tikken op het menu",
+      "unsupported": "Niet ondersteund door deze browser",
+      "disabledMain": "Uitgeschakeld in de hoofdinstellingen",
+      "disabledProfile": "Uitgeschakeld in je profielinstellingen"
+    },
+    "pwa": {
+      "install": "CrossWatch installeren",
+      "addHome": "Voeg CrossWatch toe aan je beginscherm.",
+      "dismiss": "Sluiten",
+      "installBtn": "Installeren",
+      "notNow": "Niet nu",
+      "gotIt": "Begrepen",
+      "best": "Voeg het toe aan je beginscherm voor de beste ervaring.",
+      "tapShare": "Tik op Delen (⬆︎) → “Zet op beginscherm”."
+    }
+  }
+}

@@ -3,6 +3,9 @@
 (function () {
   const NS = (window.CW ||= {});
   const Editor = (NS.Editor ||= {});
+  const T = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.t?.(key, vars) ?? key;
+  const TH = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.html?.(key, vars) ?? key;
+  const TR = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.rich?.(key, vars) ?? key;
 
   const SOURCES = ["state", "playlist"];
 
@@ -43,13 +46,13 @@
     if (!showPlaylist) {
       playlistOpt?.remove();
     } else if (playlistOpt) {
-      playlistOpt.textContent = "Playlist Endpoint";
+      playlistOpt.textContent = T("editor.raw.playlist");
     }
     sourceSel.querySelector('option[value="manual"]')?.remove();
     if (showPlaylist && !sourceSel.querySelector('option[value="playlist"]')) {
       const opt = document.createElement("option");
       opt.value = "playlist";
-      opt.textContent = "Playlist Endpoint";
+      opt.textContent = T("editor.raw.playlist");
       sourceSel.appendChild(opt);
     }
   }
@@ -80,8 +83,8 @@
   }
 
   function playlistEndpointLabel(ep) {
-    if (!ep) return "Endpoint";
-    const name = String(ep.name || ep.id || "Endpoint");
+    if (!ep) return T("editor.sources.endpoint");
+    const name = String(ep.name || ep.id || T("editor.sources.endpoint"));
     const provider = String(ep.provider_label || ep.provider || "").trim();
     const playlist = String(ep.playlist_name || ep.playlist_id || "").trim();
     const type = String(ep.playlist_type || ep.resource_kind || ep.kind || "").trim();
@@ -100,7 +103,7 @@
     const isPlaylist = state.source === "playlist";
     const esc = typeof ctx.escapeHtml === "function" ? ctx.escapeHtml : (s => String(s || ""));
 
-    if (ctx.snapLabel) ctx.snapLabel.textContent = providerPicker ? "Provider" : "Endpoint";
+    if (ctx.snapLabel) ctx.snapLabel.textContent = providerPicker ? T("editor.sources.provider") : T("editor.sources.endpoint");
     syncSnapshotControlVisibility(ctx);
     if (ctx.instanceLabel) ctx.instanceLabel.style.display = providerPicker ? "" : "none";
     if (ctx.instanceSel) ctx.instanceSel.style.display = providerPicker ? "" : "none";
@@ -112,7 +115,7 @@
       const options = list
         .map(ep => `<option value="${esc(ep && ep.id)}">${esc(playlistEndpointLabel(ep))}</option>`)
         .join("");
-      snapSel.innerHTML = options || `<option value="">No endpoints</option>`;
+      snapSel.innerHTML = options || `<option value="">${TH("editor.sources.noEndpoints")}</option>`;
       const opts = Array.from(snapSel.options).map(o => o.value);
       const next = opts.includes(state.snapshot) ? state.snapshot : opts[0] || "";
       if (next !== state.snapshot) state.snapshot = next;
@@ -125,7 +128,7 @@
     if (providerPicker) {
       const list = Array.isArray(state.snapshots) ? state.snapshots : [];
       const label = typeof ctx.providerLabel === "function" ? ctx.providerLabel : ((p, fallback) => fallback || p);
-      const all = ctx.allProviders && list.length > 1 ? `<option value="${ctx.allProviders}">All providers</option>` : "";
+      const all = ctx.allProviders && list.length > 1 ? `<option value="${ctx.allProviders}">${TH("editor.sources.allProviders")}</option>` : "";
       snapSel.innerHTML = all + list.map(p => `<option value="${p}">${label(p, p)}</option>`).join("");
       const opts = Array.from(snapSel.options).map(o => o.value);
       const next = opts.includes(state.snapshot) ? state.snapshot : opts[0] || "";
@@ -153,7 +156,7 @@
     if (ctx.sourceSel) ctx.sourceSel.value = state.source;
     if (ctx.pairLabel) ctx.pairLabel.style.display = "none";
     if (ctx.pairSel) ctx.pairSel.style.display = "none";
-    if (ctx.snapLabel) ctx.snapLabel.textContent = providerPicker ? "Provider" : "Endpoint";
+    if (ctx.snapLabel) ctx.snapLabel.textContent = providerPicker ? T("editor.sources.provider") : T("editor.sources.endpoint");
     syncSnapshotControlVisibility(ctx);
     if (ctx.kindSel) ctx.kindSel.disabled = isPlaylist;
     if (ctx.instanceLabel) ctx.instanceLabel.style.display = providerPicker ? "" : "none";
@@ -165,7 +168,7 @@
 
     const sub = ctx.host?.querySelector(".cw-sub");
     if (sub) {
-      sub.textContent = "Fix, add or remove what CrossWatch syncs";
+      sub.textContent = T("editor.sources.sub");
     }
 
     if (isPlaylist) {
@@ -191,13 +194,13 @@
     if (!stateHint) return;
     if (mode === "state") {
       stateHint.innerHTML =
-        "<strong>No sync state found.</strong> Run a CrossWatch sync once to generate it. After that, your manual adds and blocks will show up here.";
+        TR("editor.sources.noState");
       stateHint.style.display = "block";
       return;
     }
     if (mode === "playlist") {
       stateHint.innerHTML =
-        "<strong>No playlist endpoints found.</strong> Create an endpoint on the Playlists page first. Then select it here to edit its items.";
+        TR("editor.sources.noPlaylists");
       stateHint.style.display = "block";
       return;
     }
@@ -243,7 +246,7 @@
             ctx.persistUIState?.();
           }
         } else {
-          const nextInst = ctx.renderInstanceOptions?.(ctx.instanceSel, [{ id: "default", label: "Default" }], "default");
+          const nextInst = ctx.renderInstanceOptions?.(ctx.instanceSel, [{ id: "default", label: T("editor.importers.default") }], "default");
           if (state.instance !== nextInst) {
             state.instance = nextInst;
             ctx.persistUIState?.();

@@ -2,6 +2,7 @@
 /* Expanded provider metadata helper with labels, logos, and branding info */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 (function(){
+  const T = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.t?.(key, vars) ?? key;
   const providers = Object.freeze({
     CROSSWATCH: { key: "CROSSWATCH", label: "CrossWatch", shortLabel: "CW", brandClass: "brand-crosswatch", badgeId: "badge-crosswatch", authSectionId: "sec-crosswatch", authGroupId: "sec-auth-trackers", aliases: ["CROSSWATCH", "CW", "LOCALTRACKER", "LOCAL TRACKER"], hasLogo: true, hasLogLogo: true, tone: { solid: "#7c5cff", rgb: "124,92,255" }, watchlist: true, collection: true, scrobblerSink: true },
     PLEX: { key: "PLEX", label: "Plex", shortLabel: "Plex", brandClass: "brand-plex", badgeId: "badge-plex", authSectionId: "sec-plex", authGroupId: "sec-auth-media", aliases: ["PLEX"], statusLegacy: ["plex_connected", "plex"], hasLogo: true, hasLogLogo: true, tone: { solid: "#e5a000", rgb: "229,160,0" }, watchlist: true, collection: true, scrobblerSink: true },
@@ -64,7 +65,7 @@
     const keys = key === "tmdb" ? ["tmdb_sync", "tmdb"] : key === "crosswatch" ? ["crosswatch", "cw"] : [key];
     const block = keys.map(name => config[name]).find(value => value && typeof value === "object");
     const entry = id.toLowerCase() === "default" ? block : block?.instances?.[id];
-    return String(entry?.label || "").trim() || (id.toLowerCase() === "default" ? "Default instance" : id);
+    return String(entry?.label || "").trim() || (id.toLowerCase() === "default" ? T("connections.defaultInstance") : id);
   }
   function shortLabel(v){ const info = get(v); return info?.shortLabel || info?.label || keyOf(v) || "?"; }
   function aliases(v){ const info = get(v); return Array.isArray(info?.aliases) && info.aliases.length ? info.aliases.slice() : [keyOf(v)].filter(Boolean); }
@@ -103,36 +104,36 @@
     const k = keyOf(v);
     const src = logoPath(k);
     if (!src) return `<span class="token-text">${v || ""}</span>`;
-    return `<img class="${cls}" src="${src}" alt="${k} logo" width="28" height="28" loading="lazy">`;
+    return `<img class="${cls}" src="${src}" alt="${String(T("connections.logoAlt", { name: k })).replace(/"/g, "&quot;")}" width="28" height="28" loading="lazy">`;
   }
   function logLogoHtml(v, cls = "token-logo"){
     const k = keyOf(v);
     const src = logLogoPath(k);
     if (!src) return logoHtml(k, cls);
-    return `<img class="${cls}" src="${src}" alt="${k} logo" width="28" height="28" loading="lazy">`;
+    return `<img class="${cls}" src="${src}" alt="${String(T("connections.logoAlt", { name: k })).replace(/"/g, "&quot;")}" width="28" height="28" loading="lazy">`;
   }
   function mdblistAccountDetails(data) {
     const username = String(data?.username || "").trim();
-    const plan = String(data?.plan || data?.vip_type || data?.patron_status || (data?.vip ? "Supporter" : data?.vip === false ? "Free" : "")).trim();
+    const plan = String(data?.plan || data?.vip_type || data?.patron_status || (data?.vip ? T("dashboard.status.planSupporter") : data?.vip === false ? T("dashboard.status.planFree") : "")).trim();
     const label = plan.replace(/^active[_ -]/i, "").replace(/[_-]+/g, " ").replace(/\b\w/g, c => c.toUpperCase());
-    return [username ? `Account: ${username}` : "", label ? `Plan: ${label}` : "", ...dailyQuotaDetails(data)].filter(Boolean);
+    return [username ? T("dashboard.status.account", { name: username }) : "", label ? T("dashboard.status.plan", { plan: label }) : "", ...dailyQuotaDetails(data)].filter(Boolean);
   }
   function dailyQuotaDetails(data) {
-    if (data?.daily_quota_expired) return ["Awaiting updated quota"];
+    if (data?.daily_quota_expired) return [T("dashboard.status.awaitingQuota")];
     const remaining = data?.daily_remaining;
     const reset = Number(data?.daily_resets_at);
     const seen = Number(data?.daily_seen_at);
     const now = Date.now() / 1000;
     if (remaining == null || !Number.isFinite(Number(remaining)) || Number(remaining) < 0) return [];
-    if ((reset > 0 && reset <= now) || (!(reset > 0) && seen > 0 && now - seen >= 300)) return ["Awaiting updated quota"];
+    if ((reset > 0 && reset <= now) || (!(reset > 0) && seen > 0 && now - seen >= 300)) return [T("dashboard.status.awaitingQuota")];
     if (!(reset > 0) && !seen) return [];
     const limit = Number(data?.daily_limit);
-    const lines = [`API calls left today: ${Number(remaining)}${Number.isFinite(limit) && limit > 0 ? ` / ${limit}` : ""}`];
+    const lines = [Number.isFinite(limit) && limit > 0 ? T("dashboard.status.callsLeftOf", { left: Number(remaining), limit }) : T("dashboard.status.callsLeft", { left: Number(remaining) })];
     if (reset > 0 && Number.isFinite(reset)) {
       const date = new Date(reset * 1000);
       const options = { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", timeZoneName: "short" };
-      const label = data?.daily_resets_label || window.CW?.ProfileDateTime?.format?.(date, options) || date.toLocaleString(undefined, options);
-      lines.push(`Resets: ${label}`);
+      const label = data?.daily_resets_label || window.CW?.ProfileDateTime?.format?.(date, options) || date.toLocaleString((window.CW?.I18n || window.__cwI18n)?.locale, options);
+      lines.push(T("dashboard.status.resets", { time: label }));
     }
     return lines;
   }

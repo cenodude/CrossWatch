@@ -5,6 +5,7 @@ import assert from "node:assert/strict";
 import {readFileSync} from "node:fs";
 import test from "node:test";
 import vm from "node:vm";
+import './i18n-vm-setup.mjs';
 
 const source = readFileSync(new URL("../assets/js/tracker.js", import.meta.url), "utf8");
 const functions = source.slice(source.indexOf("  function importPick("), source.indexOf("  function noteDraft("));

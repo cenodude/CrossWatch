@@ -2,6 +2,8 @@
 /* CrossWatch - Shared media card action menus */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 (function () {
+  const T = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.t?.(key, vars) ?? key;
+  const TH = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.html?.(key, vars) ?? key;
   const esc = value => String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll('"', "&quot;");
 
   let activeCardMenu = null;
@@ -68,14 +70,14 @@
     const menu = document.createElement("div");
     const mobile = matchMedia("(max-width:760px), (pointer:coarse) and (max-height:600px)").matches;
     const card = anchor.closest(".trk-grid-card,.trk-overview-card,.cw-cw-card,[data-playback-key],[data-timeline-key],[data-collection-key]");
-    const title = options.title || card?.querySelector("strong,h3,.cw-collection-name")?.textContent || "Actions";
+    const title = options.title || card?.querySelector("strong,h3,.cw-collection-name")?.textContent || T("common.cardActions.actions");
     menu.className = `cw-card-action-menu${mobile ? " is-sheet" : ""}`;
     const holdMenu = openingFromHold;
     menu.setAttribute("popover", holdMenu ? "manual" : "auto");
     menu.setAttribute("role", mobile ? "dialog" : "menu");
     menu.tabIndex = -1;
     if (mobile) menu.setAttribute("aria-modal", "true");
-    menu.setAttribute("aria-label", anchor.getAttribute("aria-label") || "Actions");
+    menu.setAttribute("aria-label", anchor.getAttribute("aria-label") || T("common.cardActions.actions"));
     const heading = mobile ? `<header class="cw-card-action-heading"><span class="cw-card-action-grip" aria-hidden="true"></span><h2>${esc(title)}</h2>${options.subtitle ? `<p>${esc(options.subtitle)}</p>` : ""}</header>` : "";
     menu.innerHTML = heading + `<div role="${mobile ? "menu" : "presentation"}" class="cw-card-action-items">` + entries.map((entry, index) => `<button type="button" role="menuitem" data-card-command="${index}"${entry.attrs || ""}${entry.disabled ? " disabled" : ""}${entry.danger ? ' class="is-danger"' : ""}><span class="material-symbols-rounded" aria-hidden="true">${esc(entry.icon || "chevron_right")}</span><span>${esc(entry.label)}</span></button>`).join("") + "</div>";
     let pendingAction = null, closed = false, historyPending = false;

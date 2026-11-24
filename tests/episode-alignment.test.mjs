@@ -6,6 +6,7 @@ import assert from "node:assert/strict";
 import {readFileSync} from "node:fs";
 import vm from "node:vm";
 import {selection} from "../assets/js/editor/episode-alignment.js";
+import './i18n-vm-setup.mjs';
 
 const side = (key, episode, title = "") => ({key, season:6, episode, title});
 const proposal = () => ({metadata:"used", source:{provider:"JELLYFIN", instance:"default"}, target:{provider:"TRAKT", instance:"default"},

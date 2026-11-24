@@ -2,10 +2,13 @@
 /* CrossWatch - Identities tab for media server connections (Plex, Emby, Jellyfin, Silo, Tofa) */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 (function (w, d) {
+  const T = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.t?.(key, vars) ?? key;
+  const TH = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.html?.(key, vars) ?? key;
   if (w.CW?.SyncUsers) return;
 
   const PROVIDERS = new Set(["plex", "emby", "jellyfin", "silo", "tofa"]);
   const USER_PICK = new Set(["plex", "emby", "jellyfin"]);
+  const KIND_LABEL = kind => ["Owner", "Friend", "Home", "Connected", "Account", "Shared", "Child", "Disabled", "Admin"].includes(kind) ? T(`connections.auth.su.kind.${kind}`) : kind;
   const LABELS = { plex: "Plex", emby: "Emby", jellyfin: "Jellyfin", silo: "Silo", tofa: "Tofa" };
   const KIND_CLASS = { Owner: "is-owner", Admin: "is-owner", Connected: "is-owner", Home: "is-home", Child: "is-home", Friend: "is-friend", Shared: "is-friend", Account: "is-friend", Disabled: "is-disabled" };
 
@@ -59,18 +62,18 @@
     const code = txt(err?.message);
     if (code === "sync_user_limit_reached") {
       const max = err?.data?.limit || limit;
-      return `You can add up to ${max} identities per connection. Raise max_sync_users_per_connection in config.json if you need more.`;
+      return T("connections.auth.su.limit", {max});
     }
-    if (code === "not_found") return "This connection instance no longer exists.";
-    if (code === "unsupported_provider") return `${LABELS[provider] || provider} does not support identities.`;
-    if (code === "invalid_pin") return "A profile PIN was not accepted.";
-    if (code === "pin_locked") return "Too many incorrect PINs. Try again later.";
-    if (code === "silo_unavailable") return "Could not reach the Silo server.";
-    if (code === "tofa_unavailable") return "Could not reach the Tofa server.";
-    if (code === "tofa_sync_key_failed") return "Tofa did not create a watch sync key for a shared user.";
-    if (code === "silo_account_session_failed") return "Silo did not open a session for another account. Only Silo admins can add other accounts, and only the owner can add admins.";
-    if (code === "rate_limited") return "The server is busy. Try again in a moment.";
-    return code || "Something went wrong.";
+    if (code === "not_found") return T("connections.su.notFound");
+    if (code === "unsupported_provider") return T("connections.auth.su.unsupported", {name: LABELS[provider] || provider});
+    if (code === "invalid_pin") return T("connections.su.invalidPin");
+    if (code === "pin_locked") return T("connections.su.pinLocked");
+    if (code === "silo_unavailable") return T("connections.su.siloUnavailable");
+    if (code === "tofa_unavailable") return T("connections.su.tofaUnavailable");
+    if (code === "tofa_sync_key_failed") return T("connections.su.tofaKey");
+    if (code === "silo_account_session_failed") return T("connections.su.siloSession");
+    if (code === "rate_limited") return T("connections.su.busy");
+    return code || T("connections.su.wrong");
   }
 
   function rows(state) {
@@ -88,19 +91,19 @@
     const savedPin = state.saved.find((s) => s.key === u.key)?.has_pin;
     const initial = esc((u.username || u.key).charAt(0).toUpperCase());
     const keyLost = state.saved.find((s) => s.key === u.key)?.key_invalid === true;
-    const kindTitle = u.kind === "Account" && u.account ? ` title="Separate Silo account: ${esc(u.account)}"` : "";
-    const tag = u.missing ? `<span class="cw-su-tag is-missing">Not on server</span>` : u.kind ? `<span class="cw-su-tag ${KIND_CLASS[u.kind] || ""}"${kindTitle}>${esc(u.kind)}</span>` : "";
+    const kindTitle = u.kind === "Account" && u.account ? ` title="${TH("connections.auth.su.separate", {name: u.account})}"` : "";
+    const tag = u.missing ? `<span class="cw-su-tag is-missing">${TH("connections.su.notOnServer")}</span>` : u.kind ? `<span class="cw-su-tag ${KIND_CLASS[u.kind] || ""}"${kindTitle}>${esc(KIND_LABEL(u.kind))}</span>` : "";
     const keyTag = keyLost && !u.missing
       ? state.provider === "silo"
-        ? `<span class="cw-su-tag is-missing" title="Save changes to open a new session for this account">Session ended</span>`
-        : `<span class="cw-su-tag is-missing" title="Save changes to create a new watch sync key">Key revoked</span>`
+        ? `<span class="cw-su-tag is-missing" title="${TH("connections.su.sessionTitle")}">${TH("connections.su.sessionEnded")}</span>`
+        : `<span class="cw-su-tag is-missing" title="${TH("connections.su.keyTitle")}">${TH("connections.su.keyRevoked")}</span>`
       : "";
     const pin = (state.provider === "plex" || state.provider === "silo" || state.provider === "tofa") && u.home
-      ? `<input type="password" class="cw-su-pin" inputmode="numeric" maxlength="8" autocomplete="off" data-pin="${esc(u.key)}" placeholder="${savedPin ? "PIN saved" : (state.provider === "silo" || state.provider === "tofa") ? "Profile PIN" : "PIN if needed"}" ${on ? "" : "hidden"} data-lpignore="true" data-1p-ignore="true" data-bwignore="true">`
+      ? `<input type="password" class="cw-su-pin" inputmode="numeric" maxlength="8" autocomplete="off" data-pin="${esc(u.key)}" placeholder="${savedPin ? T("connections.su.pinSaved") : (state.provider === "silo" || state.provider === "tofa") ? T("connections.su.profilePin") : T("connections.su.pinIfNeeded")}" ${on ? "" : "hidden"} data-lpignore="true" data-1p-ignore="true" data-bwignore="true">`
       : "";
     const usedIn = state.saved.find((s) => s.key === u.key)?.used_in || [];
     const usage = state.saved.some((s) => s.key === u.key)
-      ? `<span class="cw-su-usage ${usedIn.length ? "is-used" : ""}" title="${esc(usedIn.join(", "))}">${usedIn.length ? `Linked in ${esc(usedIn.join(", "))}` : "Not linked anywhere yet"}</span>`
+      ? `<span class="cw-su-usage ${usedIn.length ? "is-used" : ""}" title="${esc(usedIn.join(", "))}">${usedIn.length ? TH("connections.auth.su.linkedIn", {where: usedIn.join(", ")}) : TH("connections.auth.su.notLinked")}</span>`
       : "";
     return `
       <label class="cw-wl-row cw-su-row ${on ? "is-on" : ""}" for="${id}" data-row="${esc(u.key)}" data-search="${esc(u.username.toLowerCase())}">
@@ -116,25 +119,25 @@
     const list = rows(state);
     state.root.innerHTML = `
       <div class="cw-wl cw-su">
-        <div class="cw-wl-note"><strong>Optional.</strong> Tick the people of this ${esc(label)} server who can be synced. You link them to people on another media server inside a sync pair, watcher route or webhook.${state.provider === "silo" ? " Silo admins also see the profiles of the other accounts on this server, marked Account." : ""}</div>
-        <div class="cw-wl-note cw-su-warn">Pairs with a tracker always use ${USER_PICK.has(state.provider) ? "the user in Settings" : "the profile in Authentication"}.</div>
-        ${state.loadError ? `<div class="cw-wl-empty">Could not load users from ${esc(label)}: ${esc(state.loadError)}</div>` : ""}
+        <div class="cw-wl-note"><strong>${TH("connections.auth.su.optional")}</strong> ${TH("connections.auth.su.tick", {name: label})}${state.provider === "silo" ? ` ${TH("connections.auth.su.siloAdmins")}` : ""}</div>
+        <div class="cw-wl-note cw-su-warn">${TH(USER_PICK.has(state.provider) ? "connections.auth.su.trackerSettings" : "connections.auth.su.trackerAuth")}</div>
+        ${state.loadError ? `<div class="cw-wl-empty">${TH("connections.auth.su.loadFailed", {name: label, error: state.loadError})}</div>` : ""}
         <div class="cw-su-tools">
-          <span class="cw-su-search"><span class="material-symbols-rounded" aria-hidden="true">search</span><input type="search" data-role="search" placeholder="Search people" autocomplete="off" value="${esc(state.query)}"></span>
+          <span class="cw-su-search"><span class="material-symbols-rounded" aria-hidden="true">search</span><input type="search" data-role="search" placeholder="${TH("connections.su.search")}" autocomplete="off" value="${esc(state.query)}"></span>
           <span class="cw-su-count" data-role="count"></span>
-          <button type="button" class="cw-wl-load" data-act="all"><span class="material-symbols-rounded" aria-hidden="true">done_all</span>Select all</button>
-          <button type="button" class="cw-wl-load" data-act="none"><span class="material-symbols-rounded" aria-hidden="true">remove_done</span>Clear</button>
+          <button type="button" class="cw-wl-load" data-act="all"><span class="material-symbols-rounded" aria-hidden="true">done_all</span>${TH("connections.su.selectAll")}</button>
+          <button type="button" class="cw-wl-load" data-act="none"><span class="material-symbols-rounded" aria-hidden="true">remove_done</span>${TH("connections.su.clear")}</button>
         </div>
         <div class="cw-wl-scroll">
-          <div class="cw-wl-rows">${list.length ? list.map((u, idx) => rowHTML(state, u, idx)).join("") : `<div class="cw-wl-empty">No people found on this server.</div>`}</div>
+          <div class="cw-wl-rows">${list.length ? list.map((u, idx) => rowHTML(state, u, idx)).join("") : `<div class="cw-wl-empty">${TH("connections.su.noPeople")}</div>`}</div>
         </div>
         <div class="cw-wl-foot">
           <div class="cw-wl-note" data-role="status" aria-live="polite"></div>
         </div>
         <details class="cw-su-more">
-          <summary><span class="material-symbols-rounded" aria-hidden="true">person_add</span>Optional: profiles</summary>
-          <p>Not needed for syncing. A profile gives a person their own CrossWatch view with only their data. This creates one for each saved identity that has none yet, using its name.</p>
-          <button type="button" class="cw-wl-load" data-act="profiles"><span class="material-symbols-rounded" aria-hidden="true">person_add</span>Create profiles</button>
+          <summary><span class="material-symbols-rounded" aria-hidden="true">person_add</span>${TH("connections.su.optionalProfiles")}</summary>
+          <p>${TH("connections.su.profilesHelp")}</p>
+          <button type="button" class="cw-wl-load" data-act="profiles"><span class="material-symbols-rounded" aria-hidden="true">person_add</span>${TH("connections.su.createProfiles")}</button>
         </details>
       </div>`;
     state.root.querySelectorAll("input[data-pin]").forEach((box) => { box.value = state.pins.get(box.dataset.pin) || ""; });
@@ -151,11 +154,11 @@
 
   function refresh(state) {
     const count = state.root.querySelector('[data-role="count"]');
-    if (count) count.textContent = `${state.selected.size} of ${state.limit} identities`;
+    if (count) count.textContent = T("connections.auth.su.count", {selected: state.selected.size, limit: state.limit});
     const make = state.root.querySelector('[data-act="profiles"]');
     if (make) {
       make.disabled = state.busy || dirty(state) || !state.saved.length;
-      make.title = dirty(state) ? "Save changes first" : !state.saved.length ? "Tick and save identities first" : "Create a profile for each identity that has none yet";
+      make.title = dirty(state) ? T("connections.su.saveFirst") : !state.saved.length ? T("connections.su.tickFirst") : T("connections.su.createEach");
     }
     state.root.querySelectorAll(".cw-su-row[data-row]").forEach((row) => {
       const on = state.selected.has(row.dataset.row);
@@ -166,11 +169,11 @@
     if (state.message) return setStatus(state, state.message, state.messageOk);
     const removed = state.saved.filter((s) => !state.selected.has(s.key));
     if (removed.length) {
-      const who = removed.length === 1 ? removed[0].username : `${removed.length} people`;
+      const who = removed.length === 1 ? removed[0].username : T("connections.auth.su.people", {count: removed.length});
       const where = [...new Set(removed.flatMap((r) => r.used_in || []))];
-      setStatus(state, `${who} will stop syncing when you save.${where.length ? ` This breaks their links in ${where.join(", ")}.` : ""} If added again later, CrossWatch starts fresh for them.`, false);
+      setStatus(state, `${T("connections.auth.su.willStop", {who})}${where.length ? ` ${T("connections.auth.su.breaks", {where: where.join(", ")})}` : ""} ${T("connections.auth.su.fresh")}`, false);
     } else {
-      setStatus(state, dirty(state) ? "Unsaved changes. Click Save changes to apply." : "", true);
+      setStatus(state, dirty(state) ? T("connections.su.unsaved") : "", true);
     }
   }
 
@@ -206,7 +209,7 @@
       state.selected = new Set(state.saved.map((s) => s.key));
       state.limit = res.limit || state.limit;
       state.pins.clear();
-      state.message = state.saved.length ? `Saved. ${state.saved.length} ${state.saved.length === 1 ? "identity" : "identities"} available. Link them in a sync pair, watcher route or webhook.` : "Saved. No identities selected.";
+      state.message = state.saved.length ? T("connections.auth.su.saved", {count: state.saved.length}) : T("connections.auth.su.savedNone");
       state.messageOk = true;
       render(state);
       state.message = "";
@@ -225,10 +228,10 @@
       if (!current()) return;
       const created = res.created | 0, linked = res.linked | 0, skipped = res.skipped | 0;
       const done = created || linked
-        ? `Created ${created} profile${created === 1 ? "" : "s"} and added ${linked} ${linked === 1 ? "identity" : "identities"} to them.`
-        : "Every identity already has a profile.";
+        ? T("connections.auth.su.created", {created: T("connections.auth.su.profiles", {count: created}), linked: T("connections.auth.su.identities", {count: linked})})
+        : T("connections.su.everyHas");
       state.message = skipped
-        ? `${done} Skipped ${skipped}: name longer than 40 characters, or the same name used by more than one identity on this server.`
+        ? `${done} ${T("connections.auth.su.skipped", {n: skipped})}`
         : done;
       state.messageOk = true;
     } catch (err) {
@@ -254,7 +257,7 @@
           state.message = text;
           state.messageOk = false;
           const visible = root.__cwSyncUsersState;
-          if (visible && visible !== state) setStatus(visible, `Identities for connection instance "${connectionName(state.instance)}" were not saved: ${text}`, false);
+          if (visible && visible !== state) setStatus(visible, T("connections.auth.su.notSaved", {name: connectionName(state.instance), error: text}), false);
           throw err;
         }
         pending.delete(pendingKey(state.provider, state.instance));
@@ -263,7 +266,7 @@
   }
 
   function connectionName(instance) {
-    return instance === "default" ? "Default" : instance;
+    return instance === "default" ? T("connections.auth.default") : instance;
   }
 
   function discardPending() {
@@ -325,7 +328,7 @@
     const state = { root, provider: p, instance: inst(instance), server: [], saved: [], selected: new Set(), pins: new Map(), limit: 25, loadError: "", query: "", message: "", messageOk: true, ready: false, busy: false };
     root.__cwSyncUsersState = state;
     wire(root);
-    root.innerHTML = `<div class="cw-wl cw-su"><div class="cw-wl-empty">Loading people…</div></div>`;
+    root.innerHTML = `<div class="cw-wl cw-su"><div class="cw-wl-empty">${TH("connections.su.loading")}</div></div>`;
     const [serverRes, savedRes] = await Promise.allSettled([
       getJSON(serverUsersUrl(p, state.instance)),
       getJSON(syncUsersUrl(p, state.instance)),

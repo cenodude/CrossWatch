@@ -3,6 +3,8 @@
 (function () {
   const NS = (window.CW ||= {});
   const Editor = (NS.Editor ||= {});
+  const T = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.t?.(key, vars) ?? key;
+  const TH = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.html?.(key, vars) ?? key;
 
   function escFactory(ctx) {
     if (typeof ctx?.escapeHtml === "function") return ctx.escapeHtml;
@@ -33,7 +35,7 @@
     if (typeof PM?.logoHtml === "function") return PM.logoHtml(p, "cw-editor-send-logo");
     const src = PM?.logoPath?.(p) || "";
     return src
-      ? `<img class="cw-editor-send-logo" src="${esc(src)}" alt="${esc(p)} logo" width="36" height="36" loading="lazy">`
+      ? `<img class="cw-editor-send-logo" src="${esc(src)}" alt="${TH("editor.sendModal.logo", {name: p})}" width="36" height="36" loading="lazy">`
       : `<span class="material-symbols-rounded" aria-hidden="true">hub</span>`;
   }
 
@@ -46,7 +48,7 @@
 
   function sendKindLabel(kind) {
     const k = String(kind || "").toLowerCase();
-    return ({ watchlist: "Watchlist", history: "History", ratings: "Ratings", progress: "Progress", collection: "Collections" }[k] || (k ? k[0].toUpperCase() + k.slice(1) : "Data"));
+    return (["watchlist", "history", "ratings", "progress", "collection"].includes(k) ? T(`editor.sendModal.kind.${k}`) : (k ? k[0].toUpperCase() + k.slice(1) : T("editor.sendModal.kind.data")));
   }
 
   function sendKindIcon(kind) {
@@ -56,7 +58,7 @@
 
   function formatSendResult(data, esc) {
     const removing = data?.operation === "remove";
-    const verb = removing ? "removed" : "sent";
+    const verb = T(removing ? "editor.sendModal.removed" : "editor.sendModal.sent");
     const confirmed = Number(data?.confirmed || 0);
     const attempted = Number(data?.attempted || data?.sent || 0);
     const skipped = Number(data?.skipped || 0);
@@ -72,50 +74,50 @@
       const name = providerDisplayName(r || {});
       const parts = [
         `${Number(result.confirmed || result.count || 0)} ${verb}`,
-        Number(result.skipped || 0) ? `${Number(result.skipped || 0)} skipped` : "",
-        Number(result.unresolved || 0) ? `${Number(result.unresolved || 0)} unresolved` : "",
-        Number(result.errors || 0) ? `${Number(result.errors || 0)} errors` : "",
-        removing && Number(result.still_watched || 0) ? `${Number(result.still_watched)} still watched (other watches remain)` : "",
-        r?.error === "unsupported_rating" ? "This provider does not support one or more selected scores" : r?.error ? String(r.error) : "",
+        Number(result.skipped || 0) ? T("editor.sendModal.nSkipped", {n: Number(result.skipped || 0)}) : "",
+        Number(result.unresolved || 0) ? T("editor.sendModal.nUnresolved", {n: Number(result.unresolved || 0)}) : "",
+        Number(result.errors || 0) ? T("editor.sendModal.nErrors", {n: Number(result.errors || 0)}) : "",
+        removing && Number(result.still_watched || 0) ? T("editor.sendModal.stillWatched", {n: Number(result.still_watched)}) : "",
+        r?.error === "unsupported_rating" ? T("editor.sendModal.unsupportedScores") : r?.error ? String(r.error) : "",
       ].filter(Boolean).join(" - ");
       return `<div class="cw-editor-send-result-row ${r?.ok ? "ok" : "bad"}" style="${providerToneStyle(r, esc)}">
         <span class="cw-editor-send-result-icon">${providerLogoHtml(r, esc)}</span>
         <strong>${esc(name)}</strong>
-        <small>${esc(parts || (r?.ok ? "Done" : "Failed"))}</small>
-        ${(r.rejected || []).map(item => `<small>${esc(item.title || "Untitled")}: ${esc(item.rating)}/10 is not supported; not sent</small>`).join("")}
-        ${(result.cloud_results || []).map(row => `<small>${esc(row.title || row.key)}: ${esc(({dated:"Plex cloud: original date restored",present:"Plex cloud: already watched, unchanged",cached:"Plex cloud: previously confirmed",plex_discover_date_pending:"Plex cloud: date repair pending"})[row.outcome] || row.reason || row.outcome)}</small>`).join("")}
+        <small>${esc(parts || (r?.ok ? T("editor.sendModal.done") : T("editor.sendModal.failedShort")))}</small>
+        ${(r.rejected || []).map(item => `<small>${esc(item.title || T("editor.table.untitled"))}: ${TH("editor.sendModal.ratingUnsupported", {rating: String(item.rating)})}</small>`).join("")}
+        ${(result.cloud_results || []).map(row => `<small>${esc(row.title || row.key)}: ${esc(["dated", "present", "cached", "plex_discover_date_pending"].includes(row.outcome) ? T(`editor.sendModal.cloud.${row.outcome}`) : row.reason || row.outcome)}</small>`).join("")}
       </div>`;
     }).join("");
     return `<div class="cw-editor-send-progress ${ok ? "done" : "error"}">
       <div class="cw-editor-send-progress-head">
         <div>
-          <strong>${removing ? (ok ? "Removal complete" : "Removal finished with issues") : (ok ? "Send complete" : "Send finished with issues")}</strong>
-          <span>${esc(providers.length ? `${providers.length} provider target${providers.length === 1 ? "" : "s"} processed` : "Provider send processed")}</span>
+          <strong>${removing ? (ok ? T("editor.sendModal.removalComplete") : T("editor.sendModal.removalIssues")) : (ok ? T("editor.sendModal.sendComplete") : T("editor.sendModal.sendIssues"))}</strong>
+          <span>${esc(providers.length ? T("editor.sendModal.processed", {count: providers.length}) : T("editor.sendModal.processedOne"))}</span>
         </div>
         <span class="material-symbols-rounded" aria-hidden="true">${ok ? "check_circle" : "error"}</span>
       </div>
       <div class="cw-editor-send-progress-bar" aria-hidden="true"><span style="width:${pct}%"></span></div>
       <div class="cw-editor-send-progress-grid">
         <div><span>${verb}</span><b>${confirmed}</b></div>
-        <div><span>attempted</span><b>${attempted}</b></div>
-        <div><span>skipped</span><b>${skipped}</b></div>
-        <div><span>unresolved</span><b>${unresolved}</b></div>
-        <div><span>errors</span><b>${errors}</b></div>
-        ${invalid ? `<div><span>invalid</span><b>${invalid}</b></div>` : ""}
+        <div><span>${TH("editor.sendModal.attempted")}</span><b>${attempted}</b></div>
+        <div><span>${TH("editor.sendModal.skipped")}</span><b>${skipped}</b></div>
+        <div><span>${TH("editor.sendModal.unresolved")}</span><b>${unresolved}</b></div>
+        <div><span>${TH("editor.sendModal.errors")}</span><b>${errors}</b></div>
+        ${invalid ? `<div><span>${TH("editor.sendModal.invalid")}</span><b>${invalid}</b></div>` : ""}
       </div>
       ${rows ? `<div class="cw-editor-send-result-list">${rows}</div>` : ""}
     </div>`;
   }
 
   function formatSendRunning(targetCount, operation = "add") {
-    if (operation === "remove") return '<div class="cw-editor-send-progress active"><strong>Removing selected records</strong><p>Checking the selected provider instances and verifying removals…</p><div class="cw-editor-send-progress-bar"><span style="width:24%"></span></div></div>';
+    if (operation === "remove") return '<div class="cw-editor-send-progress active"><strong>' + TH("editor.sendModal.removingRecords") + '</strong><p>' + TH("editor.sendModal.checking") + '</p><div class="cw-editor-send-progress-bar"><span style="width:24%"></span></div></div>';
     return `<div class="cw-editor-send-progress active">
       <div class="cw-editor-send-progress-head">
-        <div><strong>Sending selected rows</strong><span>${Number(targetCount || 0)} provider target${Number(targetCount || 0) === 1 ? "" : "s"} queued</span></div>
+        <div><strong>${TH("editor.sendModal.sendingRows")}</strong><span>${TH("editor.sendModal.queued", {count: Number(targetCount || 0)})}</span></div>
         <span class="material-symbols-rounded" aria-hidden="true">sync</span>
       </div>
       <div class="cw-editor-send-progress-bar" aria-hidden="true"><span style="width:24%"></span></div>
-      <div class="cw-editor-send-progress-message">Sending selected rows to the chosen provider instance${Number(targetCount || 0) === 1 ? "" : "s"}...</div>
+      <div class="cw-editor-send-progress-message">${TH("editor.sendModal.sendingTo", {count: Number(targetCount || 0)})}</div>
     </div>`;
   }
 
@@ -156,7 +158,7 @@
     let operation = rows.length ? "add" : "remove";
     if (!rows.length) rows = removableRows;
     if (!rows.length) {
-      notify("Select at least one active row to send");
+      notify(T("editor.sendModal.selectActive"));
       return;
     }
     const kind = String(state.kind || "watchlist").toLowerCase();
@@ -193,49 +195,49 @@
     const kindIcon = sendKindIcon(kind);
     shell.innerHTML = `
       <div class="modal-backdrop"></div>
-      <div id="cx-modal" class="cx-card cw-editor-send-card" role="dialog" aria-modal="true" aria-label="Send selected rows">
+      <div id="cx-modal" class="cx-card cw-editor-send-card" role="dialog" aria-modal="true" aria-label="${TH("editor.sendModal.sendRows")}">
         <div class="cx-head">
           <div class="cw-editor-send-head-left">
             <div class="cw-editor-send-head-icon"><span class="material-symbols-rounded" aria-hidden="true">send</span></div>
             <div>
-              <div class="cw-editor-send-title">Send selected rows</div>
-              <div class="cw-editor-send-sub">${rows.length} selected ${esc(kindLabel)} row${rows.length === 1 ? "" : "s"}</div>
+              <div class="cw-editor-send-title">${TH("editor.sendModal.sendRows")}</div>
+              <div class="cw-editor-send-sub">${TH("editor.sendModal.selectedRows", {count: rows.length, kind: kindLabel})}</div>
             </div>
           </div>
-          <button type="button" class="cx-btn cw-editor-send-close" data-send-close aria-label="Close"><span class="material-symbols-rounded" aria-hidden="true">close</span></button>
+          <button type="button" class="cx-btn cw-editor-send-close" data-send-close aria-label="${TH("editor.raw.close")}"><span class="material-symbols-rounded" aria-hidden="true">close</span></button>
         </div>
         <div class="body">
-          <div class="cw-editor-send-operation" role="group" aria-label="Provider operation">
-            <button type="button" class="cx-btn" data-operation="add">Add to…</button>
-            <button type="button" class="cx-btn" data-operation="remove">Remove from…</button>
+          <div class="cw-editor-send-operation" role="group" aria-label="${TH("editor.sendModal.operation")}">
+            <button type="button" class="cx-btn" data-operation="add">${TH("editor.sendModal.addTo")}</button>
+            <button type="button" class="cx-btn" data-operation="remove">${TH("editor.sendModal.removeFrom")}</button>
           </div>
           <section class="cw-editor-send-section cw-editor-send-target-card">
             <div class="cw-editor-send-list">
-              <div class="cw-editor-send-empty">Loading providers...</div>
+              <div class="cw-editor-send-empty">${TH("editor.sendModal.loading")}</div>
             </div>
           </section>
           <section class="cw-editor-send-section cw-editor-send-data-card">
             <div class="cw-editor-send-section-head compact">
               <span class="material-symbols-rounded" aria-hidden="true">${esc(kindIcon)}</span>
               <div>
-                <h3>Data to send</h3>
-                <p>${rows.length} selected ${esc(kindLabel)} row${rows.length === 1 ? "" : "s"} will be sent to selected provider profiles.</p>
+                <h3>${TH("editor.sendModal.dataToSend")}</h3>
+                <p>${TH("editor.sendModal.willSend", {count: rows.length, kind: kindLabel})}</p>
               </div>
             </div>
             <div class="cw-editor-send-data-grid">
-              <div><span>feature</span><b>${esc(kindLabel)}</b></div>
-              <div><span>rows</span><b>${rows.length}</b></div>
-              <div><span>mode</span><b>Selective send</b></div>
+              <div><span>${TH("editor.sendModal.feature")}</span><b>${esc(kindLabel)}</b></div>
+              <div><span>${TH("editor.sendModal.rows")}</span><b>${rows.length}</b></div>
+              <div><span>${TH("editor.sendModal.mode")}</span><b>${TH("editor.sendModal.selective")}</b></div>
             </div>
           </section>
-          ${kind === "history" ? `<section data-discover-option hidden><label><input type="checkbox" data-discover-fallback> Plex Discover watched-state fallback</label><p>For this send only. Items missing from Plex may be marked watched in the connected account with their original watch date. Existing cloud plays remain unchanged. Managed or switched Home users are not supported. Uncertain writes may require manual review.</p></section>` : ""}
+          ${kind === "history" ? `<section data-discover-option hidden><label><input type="checkbox" data-discover-fallback> ${TH("editor.sendModal.discover")}</label><p>${TH("editor.sendModal.discoverHelp")}</p></section>` : ""}
           <section class="cw-editor-send-run-card">
             <div class="cw-editor-send-warning">
               <span class="material-symbols-rounded" aria-hidden="true">warning</span>
-              <div>This sends selected ${esc(kindLabel)} rows to the selected provider profile(s).</div>
+              <div>${TH("editor.sendModal.warning", {kind: kindLabel})}</div>
             </div>
             <div class="cw-editor-send-run-actions">
-              <button type="button" class="cx-btn primary" data-send-submit disabled><span class="material-symbols-rounded" aria-hidden="true">send</span><span>Send selected data</span></button>
+              <button type="button" class="cx-btn primary" data-send-submit disabled><span class="material-symbols-rounded" aria-hidden="true">send</span><span>${TH("editor.sendModal.sendData")}</span></button>
             </div>
             <div class="cw-editor-send-status" data-send-status aria-live="polite"></div>
           </section>
@@ -270,27 +272,27 @@
       clearTimeout(confirmTimer);
       submit.classList.remove("is-confirming");
       submit.innerHTML = operation === "remove"
-        ? '<span class="material-symbols-rounded">delete</span><span>Remove selected data</span>'
-        : '<span class="material-symbols-rounded">send</span><span>Send selected data</span>';
+        ? '<span class="material-symbols-rounded">delete</span><span>' + TH("editor.sendModal.removeData") + '</span>'
+        : '<span class="material-symbols-rounded">send</span><span>' + TH("editor.sendModal.sendData") + '</span>';
     };
     const updateMode = () => {
       const removing = operation === "remove";
       shell.classList.toggle("is-removing", removing);
-      shell.querySelector(".cw-editor-send-title").textContent = removing ? "Remove selected records" : "Send selected rows";
+      shell.querySelector(".cw-editor-send-title").textContent = removing ? T("editor.sendModal.removeRecords") : T("editor.sendModal.sendRows");
       shell.querySelector(".cw-editor-send-head-icon .material-symbols-rounded").textContent = removing ? "delete" : "send";
-      shell.querySelector('[role="dialog"]').setAttribute("aria-label", removing ? "Remove selected records" : "Send selected rows");
-      shell.querySelector(".cw-editor-send-sub").textContent = `${rows.length} selected ${kindLabel} rows`;
-      shell.querySelector(".cw-editor-send-data-card h3").textContent = removing ? "Data to remove" : "Data to send";
+      shell.querySelector('[role="dialog"]').setAttribute("aria-label", removing ? T("editor.sendModal.removeRecords") : T("editor.sendModal.sendRows"));
+      shell.querySelector(".cw-editor-send-sub").textContent = T("editor.sendModal.selectedRows", {count: rows.length, kind: kindLabel});
+      shell.querySelector(".cw-editor-send-data-card h3").textContent = removing ? T("editor.sendModal.dataToRemove") : T("editor.sendModal.dataToSend");
       shell.querySelector(".cw-editor-send-data-card p").textContent = removing
-        ? "Only matching records from your CrossWatch sync pairs are available. Each instance shows its matching selection."
-        : `${rows.length} selected ${kindLabel} row${rows.length === 1 ? "" : "s"} will be sent to selected provider profiles.`;
+        ? T("editor.sendModal.onlyMatching")
+        : T("editor.sendModal.willSend", {count: rows.length, kind: kindLabel});
       const summary = shell.querySelectorAll(".cw-editor-send-data-grid b");
       summary[1].textContent = String(rows.length);
-      summary[2].textContent = removing ? "Selective removal" : "Selective send";
+      summary[2].textContent = removing ? T("editor.sendModal.selectiveRemoval") : T("editor.sendModal.selectiveSend");
       shell.querySelector(".cw-editor-send-warning div").textContent = removing
         ? (kind === "history"
-          ? "Removes history using each provider’s sync removal behavior. Selecting a whole title removes that movie or episode; FLOPPY removes its latest watch. Selecting single watches removes only those watches, and only on profiles that keep separate watches; other profiles are skipped for them. Other sync sources or saved additions can restore removed records."
-          : "Removes the selected records from the chosen profiles. Other sync sources or saved additions can restore them. Mappings and blocks stay in place.")
+          ? T("editor.sendModal.removeHistory")
+          : T("editor.sendModal.removeOther"))
         : baseWarning;
       shell.querySelectorAll("[data-operation]").forEach(button => {
         button.classList.toggle("active", button.dataset.operation === operation);
@@ -338,18 +340,18 @@
       list.innerHTML = providers.length ? providers.map(p => {
         const key = providerKey(p);
         const unsupported = unsupportedRatings(p).length;
-        const ratingNote = unsupported ? `${rows.length - unsupported} supported; ${unsupported} unsupported score${unsupported === 1 ? "" : "s"} will not be sent` : "";
+        const ratingNote = unsupported ? T("editor.sendModal.ratingNote", {supported: rows.length - unsupported, count: unsupported}) : "";
         const providerClass = `provider-${String(p.provider || "").toLowerCase().replace(/[^a-z0-9_-]+/g, "")}`;
         return `<button type="button" class="cw-editor-send-provider ${providerClass} ${selected.has(key) ? "active" : ""}" data-provider-key="${esc(key)}" aria-pressed="${selected.has(key) ? "true" : "false"}" style="${providerToneStyle(p, esc)}">
           <span class="cw-editor-send-provider-icon">${providerLogoHtml(p, esc)}</span>
-          <span><strong>${esc(providerDisplayName(p))}</strong>${ratingNote ? `<small>${esc(ratingNote)}</small>` : ""}<small>${esc(p.instance_label || String(p.instance || "default"))}${operation === "remove" ? ` · ${p.matched} of ${rows.length} selected` : ""}${ctx.sendNotes?.[key] ? ` · ${esc(ctx.sendNotes[key])}` : ""}</small></span>
+          <span><strong>${esc(providerDisplayName(p))}</strong>${ratingNote ? `<small>${esc(ratingNote)}</small>` : ""}<small>${esc(p.instance_label || String(p.instance || "default"))}${operation === "remove" ? ` · ${TH("editor.sendModal.matched", {matched: p.matched, total: rows.length})}` : ""}${ctx.sendNotes?.[key] ? ` · ${esc(ctx.sendNotes[key])}` : ""}</small></span>
           <span class="cw-editor-send-check"><span class="material-symbols-rounded" aria-hidden="true">check</span></span>
         </button>`;
       }).join("") : `<div class="cw-editor-send-empty">${operation === "remove"
         ? (removalEmptyReason === "pair_baseline_unavailable"
-          ? "CrossWatch has no saved baseline for one or more current sync pairs. Existing records may still be present on your providers. Run those pairs to establish their sync baselines, then reopen this dialog."
-          : "No provider instances have matching synced records with removal support.")
-        : `No other configured provider supports ${esc(kind)} sends.`}</div>`;
+          ? T("editor.sendModal.noBaseline")
+          : T("editor.sendModal.noRemoval"))
+        : TH("editor.sendModal.noOther", {kind})}</div>`;
       syncButtons();
     };
 
@@ -388,7 +390,7 @@
         confirmUntil = Date.now() + 6000;
         submit.classList.add("is-confirming");
         const count = providers.filter(p => selected.has(providerKey(p))).reduce((sum, p) => sum + p.count, 0);
-        submit.innerHTML = `<span class="material-symbols-rounded">warning</span><span>Confirm removal of ${count} record${count === 1 ? "" : "s"}</span>`;
+        submit.innerHTML = `<span class="material-symbols-rounded">warning</span><span>${TH("editor.sendModal.confirmRemoval", {count})}</span>`;
         confirmTimer = setTimeout(resetConfirm, 6000);
         return;
       }
@@ -421,9 +423,9 @@
         const confirmed = Number(data.confirmed || 0);
         const unresolved = Number(data.unresolved || 0);
         const skipped = Number(data.skipped || 0);
-        const parts = [`${confirmed} ${operation === "remove" ? "removed" : "sent"}`];
-        if (skipped) parts.push(`${skipped} skipped`);
-        if (unresolved) parts.push(`${unresolved} unresolved`);
+        const parts = [`${confirmed} ${T(operation === "remove" ? "editor.sendModal.removed" : "editor.sendModal.sent")}`];
+        if (skipped) parts.push(T("editor.sendModal.nSkipped", {n: skipped}));
+        if (unresolved) parts.push(T("editor.sendModal.nUnresolved", {n: unresolved}));
         ctx.setStatusSticky(parts.join(", "), 5000);
         window.dispatchEvent(new CustomEvent("cw:editor-send-complete", { detail: data }));
         if (data.ok !== false) ctx.clearSelection();
@@ -440,11 +442,11 @@
         if (status) {
           status.innerHTML = `<div class="cw-editor-send-progress error">
           <div class="cw-editor-send-progress-head">
-            <div><strong>${operation === "remove" ? "Removal failed" : "Send failed"}</strong><span>${esc(String(err?.message || "Could not process selected rows"))}</span></div>
+            <div><strong>${operation === "remove" ? T("editor.sendModal.removalFailed") : T("editor.sendModal.sendFailed")}</strong><span>${esc(String(err?.message || T("editor.sendModal.processFailed")))}</span></div>
             <span class="material-symbols-rounded" aria-hidden="true">error</span>
           </div>
           <div class="cw-editor-send-progress-bar" aria-hidden="true"><span style="width:100%"></span></div>
-          <div class="cw-editor-send-progress-message">${esc(String(err?.message || "Send failed"))}</div>
+          <div class="cw-editor-send-progress-message">${esc(String(err?.message || T("editor.sendModal.sendFailed")))}</div>
         </div>`;
           scrollSendStatusIntoView();
         }
@@ -475,7 +477,7 @@
       const revision = ++generation;
       loading = true;
       providers = [];
-      list.innerHTML = '<div class="cw-editor-send-empty">Loading providers...</div>';
+      list.innerHTML = '<div class="cw-editor-send-empty">' + TH("editor.sendModal.loading") + '</div>';
       if (!preserveStatus) status.innerHTML = "";
       syncButtons();
       try {
@@ -505,12 +507,12 @@
         if (operation === "add" && !selected.size && providers.length === 1) selected.add(providerKey(providers[0]));
         if (status && !preserveStatus && operation === "add") status.innerHTML = providers.length
           ? ""
-          : `<div class="cw-editor-send-status-line">No other configured target provider is available for this view.</div>`;
+          : `<div class="cw-editor-send-status-line">${TH("editor.sendModal.noTarget")}</div>`;
         renderProviderList();
       } catch (err) {
         if (revision !== generation || !shell.isConnected) return;
-        const msg = String(err?.message || "Could not load providers");
-        if (list) list.innerHTML = `<div class="cw-editor-send-empty">Could not load providers.</div>`;
+        const msg = String(err?.message || T("editor.sendModal.loadFailed"));
+        if (list) list.innerHTML = `<div class="cw-editor-send-empty">${TH("editor.sendModal.loadFailedDot")}</div>`;
         if (status) status.innerHTML = `<div class="cw-editor-send-status-line err">${esc(msg)}</div>`;
         if (submit) submit.disabled = true;
       } finally {

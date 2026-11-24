@@ -11,8 +11,10 @@ import { connectionLabel, findingConnections, layoutGraph, mergeGraphs, nodeName
 import { currentTopology } from "../assets/js/topology/state.js";
 import { graphViewBox } from "../assets/js/topology/viewport.js";
 import { baselineMatches, clearBaselines, loadBaseline, savedBaseline, saveBaseline, topologySnapshot } from "../assets/js/topology/baseline.js";
+import './i18n-vm-setup.mjs';
+import { englishI18n, withI18n } from "./i18n-test-helper.mjs";
 
-globalThis.window = {};
+globalThis.window = { __cwI18n: englishI18n() };
 await import("../assets/helpers/feature-meta.js");
 const order = window.CW.FeatureMeta.order;
 const providers = ["A", "B", "C", "D", "E", "PLEX", "TRAKT", "MDBLIST", "SIMKL", "STREMIO"].map(name => ({ name,
@@ -346,7 +348,7 @@ test("configured source ordering also applies to a single two-way pair", () => {
 
 test("friendly instance names are shared by graph labels and configured pair routes", () => {
   const config = { plex: { label: "Home", instances: { "plex-p01": { label: "Family & friends" } } }, tmdb_sync: { label: "Movies" } };
-  const context = { window: { _cfgCache: config } };
+  const context = withI18n({ window: { _cfgCache: config } });
   runInNewContext(readFileSync(new URL("../assets/helpers/provider-meta.js", import.meta.url), "utf8"), context);
   const meta = context.window.CW.ProviderMeta;
   assert.equal(meta.instanceLabel("Plex", "plex-p01"), "Family & friends");

@@ -3,6 +3,8 @@
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 
 (() => {
+  const T = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.t?.(key, vars) ?? key;
+  const TH = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.html?.(key, vars) ?? key;
   const helpSelector = ".cx-help[data-tip], .cw-meta-provider-help[title]";
   let popup, source, forwarding = false;
 
@@ -23,7 +25,7 @@
       popup.className = "cw-page-help";
       popup.setAttribute("popover", "auto");
       popup.setAttribute("role", "dialog");
-      popup.setAttribute("aria-label", "Information");
+      popup.setAttribute("aria-label", T("common.touchHelp.information"));
       popup.addEventListener("toggle", event => {
         if (event.newState === "closed" && !popup.matches(":popover-open")) close();
       });
@@ -34,7 +36,7 @@
     const dismiss = document.createElement("button");
     dismiss.type = "button";
     dismiss.className = "cw-page-btn";
-    dismiss.textContent = "Close";
+    dismiss.textContent = T("common.touchHelp.close");
     dismiss.addEventListener("click", () => {
       const previous = source;
       close();
@@ -45,7 +47,7 @@
       const action = document.createElement("button");
       action.type = "button";
       action.className = "cw-page-btn";
-      action.textContent = target.dataset.navLabel || "Open settings";
+      action.textContent = target.dataset.navLabel || T("common.touchHelp.openSettings");
       action.addEventListener("click", () => {
         close();
         forwarding = true;

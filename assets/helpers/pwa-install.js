@@ -2,6 +2,8 @@
 /* CrossWatch - Shared app installation for Main and My Media Hub */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 (function () {
+  const T = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.t?.(key, vars) ?? key;
+  const TH = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.html?.(key, vars) ?? key;
   const D = document;
   let _cwInstallPrompt = null;
   let _cwAppInstalled = false;
@@ -70,7 +72,7 @@
     const action = D.createElement("div");
     action.id = "cw-mobile-install";
     action.className = "cw-mobile-extra-destinations";
-    action.innerHTML = '<button type="button" class="tab"><span class="material-symbols-rounded cw-mobile-destination-icon" aria-hidden="true">install_mobile</span><span>Install CrossWatch</span></button>';
+    action.innerHTML = '<button type="button" class="tab"><span class="material-symbols-rounded cw-mobile-destination-icon" aria-hidden="true">install_mobile</span><span>' + TH("common.pwa.install") + '</span></button>';
     action.querySelector("button").addEventListener("click", _cwRequestInstall);
     menu.appendChild(action);
   }
@@ -147,19 +149,19 @@
     wrap.hidden = true;
     wrap.setAttribute("aria-live", "polite");
     wrap.innerHTML = `
-      <div class="cw-install-card" role="dialog" aria-label="Install CrossWatch">
+      <div class="cw-install-card" role="dialog" aria-label="${TH("common.pwa.install")}">
         <div class="cw-install-top">
           <div class="cw-install-icon" aria-hidden="true">CW</div>
           <div class="cw-install-copy">
-            <div class="cw-install-title" id="cw-install-title">Install CrossWatch</div>
-            <div class="cw-install-text" id="cw-install-text">Add CrossWatch to your Home Screen.</div>
+            <div class="cw-install-title" id="cw-install-title">${TH("common.pwa.install")}</div>
+            <div class="cw-install-text" id="cw-install-text">${TH("common.pwa.addHome")}</div>
             <div class="cw-install-hint hidden" id="cw-install-hint"></div>
           </div>
-          <button type="button" class="cw-install-close" id="cw-install-close" aria-label="Dismiss">×</button>
+          <button type="button" class="cw-install-close" id="cw-install-close" aria-label="${TH("common.pwa.dismiss")}">×</button>
         </div>
         <div class="cw-install-actions">
-          <button type="button" class="cw-install-btn primary" id="cw-install-primary">Install</button>
-          <button type="button" class="cw-install-btn" id="cw-install-secondary">Not now</button>
+          <button type="button" class="cw-install-btn primary" id="cw-install-primary">${TH("common.pwa.installBtn")}</button>
+          <button type="button" class="cw-install-btn" id="cw-install-secondary">${TH("common.pwa.notNow")}</button>
         </div>
       </div>
     `;
@@ -216,14 +218,14 @@
     };
 
     if (primaryBtn) {
-      primaryBtn.textContent = "Got it";
+      primaryBtn.textContent = T("common.pwa.gotIt");
       primaryBtn.onclick = dismiss;
     }
 
-    if (secondaryBtn) secondaryBtn.textContent = "Not now";
+    if (secondaryBtn) secondaryBtn.textContent = T("common.pwa.notNow");
 
-    setCopy("Install CrossWatch", "Add it to your Home Screen for the best experience.");
-    setHint("Tap Share (⬆︎) → “Add to Home Screen”.");
+    setCopy(T("common.pwa.install"), T("common.pwa.best"));
+    setHint(T("common.pwa.tapShare"));
 
     wrap.hidden = false;
     requestAnimationFrame(() => { if (!wrap.hidden) wrap.classList.add("show"); });

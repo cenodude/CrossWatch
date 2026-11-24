@@ -2,6 +2,8 @@
 /* CrossWatch managed user profile page */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude */
 (function () {
+  const T = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.t?.(key, vars) ?? key;
+  const TH = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.html?.(key, vars) ?? key;
   const accountPage = document.documentElement.dataset.cwPage === "profile";
   const $ = (sel, root = document) => root.querySelector(sel);
   const esc = (value) => String(value ?? "").replace(/[&<>"]/g, (m) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;" }[m]));
@@ -116,7 +118,7 @@
     entry.pending = Math.max(0, entry.pending - 1);
     const meta = data?._view;
     entry.refreshing = !failed && (!!meta?.refreshing || !!data?.loading?.length);
-    entry.errors = failed || meta?.error ? [{message:"Couldn’t refresh · showing saved data"}] : data?.errors || [];
+    entry.errors = failed || meta?.error ? [{message:T("profile.refresh.savedData")}] : data?.errors || [];
     const checked = Number(data?.checked_at || meta?.checked_at || meta?.updated_at);
     if (checked > 0) entry.checked = checked * 1000;
     else if (!entry.errors.length && !entry.refreshing && meta?.ready !== false && !Object.hasOwn(data || {}, "checked_at")) {
@@ -164,21 +166,21 @@
     const freshness = $("#profile-hub-freshness");
     const minutes = checked ? Math.floor(Math.max(0, Date.now() - checked) / 60000) : 0;
     const age = minutes < 1 ? "just now" : minutes < 60 ? `${minutes} min ago` : minutes < 1440 ? `${Math.floor(minutes / 60)}h ago` : `${Math.floor(minutes / 1440)}d ago`;
-    freshness.textContent = checked ? `Last checked ${age}` : busy ? "Checking for updates" : "Not checked yet";
-    freshness.title = checked ? `${tab === "playback" ? "Providers last checked" : "Saved data last checked"}: ${new Date(checked).toLocaleString()}` : "";
+    freshness.textContent = checked ? T("profile.refresh.lastChecked", { age }) : busy ? T("profile.refresh.checking") : T("profile.hero.notChecked");
+    freshness.title = checked ? T(tab === "playback" ? "profile.refresh.providersChecked" : "profile.refresh.savedChecked", { time: new Date(checked).toLocaleString((window.CW?.I18n || window.__cwI18n)?.locale) }) : "";
     freshness.dataset.stale = String(!!checked && Date.now() - checked >= HUB_REFRESH_MS);
     const button = $("#profile-hub-refresh");
     button.classList.toggle("is-spinning", busy);
     button.disabled = hubRefreshing;
-    button.setAttribute("aria-label", `Refresh ${$(`[data-profile-tab="${tab}"] [data-tab-label]`)?.textContent || (tab === "playback" ? "Progress" : tab)}`);
+    button.setAttribute("aria-label", T("profile.records.refresh", { title: $(`[data-profile-tab="${tab}"] [data-tab-label]`)?.textContent || (tab === "playback" ? T("profile.playback.title") : tab) }));
     const issues = $("#profile-hub-issues");
     const unique = [...new Map(errors.map(error => [`${error.provider || ""}:${error.instance_id || ""}`, error])).values()];
     const issueSignature = JSON.stringify(unique);
     if (issues.dataset.signature !== issueSignature) {
       issues.dataset.signature = issueSignature;
       issues.hidden = !unique.length;
-      issues.querySelector("summary").textContent = unique.some(error => !error.provider) ? "Couldn’t refresh · showing saved data" : `${unique.length} provider${unique.length === 1 ? "" : "s"} couldn’t refresh`;
-      issues.querySelector("div").textContent = unique.map(error => [error.instance_label || error.provider_label || error.provider, error.message || "Could not refresh"].filter(Boolean).join(": ")).join("\n");
+      issues.querySelector("summary").textContent = unique.some(error => !error.provider) ? T("profile.refresh.savedData") : T("profile.refresh.providersFailed", { count: unique.length });
+      issues.querySelector("div").textContent = unique.map(error => [error.instance_label || error.provider_label || error.provider, error.message || T("profile.refresh.failed")].filter(Boolean).join(": ")).join("\n");
       if (!unique.length) issues.open = false;
     }
   }
@@ -258,7 +260,7 @@
       if (dy < 10 || !event.cancelable) { indicator.hidden = true; return; }
       event.preventDefault();
       indicator.hidden = false;
-      indicator.setAttribute("aria-label", dy >= 70 ? "Release to refresh" : "Pull to refresh");
+      indicator.setAttribute("aria-label", dy >= 70 ? T("profile.refresh.release") : T("profile.refresh.pull"));
       indicator.style.setProperty("--pull-turn", `${Math.min(dy, 140) * 2}deg`);
     }, {passive:false});
     document.addEventListener("touchend", event => {
@@ -269,7 +271,7 @@
       indicator.dataset.refreshing = "true";
       indicator.hidden = false;
       indicator.classList.add("is-spinning");
-      indicator.setAttribute("aria-label", "Refreshing");
+      indicator.setAttribute("aria-label", T("profile.refresh.refreshing"));
       void refreshHub(true).finally(() => {
         refreshing = false;
         renderHubSummary();
@@ -488,7 +490,7 @@
       || ids.tmdb_show || item?.tmdb_show || ids.show_tmdb || item?.show_tmdb || ""
     ).trim();
   };
-  const titleOf = (item) => String(item?.series_title || item?.title || item?.name || item?.show_title || item?.label || "Untitled");
+  const titleOf = (item) => String(item?.series_title || item?.title || item?.name || item?.show_title || item?.label || T("common.media.untitled"));
   const yearOf = (item) => String(item?.year || item?.release_year || item?.aired_year || "").trim();
   const episodeOf = (item) => {
     const explicit = String(item?.episode_label || item?.episodeLabel || "").trim();
@@ -612,13 +614,13 @@
   const ACTIVITY_LIMIT = 3;
   const activityLabel = (row) => {
     const kind = String(row?.kind || "").toLowerCase();
-    if (kind === "scheduler") return "Scheduler";
-    if (kind === "webhook") return "Webhook";
-    if (kind === "watcher") return "Watcher";
-    if (kind === "playlist") return "Playlist";
-    if (kind === "capture") return "Capture";
-    if (kind === "backup") return "Backup";
-    return "Sync";
+    if (kind === "scheduler") return T("profile.activity.kind.scheduler");
+    if (kind === "webhook") return T("profile.activity.kind.webhook");
+    if (kind === "watcher") return T("profile.activity.kind.watcher");
+    if (kind === "playlist") return T("profile.activity.kind.playlist");
+    if (kind === "capture") return T("profile.activity.kind.capture");
+    if (kind === "backup") return T("profile.activity.kind.backup");
+    return T("profile.activity.kind.sync");
   };
   const activityTone = (row) => {
     const sev = String(row?.severity || "").toLowerCase();
@@ -654,7 +656,7 @@
     }
     if (String(row?.kind || "").toLowerCase() === "sync") {
       const feature = activityFeature(row);
-      return feature ? `${feature} sync` : "Sync";
+      return feature ? T("profile.activity.featureSync", { feature }) : T("profile.activity.kind.sync");
     }
     return title || `${activityLabel(row)} activity`;
   };
@@ -753,8 +755,8 @@
     const enabled = !!eff.enabled || !!status?.running;
     if (!enabled) return null;
     const next = Number(status?.next_run_at || 0);
-    const label = status?.last_error ? "Scheduler needs attention" : "Automatic sync";
-    const nextLabel = next > Date.now() / 1000 ? `Next sync ${futureTime(next)}` : next > 0 ? "Next sync due" : "Waiting for the next run";
+    const label = status?.last_error ? T("profile.activity.schedulerAttention") : T("profile.activity.automaticSync");
+    const nextLabel = next > Date.now() / 1000 ? T("profile.activity.nextSync", { time: futureTime(next) }) : next > 0 ? T("profile.activity.nextSyncDue") : T("profile.activity.waitingNextRun");
     return `<div class="cw-profile-activity-schedule${status?.last_error ? " is-warn" : ""}"><span><span class="material-symbols-rounded" aria-hidden="true">sync</span>${esc(label)}</span><span><span class="material-symbols-rounded" aria-hidden="true">schedule</span>${esc(nextLabel)}</span></div>`;
   };
   const profileActivityRow = (row) => {
@@ -766,15 +768,16 @@
     const detail = bits.length
       ? bits.map(activityChipHtml).join("")
       : `<span class="cw-profile-activity-chip">${esc(badge)}</span>`;
-    let status = tone === "bad" ? "Failed" : tone === "warn" ? "Needs attention" : tone === "live" ? "In progress" : ({completed:"Completed",skipped:"Skipped",stopped:"Stopped"}[String(row?.status || "").toLowerCase()] || "");
-    if (isScrobbleActivity(row) && tone === "ok") status = parseFloat(parseScrobbleSummary(row).progress) >= 100 ? "Completed" : "";
-    const statusIcon = tone === "bad" ? "error" : tone === "warn" ? "warning" : tone === "live" ? "sync" : status === "Completed" ? "check" : "info";
+    let statusCode = tone === "bad" ? "failed" : tone === "warn" ? "attention" : tone === "live" ? "inProgress" : ({completed:"completed",skipped:"skipped",stopped:"stopped"}[String(row?.status || "").toLowerCase()] || "");
+      if (isScrobbleActivity(row) && tone === "ok") statusCode = parseFloat(parseScrobbleSummary(row).progress) >= 100 ? "completed" : "";
+      let status = statusCode ? T(`profile.activity.status.${statusCode}`) : "";
+      const statusIcon = tone === "bad" ? "error" : tone === "warn" ? "warning" : tone === "live" ? "sync" : statusCode === "completed" ? "check" : "info";
     return `
       <button class="cw-profile-activity-row cw-profile-activity-row--${esc(String(row?.kind || "sync").toLowerCase())} is-${esc(tone)}" type="button" data-event-group-id="${esc(row?.id || "")}" data-event-domain="${esc(String(row?.domain || "sync").toLowerCase())}">
         <span class="cw-profile-activity-copy">
           <span class="cw-profile-activity-top">
             <strong>${esc(activityTitle(row))}</strong>
-            ${status ? `<span class="cw-profile-activity-status${status === "Completed" ? " is-completed" : ""}"><span class="material-symbols-rounded" aria-hidden="true">${statusIcon}</span>${esc(status)}</span>` : ""}
+            ${status ? `<span class="cw-profile-activity-status${statusCode === "completed" ? " is-completed" : ""}"><span class="material-symbols-rounded" aria-hidden="true">${statusIcon}</span>${esc(status)}</span>` : ""}
           </span>
           <span class="cw-profile-activity-meta">${detail}</span>
         </span>
@@ -800,7 +803,7 @@
     const cached = readCache(cacheKey);
     const render = payload => {
       const rows = (payload.items || []).slice().sort((a, b) => Number(b?.created_at || 0) - Number(a?.created_at || 0));
-      const html = (rows.length ? rows.slice(0, ACTIVITY_LIMIT).map(profileActivityRow).join("") : empty("No recent activity yet.")) + (schedulerActivityHtml(payload.scheduler) || "");
+      const html = (rows.length ? rows.slice(0, ACTIVITY_LIMIT).map(profileActivityRow).join("") : empty(T("profile.activity.none"))) + (schedulerActivityHtml(payload.scheduler) || "");
       if (host.innerHTML !== html) host.innerHTML = html;
     };
     if (cached) render(cached);
@@ -841,7 +844,7 @@
     window.addEventListener("cw:overview-profile-changed", () => {
       loadProfileActivity().catch(() => {
         const host = $("#profile-activity");
-        if (host) host.innerHTML = empty("Recent activity could not be loaded.");
+        if (host) host.innerHTML = empty(T("profile.activity.loadFailed"));
       });
     });
   }
@@ -849,7 +852,7 @@
   let posterSeq = 0;
   const posterItems = new Map();
   const overviewCardItems = new WeakMap();
-  const numberFmt = new Intl.NumberFormat();
+  const numberFmt = new Intl.NumberFormat((window.CW?.I18n || window.__cwI18n)?.locale);
 
   function setAvatar(url) {
     const normalized = window.CW?.AccountMenu?.normalizeAvatarUrl?.(url) || String(url || "").trim();
@@ -888,7 +891,7 @@
     if (!host) return;
     const pct = Math.max(0, Math.min(100, Math.round(Number(percent || 0))));
     host.classList.toggle("hidden", !visible);
-    $("#profile-avatar-upload-label").textContent = label || "Uploading picture";
+    $("#profile-avatar-upload-label").textContent = label || T("profile.account.uploadingPicture");
     $("#profile-avatar-upload-percent").textContent = `${pct}%`;
     $("#profile-avatar-upload-bar").style.width = `${pct}%`;
   }
@@ -912,15 +915,15 @@
         }
         resolve(data);
       };
-      xhr.onerror = () => reject(new Error("Upload failed"));
-      xhr.ontimeout = () => reject(new Error("Upload timed out"));
+      xhr.onerror = () => reject(new Error(T("profile.avatar.uploadFailed")));
+      xhr.ontimeout = () => reject(new Error(T("profile.avatar.uploadTimeout")));
       xhr.send(JSON.stringify({ data: dataUrl, content_type: contentType }));
     });
   }
 
   const readFileAsDataUrl = (file, onProgress) => new Promise((resolve, reject) => {
     const reader = new FileReader();
-    reader.onerror = () => reject(new Error("Could not read profile picture"));
+    reader.onerror = () => reject(new Error(T("profile.avatar.readFailed")));
     reader.onprogress = (event) => {
       if (!event.lengthComputable) return;
       onProgress?.(Math.min(45, Math.round((event.loaded / event.total) * 45)));
@@ -932,7 +935,7 @@
   const loadImage = (url) => new Promise((resolve, reject) => {
     const img = new Image();
     img.onload = () => resolve(img);
-    img.onerror = () => reject(new Error("Could not decode profile picture"));
+    img.onerror = () => reject(new Error(T("profile.avatar.decodeFailed")));
     img.src = url;
   });
 
@@ -949,7 +952,7 @@
       canvas.width = size;
       canvas.height = size;
       const ctx = canvas.getContext("2d", { alpha: false });
-      if (!ctx) throw new Error("Could not prepare profile picture");
+      if (!ctx) throw new Error(T("profile.avatar.prepareFailed"));
       ctx.fillStyle = "#101217";
       ctx.fillRect(0, 0, size, size);
       const source = Math.min(img.naturalWidth || img.width, img.naturalHeight || img.height);
@@ -957,7 +960,7 @@
       const sy = Math.max(0, ((img.naturalHeight || img.height) - source) / 2);
       ctx.drawImage(img, sx, sy, source, source, 0, 0, size, size);
       const blob = await canvasToBlob(canvas, "image/webp", 0.84) || await canvasToBlob(canvas, "image/jpeg", 0.88);
-      if (!blob) throw new Error("Could not compress profile picture");
+      if (!blob) throw new Error(T("profile.avatar.compressFailed"));
       const dataUrl = await readFileAsDataUrl(blob);
       return { previewUrl, dataUrl, contentType: blob.type || "image/jpeg" };
     } catch {
@@ -969,11 +972,11 @@
   function renderProfile(data) {
     profile = data?.user || profile || {};
     profileDateTime.configure(profile.preferences);
-    const display = String(profile.display_name || profile.label || profile.username || "Profile");
+    const display = String(profile.display_name || profile.label || profile.username || T("navigation.account.profileFallback"));
     const viewed = viewingAs();
     $("#profile-display-name").textContent = display;
-    $("#profile-username").textContent = viewed ? `Opened by @${profile.username || ""}` : `@${profile.username || ""}`;
-    $("#profile-role").textContent = viewed ? "Profile" : (profile.is_admin ? "Administrator" : "Managed User");
+    $("#profile-username").textContent = viewed ? T("profile.account.openedBy", { name: profile.username || "" }) : `@${profile.username || ""}`;
+    $("#profile-role").textContent = viewed ? T("navigation.account.profileFallback") : (profile.is_admin ? T("profile.role.admin") : T("profile.role.managed"));
     const input = $("#profile-display-input");
     if (input) input.value = display;
     renderTwoFactor(!!profile.totp_enabled);
@@ -994,7 +997,7 @@
     }
     const when = new Date(ts * 1000);
     host.querySelector("span:last-child").textContent =
-      `Member since ${profileDateTime.format(when, { month: "long", year: "numeric" })}`;
+      T("profile.account.memberSince", { date: profileDateTime.format(when, { month: "long", year: "numeric" }) });
     host.classList.remove("hidden");
   }
 
@@ -1017,12 +1020,12 @@
     const query = String($("#profile-timezone-search")?.value || "").trim().toLowerCase().replaceAll("_", " ");
     const matches = profileTimezoneNames.filter((name) => name.replaceAll("_", " ").toLowerCase().includes(query));
     const names = [...new Set([selected === "auto" ? "" : selected, ...matches].filter(Boolean))];
-    zone.innerHTML = '<option value="auto">Auto (browser settings)</option>' + names.map((name) => `<option value="${esc(name)}">${esc(name.replaceAll("_", " "))}</option>`).join("");
+    zone.innerHTML = `<option value="auto">${TH("profile.settings.autoBrowser")}</option>` + names.map((name) => `<option value="${esc(name)}">${esc(name.replaceAll("_", " "))}</option>`).join("");
     zone.value = selected;
     const status = $("#profile-timezone-results");
     if (status) {
       status.hidden = !query;
-      status.textContent = matches.length ? `${matches.length} matching timezone${matches.length === 1 ? "" : "s"}` : "No matching timezones. Your current selection is kept.";
+      status.textContent = matches.length ? T("profile.settings.timezoneMatches", { count: matches.length }) : T("profile.settings.noTimezones");
     }
   }
 
@@ -1055,11 +1058,11 @@
   function renderTwoFactor(enabled) {
     const state = $("#profile-2fa-state");
     if (state) {
-      state.textContent = enabled ? "On" : "Off";
+      state.textContent = enabled ? T("common.status.on") : T("common.status.off");
       state.classList.toggle("is-enabled", enabled);
     }
     const copy = $("#profile-2fa-copy");
-    if (copy) copy.textContent = enabled ? "You enter a code from your phone when you sign in." : "Ask for a code from your phone when you sign in.";
+    if (copy) copy.textContent = enabled ? T("profile.security.twoStepOn") : T("profile.security.twoStepHint");
     for (const [sel, hide] of [["#profile-2fa-setup-btn", enabled], ["#profile-recovery-btn", !enabled], ["#profile-2fa-disable-btn", !enabled]]) {
       const node = $(sel);
       if (node) node.hidden = hide;
@@ -1081,11 +1084,11 @@
 
   function describeAgent(value) {
     const ua = String(value || "").trim();
-    if (!ua) return { name: "Unknown device", icon: "devices" };
-    if (!/mozilla\//i.test(ua)) return { name: "App or script", icon: "apps" };
+    if (!ua) return { name: T("profile.devices.unknown"), icon: "devices" };
+    if (!/mozilla\//i.test(ua)) return { name: T("profile.devices.app"), icon: "apps" };
     const browsers = [[/edg(?:e|a|ios)?\//i, "Edge"], [/opr\/|opera/i, "Opera"], [/firefox\/|fxios/i, "Firefox"], [/chrome\/|crios/i, "Chrome"], [/safari\//i, "Safari"]];
     const systems = [[/iphone|ipad|ipod/i, "iOS"], [/android/i, "Android"], [/windows nt/i, "Windows"], [/cros/i, "ChromeOS"], [/mac os x|macintosh/i, "macOS"], [/linux/i, "Linux"]];
-    const browser = browsers.find(([re]) => re.test(ua))?.[1] || "Browser";
+    const browser = browsers.find(([re]) => re.test(ua))?.[1] || T("profile.devices.browser");
     const os = systems.find(([re]) => re.test(ua))?.[1] || "";
     const icon = /ipad|tablet/i.test(ua) ? "tablet" : /mobi|iphone|android/i.test(ua) ? "smartphone" : "computer";
     return { name: os ? `${browser} on ${os}` : browser, icon };
@@ -1104,11 +1107,11 @@
     host.innerHTML = rows.length ? rows.map((row) => {
       const agent = describeAgent(row.ua);
       const since = friendlyAgo(row.created_at);
-      const meta = [since ? `Signed in ${since}` : "", row.ip].filter(Boolean).join(" · ");
-      const badge = row.current ? `<em class="cw-set-badge">This device</em>` : "";
-      const action = row.current ? "" : `<button class="cw-set-btn cw-set-btn--danger cw-danger-confirm" type="button" data-session-kill="${esc(row.id)}"><span class="material-symbols-rounded" aria-hidden="true">logout</span><span>Sign out</span></button>`;
+      const meta = [since ? T("profile.devices.signedIn", { time: since }) : "", row.ip].filter(Boolean).join(" · ");
+      const badge = row.current ? `<em class="cw-set-badge">${TH("profile.devices.thisDevice")}</em>` : "";
+      const action = row.current ? "" : `<button class="cw-set-btn cw-set-btn--danger cw-danger-confirm" type="button" data-session-kill="${esc(row.id)}"><span class="material-symbols-rounded" aria-hidden="true">logout</span><span>${TH("profile.devices.signOut")}</span></button>`;
       return `<div class="cw-set-session${row.current ? " is-current" : ""}"><span class="cw-set-device material-symbols-rounded" aria-hidden="true">${esc(agent.icon)}</span><span class="cw-set-copy"><strong title="${esc(row.ua || "")}"><span>${esc(agent.name)}</span>${badge}</strong><small>${esc(meta)}</small></span>${action}</div>`;
-    }).join("") : empty("No active sessions.");
+    }).join("") : empty(T("profile.devices.none"));
   }
 
   function overlayItem(item) {
@@ -1169,10 +1172,10 @@
   };
   const pausedLabel = (item) => {
     const live = liveState(item);
-    if (live === "playing") return "Playing now";
-    if (live === "buffering") return "Buffering now";
+    if (live === "playing") return T("profile.playback.playingNow");
+    if (live === "buffering") return T("profile.playback.bufferingNow");
     const epoch = pausedEpoch(item);
-    return epoch ? `Paused ${relTime(epoch)}` : "";
+    return epoch ? T("profile.playback.pausedAgo", { time: relTime(epoch) }) : "";
   };
 
   const liveRouteProviders = (item) => {
@@ -1182,7 +1185,7 @@
         const provider = providerKey(route?.[side]);
         if (!provider) continue;
         const instance = String(route[`${side}_instance`] || "default");
-        const label = String(route[`${side}_label`] || (instance === "default" ? "Default" : instance));
+        const label = String(route[`${side}_label`] || (instance === "default" ? T("common.labels.default") : instance));
         const method = route.kind === "webhook" ? "webhook" : "watcher";
         refs.set(`${provider}:${instance}`, { provider, instance, title: `${visibleProviderLabel(provider)} · ${label}: active ${method} route` });
       }
@@ -1224,16 +1227,16 @@
         <span class="cw-cw-copy"><span class="cw-cw-title">${esc(titleOf(item))}</span><span class="cw-cw-sub">${esc(sub)}</span></span>
       </span>
       <span class="cw-cw-foot">${providerStrip}<span>${esc(pausedLabel(item))}</span></span>
-      <span class="cw-cw-track" role="progressbar" aria-label="Watch progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(pct)}"><i style="width:${pct}%"></i></span>
+      <span class="cw-cw-track" role="progressbar" aria-label="${TH("profile.playback.watchProgress")}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(pct)}"><i style="width:${pct}%"></i></span>
     </button>${cardActionsButton("data-overview-progress-menu")}</article>`;
   }
 
   function mediaKindLabel(item) {
     const raw = String(item?.type || item?.media_type || "").toLowerCase();
-    if (/episode/.test(raw) || item?.season || item?.episode) return "Episode";
-    if (/tv|show|series|season|anime/.test(raw)) return "Show";
-    if (/movie|film/.test(raw)) return "Movie";
-    return episodeOf(item) ? "Show" : "Movie";
+    if (/episode/.test(raw) || item?.season || item?.episode) return T("common.media.episode");
+    if (/tv|show|series|season|anime/.test(raw)) return T("common.media.show");
+    if (/movie|film/.test(raw)) return T("common.media.movie");
+    return episodeOf(item) ? T("common.media.show") : T("common.media.movie");
   }
 
   function watchlistCard(item) {
@@ -1292,14 +1295,14 @@
     const host = $("#profile-hero-media");
     if (!host) return;
     const request = ++heroMediaRequest;
-    const title = item ? titleOf(item) : "Everything you watch, across your providers";
+    const title = item ? titleOf(item) : T("profile.hero.tagline");
     const label = host.querySelector("strong");
     const logo = host.querySelector("img");
     label.textContent = title;
     const key = host.dataset.profilePosterKey;
     if (item && key) posterItems.set(key, overlayItem(item));
     else host.dataset.profilePosterKey = item ? storePosterItem(item) : "";
-    host.setAttribute("aria-label", item ? `Show details for ${title}` : title);
+    host.setAttribute("aria-label", item ? T("profile.hero.showDetails", { title }) : title);
     host.setAttribute("role", item ? "button" : "group");
     host.tabIndex = item ? 0 : -1;
     bindLastWatchedPreview(host);
@@ -1319,7 +1322,7 @@
     const descriptor = item && id ? {...item, type:show ? "show" : "movie", tmdb:id, ids:{...item.ids, tmdb:id}} : null;
     const apply = meta => {
       if (request !== heroMediaRequest) return;
-      $("#profile-hero-summary").textContent = item ? [meta?.year || yearOf(item), show ? "TV Series" : "Movie", episodeOf(item)].filter(Boolean).join(" · ") : "";
+      $("#profile-hero-summary").textContent = item ? [meta?.year || yearOf(item), show ? T("profile.hero.tvSeries") : T("common.media.movie"), episodeOf(item)].filter(Boolean).join(" · ") : "";
       const seasons = Number(meta?.detail?.number_of_seasons || 0);
       const runtime = Number(meta?.runtime_minutes || 0);
       const extra = item ? [show ? seasons ? `${seasons} ${seasons === 1 ? "season" : "seasons"}` : "" : runtime ? `${runtime} min` : "", show ? meta?.detail?.status : "", ...(Array.isArray(meta?.genres) ? meta.genres.slice(0, 2) : [])].filter(Boolean).join(" · ") : "";
@@ -1351,7 +1354,7 @@
     const key = storePosterItem(item);
     if (last) {
       last.dataset.profilePosterKey = key;
-      last.setAttribute("aria-label", `Show details for ${titleOf(item)}`);
+      last.setAttribute("aria-label", T("profile.hero.showDetails", { title: titleOf(item) }));
       bindLastWatchedPreview(last);
     }
     $("#profile-last-title").textContent = titleOf(item);
@@ -1521,7 +1524,7 @@
   }
 
   function renderProgressItems(progressItems) {
-    renderOverviewCards($("#profile-progress"), progressItems.slice(0, mobilePaging.matches ? 3 : 4), progressCard, "No recent progress yet.");
+    renderOverviewCards($("#profile-progress"), progressItems.slice(0, mobilePaging.matches ? 3 : 4), progressCard, T("profile.overview.noProgress"));
   }
 
   let airingRequest = 0;
@@ -1555,23 +1558,23 @@
     host.innerHTML = dates.map(({date, iso}, offset) => {
       const start = Math.min(16, Math.floor(offset / 14) * 14);
       const counts = dates.slice(start, start + 14).map(({iso}) => byDay.get(iso)?.length || 0);
-      const time = `<time datetime="${iso}"><span>${esc(date.toLocaleDateString(undefined, {weekday:"short"}))}</span><strong>${date.getDate()}</strong></time>`;
+      const time = `<time datetime="${iso}"><span>${esc(date.toLocaleDateString((window.CW?.I18n || window.__cwI18n)?.locale, {weekday:"short"}))}</span><strong>${date.getDate()}</strong></time>`;
       const rows = byDay.get(iso) || [];
       const cards = rows.map(row => {
         const tmdb = row.show_ids?.tmdb || row.art?.tmdb;
         const image = tmdb ? `/art/tmdb/tv/${encodeURIComponent(tmdb)}?fallback=2&av=${encodeURIComponent(document.documentElement.dataset.cwArt || "t")}&size=w780&kind=${row.has_still ? `still&season=${encodeURIComponent(row.season)}&episode=${encodeURIComponent(row.episode)}` : "backdrop"}` : "";
         const episode = `S${String(row.season).padStart(2, "0")} · E${String(row.episode).padStart(2, "0")}`;
-        const label = offset === 0 ? "Today" : row.episode === 1 ? "Season premiere" : offset === 1 ? "Tomorrow" : `In ${offset} days`;
+        const label = offset === 0 ? T("common.time.today") : row.episode === 1 ? T("profile.airing.premiere") : offset === 1 ? T("common.time.tomorrow") : T("profile.airing.inDays", { count: offset });
         const key = storePosterItem({...row, type:"show", tmdb, ids:{tmdb}, episode_label:episode});
-        return window.CW.AiringCard.render(row, {image, dateHtml:time, label, openAttributes:`data-profile-poster-key="${esc(key)}"`, ariaLabel:`${date.toLocaleDateString()}: ${row.title}, ${episode}`});
+        return window.CW.AiringCard.render(row, {image, dateHtml:time, label, openAttributes:`data-profile-poster-key="${esc(key)}"`, ariaLabel:`${date.toLocaleDateString((window.CW?.I18n || window.__cwI18n)?.locale)}: ${row.title}, ${episode}`});
       }).join("");
-      return `<div class="trk-calendar-day${rows.length ? " has-releases" : ""}${offset === 0 ? " is-today" : ""}" data-calendar-date="${iso}" style="--calendar-releases:${Math.max(1, counts.reduce((sum, n) => sum + n, 0))};--calendar-empty-days:${counts.filter(n => !n).length}">${cards || time + (offset === 0 ? '<span class="trk-calendar-today">Today</span>' : "")}</div>`;
+      return `<div class="trk-calendar-day${rows.length ? " has-releases" : ""}${offset === 0 ? " is-today" : ""}" data-calendar-date="${iso}" style="--calendar-releases:${Math.max(1, counts.reduce((sum, n) => sum + n, 0))};--calendar-empty-days:${counts.filter(n => !n).length}">${cards || time + (offset === 0 ? `<span class="trk-calendar-today">${TH("common.time.today")}</span>` : "")}</div>`;
     }).join("");
     host.scrollLeft = scroll;
     window.CW.AiringCard?.restore(host, airingCards);
     if (focused) [...host.querySelectorAll('[data-airing-key]')].find(node => node.dataset.airingKey === focused)?.focus({preventScroll:true});
     const notice = $("#profile-airing-notice");
-    notice.textContent = data.metadata_available === false ? "Add a TMDB API key in Settings to see upcoming episodes." : data.unavailable ? "Episode dates are unavailable for some shows." : Array.isArray(data.airing) && !data.airing.length ? "No episodes scheduled in the next 30 days." : "";
+    notice.textContent = data.metadata_available === false ? T("profile.airing.needsTmdb") : data.unavailable ? T("profile.airing.someUnavailable") : Array.isArray(data.airing) && !data.airing.length ? T("profile.airing.none") : "";
     notice.hidden = !notice.textContent;
   }
 
@@ -1612,9 +1615,9 @@
     const widgetProgress = widgets?.recent_progress?.items || [];
     const progressItems = Array.isArray(progress?.items) ? progress.items : widgetProgress;
     hubOverviewMetrics = [];
-    if (Number.isFinite(progress?.total)) hubOverviewMetrics.push(["Continue watching", progress.total]);
-    if (Number.isFinite(wall?.total)) hubOverviewMetrics.push(["Watchlist titles", wall.total]);
-    if (status) hubOverviewMetrics.push(["Providers", connectedServices(status)]);
+    if (Number.isFinite(progress?.total)) hubOverviewMetrics.push([T("profile.overview.continueWatching"), progress.total]);
+    if (Number.isFinite(wall?.total)) hubOverviewMetrics.push([T("profile.overview.watchlistTitles"), wall.total]);
+    if (status) hubOverviewMetrics.push([T("settings.sync.providers"), connectedServices(status)]);
     renderHubSummary();
     const heroSignature = JSON.stringify([scrobble, history]);
     if (payload.widgets && overviewHeroSignature !== heroSignature) { overviewHeroSignature = heroSignature; renderHero(scrobble, history); }
@@ -1623,7 +1626,7 @@
       services: connectedServices(status),
     });
     if (payload.progress || payload.widgets) renderProgressItems(progressItems);
-    if (payload.wall) renderOverviewCards($("#profile-watchlist"), watchlistItems.slice(0, 4), watchlistCard, "No watchlist items yet.");
+    if (payload.wall) renderOverviewCards($("#profile-watchlist"), watchlistItems.slice(0, 4), watchlistCard, T("profile.overview.noWatchlist"));
   }
 
   async function loadOverview({force = false, reuse = false} = {}) {
@@ -1704,10 +1707,10 @@
   const COLLECTION_PAGE_SIZES = [24, 48, 72, 96];
   const COLLECTION_SHELF_MODES = ["synced", "shelf", "all", "unwatched", "not_on_server", "not_on_shelf"];
   const COLLECTION_SHELF_EMPTY = {
-    shelf: "Nothing on your shelf yet. Open a title and choose Add to shelf.",
-    unwatched: "Every title on your shelf has been watched.",
-    not_on_server: "Every title on your shelf is also on a media server.",
-    not_on_shelf: "Every title on your media servers is also on your shelf.",
+    shelf: T("profile.shelf.emptyShelf"),
+    unwatched: T("profile.shelf.emptyUnwatched"),
+    not_on_server: T("profile.shelf.emptyNotOnServer"),
+    not_on_shelf: T("profile.shelf.emptyNotOnShelf"),
   };
 
   function readCollectionPrefs() {
@@ -1768,10 +1771,10 @@
 
   function collectionKind(item) {
     const raw = String(item?.type || item?.media_type || "").toLowerCase();
-    if (raw === "season") return ["stacks", "Season"];
-    if (/episode/.test(raw) || item?.episode || item?.episode_number) return ["play_circle", "Episode"];
-    if (/show|tv|series|anime/.test(raw)) return ["tv", "Show"];
-    return ["movie", "Movie"];
+    if (raw === "season") return ["stacks", T("common.media.season")];
+    if (/episode/.test(raw) || item?.episode || item?.episode_number) return ["play_circle", T("common.media.episode")];
+    if (/show|tv|series|anime/.test(raw)) return ["tv", T("common.media.show")];
+    return ["movie", T("common.media.movie")];
   }
 
   function collectionSourceProviders(item) {
@@ -1808,7 +1811,7 @@
     dolby_digital: "Dolby Digital", dolby_prologic: "Dolby Pro Logic", dts_x: "DTS:X", dts_ma: "DTS-HD MA", dts_hr: "DTS-HD HRA", dts: "DTS", auro_3d: "Auro-3D",
     lpcm: "LPCM", flac: "FLAC", aac: "AAC", mp3: "MP3", mp2: "MP2", ogg: "Ogg", ogg_opus: "Opus", wma: "WMA",
   };
-  const QUALITY_FORMAT = { "4k_bluray": "4K Blu-ray", bluray: "Blu-ray", hd_dvd: "HD DVD", dvd: "DVD", digital: "Digital", vhs: "VHS", laserdisc: "LaserDisc", vcd: "VCD", betamax: "Betamax" };
+  const QUALITY_FORMAT = { "4k_bluray": "4K Blu-ray", bluray: "Blu-ray", hd_dvd: "HD DVD", dvd: "DVD", digital: T("profile.shelf.formatDigital"), vhs: "VHS", laserdisc: "LaserDisc", vcd: "VCD", betamax: "Betamax" };
   const QUALITY_LOGOS = {
     uhd: ["4k-uhd.svg", 14.9], uhd_bluray: ["uhd-bluray.svg", 12], bluray: ["bluray.svg", 16.4], dvd: ["dvd.svg", 12.6],
     dolby_vision: ["dolby-vision.svg", 8.2], hdr10_plus: ["hdr10-plus.svg", 12.8], hdr10: ["hdr10.svg", 11.9],
@@ -1871,7 +1874,7 @@
     return `<article class="cw-collection-card cw-tl-card${collectionState.selected.has(selectKey) ? " is-selected" : ""}${shelfInfo?.status === "wishlist" ? " is-wishlist" : ""}" data-collection-key="${esc(selectKey)}">
       <button class="cw-collection-open" type="button" data-profile-poster-key="${esc(key)}" aria-label="Show details for ${esc(ariaTitle)}">${inner}</button>
       ${collectionSelectable() && !item?.shelf_only ? collectionSelectBox(selectKey) : ""}
-      <span class="cw-collection-card-foot"><span class="cw-collection-sources">${providerStrip}</span>${cardActionsButton(`data-collection-actions="${esc(selectKey)}"`, `Actions for ${title}`)}</span>
+      <span class="cw-collection-card-foot"><span class="cw-collection-sources">${providerStrip}</span>${cardActionsButton(`data-collection-actions="${esc(selectKey)}"`, T("profile.cards.actionsFor", { title }))}</span>
     </article>`;
   }
 
@@ -1879,7 +1882,7 @@
 
   function collectionSelectBox(key) {
     const checked = collectionState.selected.has(key) ? " checked" : "";
-    return `<label class="cw-tl-select" title="Select"><input type="checkbox" data-collection-select-item="${esc(key)}"${checked} aria-label="Select"><span class="material-symbols-rounded" aria-hidden="true">check</span></label>`;
+    return `<label class="cw-tl-select" title="${TH("common.selection.select")}"><input type="checkbox" data-collection-select-item="${esc(key)}"${checked} aria-label="${TH("common.selection.select")}"><span class="material-symbols-rounded" aria-hidden="true">check</span></label>`;
   }
 
   function collectionSelectionEntry(item) {
@@ -1940,9 +1943,9 @@
         (Array.isArray(data.selection) ? data.selection : []).forEach((entry) => {
           if (entry?.key) collectionState.selected.set(String(entry.key), selectionFields(entry));
         });
-        if (data.selection_truncated) toast(`Selected the first ${numberFmt.format(RECORD_SELECTION_MAX)} results`);
+        if (data.selection_truncated) toast(T("profile.selection.firstResults", { count: RECORD_SELECTION_MAX }));
       } catch (e) {
-        toast(e.message || "Could not select all results", true);
+        toast(e.message || T("profile.selection.selectAllFailed"), true);
       }
     }
     syncCollectionSelection();
@@ -1980,20 +1983,20 @@
     const parsed = Date.parse(raw.length <= 10 ? raw + "T00:00:00Z" : raw);
     if (!Number.isFinite(parsed)) return "";
     try {
-      return new Intl.DateTimeFormat(window.__CW_LOCALE || navigator.language || undefined, { day: "2-digit", month: "2-digit", year: "numeric", timeZone: "UTC" }).format(new Date(parsed));
+      return new Intl.DateTimeFormat((window.CW?.I18n || window.__cwI18n)?.locale || window.__CW_LOCALE || navigator.language || undefined, { day: "2-digit", month: "2-digit", year: "numeric", timeZone: "UTC" }).format(new Date(parsed));
     } catch {
       return "";
     }
   };
 
   const COLLECTION_COLUMNS = [
-    { key: "poster", label: "Poster", width: 78, min: 62, max: 130 },
-    { key: "title", label: "Title", width: 300, min: 170, max: 900, flex: 1.7 },
-    { key: "rel", label: "Release", width: 130, min: 96, max: 240 },
-    { key: "genre", label: "Genre", width: 180, min: 110, max: 420, flex: 1 },
-    { key: "added", label: "Added", width: 140, min: 108, max: 260 },
-    { key: "type", label: "Type", width: 112, min: 84, max: 200 },
-    { key: "providers", label: "Providers", width: 130, min: 84, max: 280 },
+    { key: "poster", label: T("profile.collection.columns.poster"), width: 78, min: 62, max: 130 },
+    { key: "title", label: T("profile.collection.columns.title"), width: 300, min: 170, max: 900, flex: 1.7 },
+    { key: "rel", label: T("profile.collection.columns.release"), width: 130, min: 96, max: 240 },
+    { key: "genre", label: T("profile.collection.columns.genre"), width: 180, min: 110, max: 420, flex: 1 },
+    { key: "added", label: T("profile.collection.columns.added"), width: 140, min: 108, max: 260 },
+    { key: "type", label: T("profile.collection.columns.type"), width: 112, min: 84, max: 200 },
+    { key: "providers", label: T("settings.sync.providers"), width: 130, min: 84, max: 280 },
   ];
 
   const collectionColumnWidth = (col) => {
@@ -2014,7 +2017,7 @@
   function collectionListHead() {
     const cells = COLLECTION_COLUMNS.map((col, index) => {
       const handle = index < COLLECTION_COLUMNS.length - 1
-        ? `<span class="cw-collection-resize" role="separator" aria-orientation="vertical" title="Drag to resize, double-click to reset" data-collection-resize="${esc(col.key)}"></span>`
+        ? `<span class="cw-collection-resize" role="separator" aria-orientation="vertical" title="${TH("profile.collection.resize")}" data-collection-resize="${esc(col.key)}"></span>`
         : "";
       return `<span class="cw-collection-cell cw-collection-cell--${esc(col.key)}">${esc(col.label)}${handle}</span>`;
     }).join("");
@@ -2069,7 +2072,7 @@
         ${added ? `<small>${esc(relTime(added))}</small>` : ""}
       </span>
       <span class="cw-collection-cell cw-collection-cell--type"><span class="cw-collection-pill cw-collection-pill--type"><span class="material-symbols-rounded" aria-hidden="true">${esc(icon)}</span>${esc(kind)}</span></span>
-      <span class="cw-collection-cell cw-collection-cell--providers"><span class="cw-collection-sources">${providerStrip}</span>${cardActionsButton(`data-collection-actions="${esc(selectKey)}"`, `Actions for ${title}`)}</span>`;
+      <span class="cw-collection-cell cw-collection-cell--providers"><span class="cw-collection-sources">${providerStrip}</span>${cardActionsButton(`data-collection-actions="${esc(selectKey)}"`, T("profile.cards.actionsFor", { title }))}</span>`;
     if (selectKey) {
       return `<article class="cw-collection-row cw-tl-row${collectionState.selected.has(selectKey) ? " is-selected" : ""}" data-collection-index="${index}" data-collection-key="${esc(selectKey)}">
       <button class="cw-collection-cell cw-collection-cell--poster cw-collection-open" type="button" data-profile-poster-key="${esc(key)}" aria-label="Show details for ${esc(title)}">${img}</button>
@@ -2190,11 +2193,11 @@
     const host = $("#profile-collection-types");
     if (!host) return;
     const rows = [
-      ["all", "apps", "All"],
-      ["movie", "movie", "Movies"],
-      ["show", "tv", "Shows"],
-      ["season", "stacks", "Seasons"],
-      ["episode", "play_circle", "Episodes"],
+      ["all", "apps", T("profile.types.all")],
+      ["movie", "movie", T("common.media.movies")],
+      ["show", "tv", T("common.media.shows")],
+      ["season", "stacks", T("common.media.seasons")],
+      ["episode", "play_circle", T("common.media.episodes")],
     ];
     host.innerHTML = rows.map(([key, icon, label]) => {
       const count = Number(counts[key] || 0);
@@ -2210,7 +2213,7 @@
     const select = $("#profile-collection-provider");
     if (!select) return;
     const current = collectionState.provider;
-    const options = [`<option value="">All providers</option>`].concat((providers || []).map((row) => {
+    const options = [`<option value="">${TH("profile.records.allProviders")}</option>`].concat((providers || []).map((row) => {
       const key = String(row?.provider || "").toLowerCase();
       const label = visibleProviderLabel(key) || key.toUpperCase();
       const count = Number(row?.count || 0);
@@ -2229,7 +2232,7 @@
       menuClassName: "cw-profile-collection-menu",
       menuMinWidth: 260,
       getOptionData: (value, option) => {
-        if (!value) return { label: "All providers", icons: [{ symbol: "hub" }] };
+        if (!value) return { label: T("profile.records.allProviders"), icons: [{ symbol: "hub" }] };
         const provider = option?.dataset?.provider || value;
         const label = option?.dataset?.label || visibleProviderLabel(provider) || String(provider || "").toUpperCase();
         const logo = providerLogLogo(provider);
@@ -2249,7 +2252,7 @@
       menuClassName: "cw-profile-collection-menu",
       menuMinWidth: 220,
       getOptionData: (value, option) => ({
-        label: option?.textContent?.trim() || "Synced",
+        label: option?.textContent?.trim() || T("profile.collection.synced"),
         icons: [{ symbol: shelfIcons[value] || "sync" }],
       }),
     });
@@ -2264,7 +2267,7 @@
     const wanted = collectionState.shelfFilter;
     const formatKeys = [...new Set([...Object.keys(formats).filter((key) => present.includes(key)), ...(wanted.startsWith("format:") ? [wanted.slice(7)] : [])])];
     const locations = [...new Set([...collectionState.shelfLocations, ...(wanted.startsWith("location:") ? [wanted.slice(9)] : [])])];
-    const options = [["", "Whole shelf"], ["lent", "Lent out"], ["price", "No price yet"], ...formatKeys.map((key) => [`format:${key}`, formats[key] || key]), ...locations.map((name) => [`location:${name}`, `Shelf: ${name}`])];
+    const options = [["", T("profile.collection.wholeShelf")], ["lent", T("profile.shelf.lentOut")], ["price", T("profile.shelf.noPrice")], ...formatKeys.map((key) => [`format:${key}`, formats[key] || key]), ...locations.map((name) => [`location:${name}`, T("profile.shelf.shelfNamed", { name })])];
     select.innerHTML = options.map(([value, label]) => `<option value="${esc(value)}"${value === wanted ? " selected" : ""}>${esc(label)}</option>`).join("");
     select.value = wanted;
     select.hidden = hide;
@@ -2275,7 +2278,7 @@
         menuClassName: "cw-profile-collection-menu",
         menuMinWidth: 220,
         getOptionData: (value, option) => ({
-          label: option?.textContent?.trim() || "Whole shelf",
+          label: option?.textContent?.trim() || T("profile.collection.wholeShelf"),
           icons: [{ symbol: icons[value] || (String(value).startsWith("format:") ? "album" : String(value).startsWith("location:") ? "shelves" : "filter_alt") }],
         }),
       });
@@ -2301,7 +2304,7 @@
       menuClassName: "cw-profile-collection-menu",
       menuMinWidth: 230,
       getOptionData: (value, option) => ({
-        label: option?.textContent?.trim() || "Sort",
+        label: option?.textContent?.trim() || T("common.labels.sort"),
         icons: [{ symbol: sortIcons[value] || "sort" }],
       }),
     });
@@ -2313,10 +2316,10 @@
     const counts = data.counts || {};
     const providers = Array.isArray(data.providers) ? data.providers.length : 0;
     const values = [
-      ["Movies", counts.movie || 0],
-      ["Shows", counts.show || 0],
-      ["Providers", providers],
-      ["Items", counts.all ?? data.total ?? 0],
+      [T("common.media.movies"), counts.movie || 0],
+      [T("common.media.shows"), counts.show || 0],
+      [T("settings.sync.providers"), providers],
+      [T("profile.shelf.items"), counts.all ?? data.total ?? 0],
     ];
     host.innerHTML = values.map(([label, value]) => `<span class="cw-hub-records-stat"><strong>${esc(numberFmt.format(Number(value) || 0))}</strong><span>${esc(label)}</span></span>`).join("");
   }
@@ -2347,16 +2350,16 @@
     const list = (rows) => rows.map(([label, count]) => `${label} ${numberFmt.format(count)}`).join(" · ");
     const statusText = [["owned", "owned"], ["ordered", "ordered"], ["wishlist", "on the wishlist"]].filter(([key]) => status[key]).map(([key, label]) => `${numberFmt.format(status[key])} ${label}`).join(", ");
     const details = [
-      ["Picture and sound", list(byCount(stats.picture))],
-      ["Decades", list(Object.entries(stats.decades || {}).sort((a, b) => b[0].localeCompare(a[0])))],
-      ["Status", statusText],
-      ["Lent out", stats.lent ? `${numberFmt.format(stats.lent)} ${stats.lent === 1 ? "title" : "titles"}` : "Nothing"],
+      [T("profile.shelf.pictureSound"), list(byCount(stats.picture))],
+      [T("profile.shelf.decades"), list(Object.entries(stats.decades || {}).sort((a, b) => b[0].localeCompare(a[0])))],
+      [T("profile.shelf.status"), statusText],
+      [T("profile.shelf.lentOut"), stats.lent ? T("profile.nouns.title", { count: stats.lent }) : T("profile.shelf.nothing")],
     ].filter(([, value]) => value);
-    const note = spent && !stats.currency ? `<p class="cw-shelf-sum-note">Prices show without a currency. Pick one in the details of any copy.</p>` : "";
+    const note = spent && !stats.currency ? `<p class="cw-shelf-sum-note">${TH("profile.shelf.noCurrency")}</p>` : "";
     return `<details class="cw-shelf-sum"${collectionState.statsOpen ? " open" : ""}>
-      <summary><span class="material-symbols-rounded" aria-hidden="true">shelves</span><span class="cw-shelf-sum-facts">${facts.map(([value, label]) => `<span><b>${esc(value)}</b> ${esc(label)}</span>`).join("")}</span><span class="cw-shelf-sum-toggle"><span>${collectionState.statsOpen ? "Hide" : "More"}</span><span class="material-symbols-rounded" aria-hidden="true">expand_more</span></span></summary>
+      <summary><span class="material-symbols-rounded" aria-hidden="true">shelves</span><span class="cw-shelf-sum-facts">${facts.map(([value, label]) => `<span><b>${esc(value)}</b> ${esc(label)}</span>`).join("")}</span><span class="cw-shelf-sum-toggle"><span>${collectionState.statsOpen ? TH("common.actions.hide") : TH("dashboard.mobile.more")}</span><span class="material-symbols-rounded" aria-hidden="true">expand_more</span></span></summary>
       <div class="cw-shelf-sum-body">
-        ${mix.length ? `<div class="cw-shelf-mix" aria-label="Formats"><div class="cw-shelf-mix-bar">${mix.map(([label, count], i) => `<span data-i="${Math.min(i, 5)}" style="flex:${count}" title="${esc(`${label} ${count}`)}"></span>`).join("")}</div><div class="cw-shelf-mix-key">${mix.map(([label, count], i) => `<span data-i="${Math.min(i, 5)}">${esc(label)} <b>${esc(numberFmt.format(count))}</b></span>`).join("")}</div></div>` : ""}
+        ${mix.length ? `<div class="cw-shelf-mix" aria-label="${TH("profile.shelf.formats")}"><div class="cw-shelf-mix-bar">${mix.map(([label, count], i) => `<span data-i="${Math.min(i, 5)}" style="flex:${count}" title="${esc(`${label} ${count}`)}"></span>`).join("")}</div><div class="cw-shelf-mix-key">${mix.map(([label, count], i) => `<span data-i="${Math.min(i, 5)}">${esc(label)} <b>${esc(numberFmt.format(count))}</b></span>`).join("")}</div></div>` : ""}
         ${details.length ? `<dl class="cw-shelf-sum-list">${details.map(([label, value]) => `<div><dt>${esc(label)}</dt><dd>${esc(value)}</dd></div>`).join("")}</dl>` : ""}
         ${note}
       </div>
@@ -2373,7 +2376,7 @@
     const statusLabel = info.status && info.status !== "owned" ? shelf.statuses?.[info.status] || info.status : "";
     const pill = shelf.pill?.({ format, media: item?.media_info || {}, service: info.service }) || "";
     const copyCount = Number(info.copies) || 0;
-    const note = [yearOf(item), info.edition, copyCount > 1 ? `${copyCount} copies` : "", info.lent ? "Lent out" : ""].filter(Boolean).join(" · ");
+    const note = [yearOf(item), info.edition, copyCount > 1 ? T("profile.shelf.copies", { count: copyCount }) : "", info.lent ? T("profile.shelf.lentOut") : ""].filter(Boolean).join(" · ");
     const label = [title, shelf.label?.(info), statusLabel].filter(Boolean).join(", ");
     const kind = shelf.caseKind?.(format, info.packaging) || "plain";
     const cover = shelf.caseHtml?.({ format, packaging: info.packaging, poster: poster(item, "w342") }) || `<span class="cw-case" data-case="plain"><img class="cw-case-art" src="${esc(poster(item, "w342"))}" alt=""></span>`;
@@ -2399,7 +2402,7 @@
       const copies = items.reduce((sum, item) => sum + (Number(item?.shelf?.copies) || 0), 0);
       const summary = [`${numberFmt.format(items.length)} ${items.length === 1 ? "title" : "titles"}`, `${numberFmt.format(copies)} ${copies === 1 ? "copy" : "copies"}`].join(" · ");
       return `<section class="cw-shelfv-row">
-        <div class="cw-shelfv-head"><span class="material-symbols-rounded" aria-hidden="true">shelves</span><h3>${esc(name || "No shelf set")}</h3><span>${esc(summary)}</span>${rowIndex === 0 ? window.CW?.Shelf?.casesSwitch?.() || "" : ""}</div>
+        <div class="cw-shelfv-head"><span class="material-symbols-rounded" aria-hidden="true">shelves</span><h3>${esc(name || T("profile.shelf.noShelf"))}</h3><span>${esc(summary)}</span>${rowIndex === 0 ? window.CW?.Shelf?.casesSwitch?.() || "" : ""}</div>
         <div class="cw-shelfv-rack">${items.map(shelfItem).join("")}</div>
       </section>`;
     }).join("");
@@ -2407,7 +2410,7 @@
   }
 
   function shelfPopHtml(item) {
-    const sub = [yearOf(item), mediaType(item) ? "Show" : "Movie"].filter(Boolean).join(" · ");
+    const sub = [yearOf(item), mediaType(item) ? T("common.media.show") : T("common.media.movie")].filter(Boolean).join(" · ");
     return window.CW?.Shelf?.popHtml?.({ title: titleOf(item), sub, info: item?.shelf || {}, media: item?.media_info || {} }) || "";
   }
 
@@ -2450,7 +2453,7 @@
     host.querySelector(".cw-shelf-sum")?.addEventListener("toggle", (event) => {
       collectionState.statsOpen = event.target.open;
       const label = event.target.querySelector(".cw-shelf-sum-toggle>span:first-child");
-      if (label) label.textContent = event.target.open ? "Hide" : "More";
+      if (label) label.textContent = event.target.open ? T("common.actions.hide") : T("dashboard.mobile.more");
       saveCollectionPrefs();
     });
   }
@@ -2471,7 +2474,7 @@
     }
     grid.classList.remove("is-grouped");
     if (!collectionState.items.length) {
-      grid.innerHTML = empty(!collectionState.search && COLLECTION_SHELF_EMPTY[collectionState.shelf] || "No collection items match this view.");
+      grid.innerHTML = empty(!collectionState.search && COLLECTION_SHELF_EMPTY[collectionState.shelf] || T("profile.collection.noMatch"));
       syncCollectionSelection();
       return;
     }
@@ -2501,7 +2504,7 @@
       grid.innerHTML = groups.map((group) => `<section class="cw-collection-day" data-timeline-month="${esc(timelineMonthKey(group.epoch))}">
         <div class="cw-hist-day-head">
           <span class="material-symbols-rounded" aria-hidden="true">inventory_2</span>
-          <h3>${esc(group.epoch ? dayFmt(group.epoch) : "No date")}</h3>
+          <h3>${esc(group.epoch ? dayFmt(group.epoch) : T("profile.records.noDate"))}</h3>
           <span class="cw-hist-day-count">${esc(`${numberFmt.format(group.items.length)} ${group.items.length === 1 ? "title" : "titles"}`)}</span>
         </div>
         <div class="cw-collection-day-body">${group.items.map(collectionCard).join("")}</div>
@@ -2530,7 +2533,7 @@
       btn.hidden = false;
       btn.classList.toggle("active", on);
       btn.setAttribute("aria-pressed", String(on));
-      btn.title = on ? "Back to your collection" : "Show my shelf";
+      btn.title = on ? T("profile.collection.backToCollection") : T("profile.collection.showShelf");
       btn.setAttribute("aria-label", btn.title);
     });
     const shelfSelect = $("#profile-collection-shelf");
@@ -2541,7 +2544,7 @@
     document.querySelectorAll("[data-collection-timeline]").forEach((btn) => {
       btn.classList.toggle("active", collectionState.timeline);
       btn.setAttribute("aria-pressed", String(collectionState.timeline));
-      btn.title = collectionState.timeline ? "Hide timeline" : "Show timeline";
+      btn.title = collectionState.timeline ? T("profile.records.hideTimeline") : T("profile.records.showTimeline");
       btn.setAttribute("aria-label", btn.title);
     });
   }
@@ -2588,7 +2591,7 @@
     const start = total ? (page - 1) * pageSize : 0;
     const end = total ? Math.min(start + pageSize, total) : 0;
     const label = $("#profile-collection-page-label");
-    if (label) label.textContent = total ? `Showing ${numberFmt.format(start + 1)}–${numberFmt.format(end)} of ${numberFmt.format(total)}` : "";
+    if (label) label.textContent = total ? T("profile.records.showingRange", { start: start + 1, end, total }) : "";
     const pages = $("#profile-collection-pages");
     if (pages) {
       const step = (target, icon, title, disabled) => `<button type="button" data-collection-page="${target}" title="${title}" aria-label="${title}"${disabled ? " disabled" : ""}><span class="material-symbols-rounded" aria-hidden="true">${icon}</span></button>`;
@@ -2597,7 +2600,7 @@
         const active = entry === page;
         return `<button type="button" class="${active ? "active" : ""}" data-collection-page="${entry}"${active ? ' aria-current="page" disabled' : ""}>${numberFmt.format(entry)}</button>`;
       }).join("");
-      pages.innerHTML = step(page - 1, "chevron_left", "Previous page", page <= 1) + numbers + step(page + 1, "chevron_right", "Next page", page >= pageCount);
+      pages.innerHTML = step(page - 1, "chevron_left", T("common.paging.previous"), page <= 1) + numbers + step(page + 1, "chevron_right", T("common.paging.next"), page >= pageCount);
     }
   }
 
@@ -2659,9 +2662,9 @@
     } catch (e) {
       if (e?.name === "AbortError") return;
       const grid = $("#profile-collection-grid");
-      if (grid && !snapshot.restored && snapshot.current()) grid.innerHTML = empty("Collections could not be loaded.");
+      if (grid && !snapshot.restored && snapshot.current()) grid.innerHTML = empty(T("profile.collection.loadFailed"));
       renderCollectionPager({ total: collectionState.total, page: collectionState.page, page_size: collectionState.pageSize });
-      toast(e.message || "Collections could not be loaded", true);
+      toast(e.message || T("profile.collection.loadFailedToast"), true);
     } finally {
       collectionState.loading = false;
       if (Number(params.get("page_size")) !== collectionPageSize()) {
@@ -2674,7 +2677,7 @@
   let collectionMonthBar = null;
   const collectionBar = () => collectionMonthBar || (collectionMonthBar = createMonthBar({
     host: () => $("#profile-collection-timeline"),
-    noun: (value) => `${numberFmt.format(value)} ${Number(value) === 1 ? "title" : "titles"}`,
+    noun: (value) => T("profile.nouns.title", { count: Number(value) || 0 }),
     zoom: collectionState.zoom,
     onZoom: (level) => {
       collectionState.zoom = level;
@@ -2703,8 +2706,8 @@
         const item = collectionState.items.find((entry) => String(entry.key) === action.dataset.collectionActions);
         if (!item) return;
         const card = action.closest("[data-collection-key]");
-        const entries = [{ label: "View media details", icon: "info", run: () => card?.querySelector("[data-profile-poster-key]")?.click() }];
-        if (collectionSelectable() && !item.shelf_only && window.CW?.ItemActions) entries.unshift({ label: "Manage providers", icon: "edit", run: () => window.CW.ItemActions.openMenu({ anchor: action, feature: "collection", item: { ...collectionSelectionEntry(item), tmdb: item.tmdb }, refs: { present: timelineEndpoints(collectionSelectionEntry(item).present), missing: [] }, fillMissing: true, scope: () => [card], onChanged: () => { invalidateLists(); return loadCollection({ quiet: true }); } }) });
+        const entries = [{ label: T("profile.cards.viewDetails"), icon: "info", run: () => card?.querySelector("[data-profile-poster-key]")?.click() }];
+        if (collectionSelectable() && !item.shelf_only && window.CW?.ItemActions) entries.unshift({ label: T("profile.cards.manageProviders"), icon: "edit", run: () => window.CW.ItemActions.openMenu({ anchor: action, feature: "collection", item: { ...collectionSelectionEntry(item), tmdb: item.tmdb }, refs: { present: timelineEndpoints(collectionSelectionEntry(item).present), missing: [] }, fillMissing: true, scope: () => [card], onChanged: () => { invalidateLists(); return loadCollection({ quiet: true }); } }) });
         openCardActions(action, entries, {title:item.title});
         return;
       }
@@ -2882,11 +2885,11 @@
   function timelineChipTitle(ref, role, rating = null) {
     const name = visibleProviderLabel(ref.provider) || ref.provider;
     const label = String(ref.instance || "default").toLowerCase() === "default" ? name : `${name} (${ref.instance})`;
-    const verbs = { present: "On", missing: "Not on", source: "Played on", sink: "Sent to" };
-    return `${verbs[role] || ""} ${label}${rating != null ? ` · ${rating}/10` : ""}`.trim();
+    const verbs = { present: "profile.chips.on", missing: "profile.chips.notOn", source: "profile.chips.playedOn", sink: "profile.chips.sentTo" };
+    return `${verbs[role] ? T(verbs[role], { name: label }) : label}${rating != null ? ` · ${rating}/10` : ""}`.trim();
   }
 
-  function cardActionsButton(attrs, label = "Actions") {
+  function cardActionsButton(attrs, label = T("profile.cards.actions")) {
     return `<button type="button" class="cw-card-actions" ${attrs} title="${esc(label)}" aria-label="${esc(label)}" aria-haspopup="${attrs.includes("data-ia-cover") ? "dialog" : "menu"}"${attrs.includes("data-ia-cover") ? "" : ' aria-expanded="false"'}><span class="material-symbols-rounded" aria-hidden="true">more_horiz</span></button>`;
   }
 
@@ -2920,11 +2923,11 @@
     chips.forEach((chip, index) => { chip.hidden = index >= shown; });
     more.textContent = `+${chips.length - shown}`;
     more.setAttribute("aria-label", `${chips.length - shown} more providers`);
-    more.title = chips.slice(shown).map((chip) => chip.title || chip.getAttribute("aria-label") || "Provider").join("\n");
+    more.title = chips.slice(shown).map((chip) => chip.title || chip.getAttribute("aria-label") || T("common.labels.provider")).join("\n");
     more.onclick = (event) => {
       event.preventDefault();
       event.stopPropagation();
-      openCardActions(more, chips.slice(shown).map((chip) => ({ label: chip.title || chip.getAttribute("aria-label") || "Provider", icon: "account_circle", run: () => { if (chip.matches("button")) chip.click(); } })));
+      openCardActions(more, chips.slice(shown).map((chip) => ({ label: chip.title || chip.getAttribute("aria-label") || T("common.labels.provider"), icon: "account_circle", run: () => { if (chip.matches("button")) chip.click(); } })));
     };
   }
 
@@ -2974,16 +2977,16 @@
       .map((ref) => timelineChipEntry(ref, "present", { action: actionable, ...(withRatings ? { rating: ref.rating } : {}) }))
       .concat(missing.map((ref) => timelineChipEntry(ref, "missing", { action: actionable }))), "cw-hist-provider");
     const coverage = full
-      ? (total === 1 ? "On 1 provider" : "On every provider")
-      : `On ${numberFmt.format(present.length)} of ${numberFmt.format(total)}`;
+      ? (total === 1 ? T("profile.coverage.onOne") : T("profile.coverage.onEvery"))
+      : T("profile.coverage.onOf", { count: present.length, total });
     const label = !comparable
-      ? "Show-level status · Not comparable"
+      ? T("profile.coverage.showLevel")
       : conflict
       ? `${coverage} · Scores differ`
       : coverage;
     const state = conflict ? " is-conflict" : full ? " is-full" : "";
-    const hint = conflict ? "Scores still differ after provider rounding or reaction conversion. Badges show each provider's saved score."
-      : adjusted ? "Equivalent scores. Scores match after provider rounding or reaction conversion. Badges show each provider's saved score." : "Add or remove on your providers";
+    const hint = conflict ? T("profile.coverage.scoresDiffer")
+      : adjusted ? T("profile.coverage.scoresEquivalent") : T("profile.coverage.addRemove");
     const labelHtml = cardActionsButton(actionable ? "data-ia-cover" : "data-hub-details", `${label}. ${hint}`);
     return `<span class="cw-hist-coverage${state}"><span class="cw-hist-providers">${chips}</span>${labelHtml}</span>`;
   }
@@ -2991,10 +2994,10 @@
   function timelineMethod(item) {
     const method = String(item?.method || "").toLowerCase();
     const event = String(item?.event || "").toLowerCase();
-    if (method === "webhook") return ["webhook", "Webhook"];
-    if (event.includes("history")) return ["sync_alt", "History sync"];
-    if (method === "watcher") return ["radar", "Watcher"];
-    return ["sensors", "Scrobble"];
+    if (method === "webhook") return ["webhook", T("profile.scrobble.webhook")];
+    if (event.includes("history")) return ["sync_alt", T("dashboard.widgets.activity.historySync")];
+    if (method === "watcher") return ["radar", T("profile.scrobble.watcher")];
+    return ["sensors", T("profile.scrobble.scrobble")];
   }
 
   function timelineRoute(item) {
@@ -3005,18 +3008,18 @@
     const to = sinks.length
       ? `<span class="material-symbols-rounded cw-hist-route-arrow" aria-hidden="true">arrow_forward</span><span class="cw-hist-providers">${providerChipStrip(sinks.map((ref) => timelineChipEntry(ref, "sink")), "cw-hist-provider")}</span>`
       : "";
-    const label = sinks.length ? `Sent to ${numberFmt.format(sinks.length)}` : "Not sent";
+    const label = sinks.length ? T("profile.scrobble.sentTo", { count: sinks.length }) : T("profile.scrobble.notSent");
     return `<span class="cw-hist-route${sinks.length ? "" : " is-unsent"}">${from}${to}${cardActionsButton("data-hub-route-actions", `${label}. Scrobble actions`)}</span>`;
   }
 
-  const RECORD_PHASE_WORKING = { remove: "Removing…", remove_progress: "Removing…", mark_watched: "Marking watched…", update_progress: "Updating…" };
-  const RECORD_PHASE_DONE = { remove: ["delete", "Removed"], remove_progress: ["delete", "Removed"], mark_watched: ["check_circle", "Watched"] };
+  const RECORD_PHASE_WORKING = { remove: "profile.phase.removing", remove_progress: "profile.phase.removing", mark_watched: "profile.phase.markingWatched", update_progress: "profile.phase.updating" };
+  const RECORD_PHASE_DONE = { remove: ["delete", "profile.phase.removed"], remove_progress: ["delete", "profile.phase.removed"], mark_watched: ["check_circle", "profile.phase.watched"] };
 
   function setRecordPhase(node, phase = "", action = "remove") {
     if (!node) return;
-    const label = phase === "working" ? ["progress_activity", RECORD_PHASE_WORKING[action] || "Working…"]
+    const label = phase === "working" ? ["progress_activity", T(RECORD_PHASE_WORKING[action] || "profile.phase.working")]
       : phase === "leaving" ? RECORD_PHASE_DONE[action]
-      : phase === "failed" ? ["error", "Failed"] : null;
+      : phase === "failed" ? ["error", T("common.status.failed")] : null;
     const current = label ? phase : "";
     node.dataset.recordPhase = current;
     node.dataset.recordPhaseAction = current ? action : "";
@@ -3125,11 +3128,11 @@
 
   function timelineKind(item) {
     const type = String(item?.type || "").toLowerCase();
-    if (type === "episode") return ["play_circle", "Episode"];
-    if (type === "season") return ["stacks", "Season"];
-    if (type === "show" || type === "tv") return ["tv", "Show"];
-    if (type === "anime") return ["animation", "Anime"];
-    return ["movie", "Movie"];
+    if (type === "episode") return ["play_circle", T("common.media.episode")];
+    if (type === "season") return ["stacks", T("common.media.season")];
+    if (type === "show" || type === "tv") return ["tv", T("common.media.show")];
+    if (type === "anime") return ["animation", T("common.media.anime")];
+    return ["movie", T("common.media.movie")];
   }
 
   function timelineCode(item) {
@@ -3143,11 +3146,11 @@
     const type = String(item?.type || "").toLowerCase();
     const season = item?.season;
     const episode = item?.episode;
-    if (type === "episode") return season != null && episode != null ? `Season ${season} · Episode ${episode}` : "Episode";
-    if (type === "season") return season != null ? `Season ${season}` : "Season";
-    if (type === "show" || type === "tv") return [yearOf(item), "Show"].filter(Boolean).join(" · ");
-    if (type === "anime") return [yearOf(item), "Anime"].filter(Boolean).join(" · ");
-    return [yearOf(item), "Movie"].filter(Boolean).join(" · ");
+    if (type === "episode") return season != null && episode != null ? `${T("common.media.seasonN", { n: String(season) })} · ${T("common.media.episodeN", { n: String(episode) })}` : T("common.media.episode");
+    if (type === "season") return season != null ? T("common.media.seasonN", { n: String(season) }) : T("common.media.season");
+    if (type === "show" || type === "tv") return [yearOf(item), T("common.media.show")].filter(Boolean).join(" · ");
+    if (type === "anime") return [yearOf(item), T("common.media.anime")].filter(Boolean).join(" · ");
+    return [yearOf(item), T("common.media.movie")].filter(Boolean).join(" · ");
   }
 
   const TIMELINE_ID_KEYS = ["tmdb", "imdb", "tvdb", "trakt", "simkl", "anilist", "mal"];
@@ -3183,18 +3186,18 @@
       }
       return pending;
     };
-    const get = (provider, instance) => labels?.get(`${String(provider).toUpperCase()}:${instance}`) || (String(instance) === "default" ? "Default" : String(instance));
+    const get = (provider, instance) => labels?.get(`${String(provider).toUpperCase()}:${instance}`) || (String(instance) === "default" ? T("common.labels.default") : String(instance));
     return { load, get };
   })();
 
   const recordRemoval = accountPage ? null : (() => {
     const NOTES = {
-      history: { main: "Removes the watched status of the selected titles on the chosen providers.", detail: "Every watch is removed, FLOPPY removes one watch per title. Other sync sources can restore them." },
-      ratings: { main: "Removes the selected ratings from the chosen providers.", detail: "Other sync sources can restore them." },
-      collection: { main: "Removes the selected titles from the chosen provider collections.", detail: "Other sync sources can restore them." },
-      watchlist: { main: "Removes the selected titles from the chosen provider watchlists.", detail: "Other sync sources can restore them." },
+      history: { main: T("profile.remove.historyMain"), detail: T("profile.remove.historyDetail") },
+      ratings: { main: T("profile.remove.ratingsMain"), detail: T("profile.remove.restoreHint") },
+      collection: { main: T("profile.remove.collectionMain"), detail: T("profile.remove.restoreHint") },
+      watchlist: { main: T("profile.remove.watchlistMain"), detail: T("profile.remove.restoreHint") },
     };
-    const PLACES = { history: "provider history", ratings: "provider ratings", collection: "provider collections", watchlist: "provider watchlists" };
+    const PLACES = { history: "profile.remove.places.history", ratings: "profile.remove.places.ratings", collection: "profile.remove.places.collection", watchlist: "profile.remove.places.watchlist" };
     const CONFIRM_MS = 4200;
     const state = { ctx: null, targets: [], picked: new Set(), previewId: "", empty: null, busy: false, outcome: "", feedbackTimer: 0, armedUntil: 0, generation: 0 };
     const emptyHtml = ({ icon = "info", title = "", text = "", tone = "", spin = false } = {}) => `<div class="cw-tl-remove-empty${tone ? ` is-${tone}` : ""}">
@@ -3271,7 +3274,7 @@
       button.dataset.actionResult = state.outcome;
       const icon = button.querySelector(".material-symbols-rounded");
       if (icon) icon.textContent = pending ? "progress_activity" : state.outcome ? (state.outcome === "success" ? "check" : "close") : fallback;
-      const label = pending ? "Removing…" : state.outcome === "success" ? "Remove: Completed" : state.outcome === "failure" ? "Remove: Failed or incomplete" : fallback === "warning" ? "Confirm removal" : "Remove";
+      const label = pending ? T("profile.phase.removing") : state.outcome === "success" ? T("profile.remove.completed") : state.outcome === "failure" ? T("profile.remove.failedIncomplete") : fallback === "warning" ? T("profile.remove.confirmRemoval") : T("common.actions.remove");
       button.title = label;
       button.setAttribute("aria-label", label);
     }
@@ -3287,8 +3290,8 @@
         submit.classList.toggle("is-confirming", armed);
         syncFeedback(submit, armed ? "warning" : "delete");
         submit.lastElementChild.textContent = armed
-          ? `Confirm remove ${count(records)}`
-          : (records ? `Remove ${count(records)} record${records === 1 ? "" : "s"}` : "Remove");
+          ? T("profile.remove.confirmCount", { count: records })
+          : (records ? T("profile.remove.removeRecords", { count: records }) : T("common.actions.remove"));
       }
       if (state.ctx?.trigger) {
         state.ctx.trigger.disabled = state.busy;
@@ -3297,7 +3300,7 @@
       const all = dialog.querySelector("[data-remove-all]");
       if (all) {
         all.disabled = state.busy || !state.targets.length;
-        all.textContent = state.targets.length && state.targets.every((target) => state.picked.has(targetKey(target))) ? "Select none" : "Select all";
+        all.textContent = state.targets.length && state.targets.every((target) => state.picked.has(targetKey(target))) ? T("common.selection.selectNone") : T("common.selection.selectAll");
       }
       dialog.querySelectorAll("[data-remove-close]").forEach((button) => {
         button.disabled = state.busy;
@@ -3327,12 +3330,12 @@
       state.targets = [];
       state.previewId = "";
       if (!ctx.entries.length) {
-        state.empty = { icon: "link_off", title: "Nothing to match", text: "None of the selected rows have ids CrossWatch can match on your providers." };
+        state.empty = { icon: "link_off", title: T("profile.remove.empty.nothingTitle"), text: T("profile.remove.empty.nothingText") };
       } else if (ctx.mode === "watchlist") {
         state.targets = watchlistTargets(ctx.entries);
-        state.empty = { icon: "bookmark_remove", title: "Not on any watchlist", text: "None of the selected titles are on a provider watchlist." };
+        state.empty = { icon: "bookmark_remove", title: T("profile.remove.empty.notOnWatchlistTitle"), text: T("profile.remove.empty.notOnWatchlistText") };
       } else {
-        state.empty = { icon: "progress_activity", title: "Checking providers", text: "Looking up where the selection is synced.", spin: true };
+        state.empty = { icon: "progress_activity", title: T("dashboard.status.checking"), text: T("profile.remove.empty.lookingUp"), spin: true };
         render();
         try {
           const data = await postJson("/api/editor/send/preview", { kind: ctx.kind, items: ctx.entries.map(sendItem) }, 60000);
@@ -3347,11 +3350,11 @@
             count: Number(row.count) || 0,
           }));
           state.empty = data.empty_reason === "pair_baseline_unavailable"
-            ? { icon: "sync_problem", tone: "warn", title: "Run your sync pairs first", text: "CrossWatch only removes records it has seen in a sync run. One or more pairs have not run yet for this feature." }
-            : { icon: "search_off", title: "No matching records", text: "No provider profile has these records in a sync pair that supports removal." };
+            ? { icon: "sync_problem", tone: "warn", title: T("profile.remove.empty.runPairsTitle"), text: T("profile.remove.empty.runPairsText") }
+            : { icon: "search_off", title: T("profile.remove.empty.noMatchTitle"), text: T("profile.remove.empty.noMatchText") };
         } catch (e) {
           if (generation !== state.generation) return;
-          state.empty = { icon: "error", tone: "bad", title: "Could not check providers", text: e.message || "Try again in a moment." };
+          state.empty = { icon: "error", tone: "bad", title: T("profile.remove.empty.checkFailedTitle"), text: e.message || T("profile.remove.empty.tryAgain") };
         }
       }
       if (state.autoPick && state.targets.length) {
@@ -3378,7 +3381,7 @@
         removed: Number(row.result?.removed ?? row.result?.confirmed) || 0,
         skipped: Number(row.result?.skipped) || 0,
         unresolved: Number(row.result?.unresolved) || 0,
-        error: row.error ? "Removal failed" : "",
+        error: row.error ? T("profile.remove.failed") : "",
       }));
     }
 
@@ -3394,7 +3397,7 @@
             removed += Number(data?.deleted_ok) || 0;
             if (data?.error) error = String(data.error);
           } catch (e) {
-            error = e.message || "Removal failed";
+            error = e.message || T("profile.remove.failed");
           }
         }
         rows.push({ provider: target.provider, instance: target.instance, label: "", removed, skipped: Math.max(0, target.entries.length - removed), unresolved: 0, error });
@@ -3440,7 +3443,7 @@
       state.busy = true;
       const markCards = (phase) => (ctx.cards?.() || []).forEach((card) => setRecordPhase(card, phase));
       part("error").textContent = "";
-      part("result").innerHTML = `<div class="cw-tl-remove-line is-running"><span class="material-symbols-rounded" aria-hidden="true">progress_activity</span><span>Removing from ${count(targets.length)} provider profile${targets.length === 1 ? "" : "s"}...</span></div>`;
+      part("result").innerHTML = `<div class="cw-tl-remove-line is-running"><span class="material-symbols-rounded" aria-hidden="true">progress_activity</span><span>${TH("profile.page.removingFrom", {count: targets.length, n: count(targets.length)})}</span></div>`;
       render();
       markCards("working");
       let rows = null;
@@ -3452,14 +3455,14 @@
         markCards(removed ? "leaving" : "failed");
         part("result").innerHTML = resultHtml(rows);
         syncActions();
-        toast(removed ? `Removed ${count(removed)} record${removed === 1 ? "" : "s"}` : "Nothing was removed", !removed);
+        toast(removed ? T("profile.remove.removedRecords", { count: removed }) : T("profile.remove.nothingRemoved"), !removed);
         await new Promise((resolve) => setTimeout(resolve, 750));
         await ctx.onDone?.(clean);
         if (clean) state.picked = new Set();
         if (ctx.mode === "watchlist") {
           if (clean) {
             state.targets = [];
-            state.empty = { icon: "task_alt", tone: "good", title: "Done", text: "Close this dialog to see the refreshed watchlist." };
+            state.empty = { icon: "task_alt", tone: "good", title: T("common.status.done"), text: T("profile.remove.doneText") };
           }
         } else {
           await loadTargets();
@@ -3467,7 +3470,7 @@
       } catch (e) {
         state.outcome = "failure";
         markCards("failed");
-        part("error").textContent = e.message || "Removal failed";
+        part("error").textContent = e.message || T("profile.remove.failed");
         if (!rows) part("result").innerHTML = "";
       } finally {
         state.busy = false;
@@ -3532,9 +3535,9 @@
       state.autoPick = true;
       state.armedUntil = 0;
       part("sub").textContent = [
-        `You are about to remove ${count(entries.length)} selected ${noun}${entries.length === 1 ? "" : "s"} from your ${PLACES[options.kind] || "providers"}.`,
-        usable.length > entries.length ? `Only the first ${count(entries.length)} are used.` : "",
-        skipped ? `${count(skipped)} without matchable ids are skipped.` : "",
+        T("profile.remove.about", { items: T(`profile.nouns.selected.${noun}`, { count: entries.length }), place: T(PLACES[options.kind] || "profile.remove.places.providers") }),
+        usable.length > entries.length ? T("profile.remove.onlyFirst", { count: entries.length }) : "",
+        skipped ? T("profile.remove.skipped", { count: skipped }) : "",
       ].filter(Boolean).join(" ");
       const note = NOTES[options.kind];
       part("note").hidden = !note;
@@ -3594,7 +3597,7 @@
     let scoresSignature = "";
     const meta = () => cfg.sources[state.source];
     const count = (value) => numberFmt.format(Number(value) || 0);
-    const noun = (value) => `${count(value)} ${meta().noun}${Number(value) === 1 ? "" : "s"}`;
+    const noun = (value) => T(`profile.nouns.${meta().noun}`, { count: Number(value) || 0 });
     const selectable = () => !!cfg.selectable && canWriteRecords();
     const selectionKey = (item) => String(item?.key || "");
     const selectionEntry = selectionFields;
@@ -3669,13 +3672,13 @@
       const dates = (Array.isArray(item.watch_epochs) ? item.watch_epochs : [])
         .map((value) => watchDateFmt(epochOf(value)))
         .filter(Boolean);
-      const tip = `Watched ${watches} times${dates.length ? `: ${dates.join(", ")}` : ""}`;
+      const tip = `${T("profile.page.watchedTimes", {count: Number(watches) || 0})}${dates.length ? `: ${dates.join(", ")}` : ""}`;
       return `<span class="cw-hist-rewatch${inline ? " cw-hist-rewatch--inline" : ""}" title="${esc(tip)}" aria-label="${esc(tip)}"><span class="material-symbols-rounded" aria-hidden="true">replay</span>×${esc(count(watches))}</span>`;
     }
 
     function selectBox(key) {
       const checked = state.selected.has(key) ? " checked" : "";
-      return `<label class="cw-tl-select" title="Select"><input type="checkbox" data-timeline-select-item="${esc(key)}"${checked} aria-label="Select"><span class="material-symbols-rounded" aria-hidden="true">check</span></label>`;
+      return `<label class="cw-tl-select" title="${TH("common.selection.select")}"><input type="checkbox" data-timeline-select-item="${esc(key)}"${checked} aria-label="${TH("common.selection.select")}"><span class="material-symbols-rounded" aria-hidden="true">check</span></label>`;
     }
 
     function card(item, timeFmt) {
@@ -3774,9 +3777,9 @@
           (Array.isArray(data.selection) ? data.selection : []).forEach((entry) => {
             if (entry?.key) state.selected.set(String(entry.key), selectionEntry(entry));
           });
-          if (data.selection_truncated) toast(`Selected the first ${count(RECORD_SELECTION_MAX)} results`);
+          if (data.selection_truncated) toast(T("profile.selection.firstResults", { count: RECORD_SELECTION_MAX }));
         } catch (e) {
-          toast(e.message || "Could not select all results", true);
+          toast(e.message || T("profile.selection.selectAllFailed"), true);
         }
       }
       syncSelection();
@@ -3786,11 +3789,11 @@
       if (!selectable() || state.removingLog || state.source !== "scrobble") return;
       const ids = [...new Set(entries.map(entry => entry.id).filter(Boolean))];
       if (!ids.length) return;
-      const label = ids.length === 1 ? "this scrobble log entry" : `these ${count(ids.length)} scrobble log entries`;
-      const message = 'This only clears the local scrobble log. Watch history on your providers, including CW Tracker, stays unchanged.';
+      const title = T("profile.scrobble.deleteTitle", { count: ids.length });
+      const message = T("profile.scrobble.deleteMessage");
       const confirmed = window.CW?.MobileUI?.mobile()
-        ? await window.CW.MobileUI.confirm({title:`Delete ${label}?`, message, confirmLabel:'Delete'})
-        : window.confirm(`Delete ${label}?\n\n${message}`);
+        ? await window.CW.MobileUI.confirm({title, message, confirmLabel:T("common.actions.delete")})
+        : window.confirm(`${title}\n\n${message}`);
       if (!confirmed) return;
       state.removingLog = true;
       syncSelection();
@@ -3798,9 +3801,9 @@
         const result = await post("/api/profile/history/scrobbles/remove", {ids});
         for (const [key, entry] of state.selected) if (ids.includes(entry.id)) state.selected.delete(key);
         await load({quiet:true});
-        toast(result.removed ? `Deleted ${count(result.removed)} scrobble log ${result.removed === 1 ? "entry" : "entries"}` : "These log entries have already been removed");
+        toast(result.removed ? T("profile.scrobble.deleted", { count: result.removed }) : T("profile.scrobble.alreadyRemoved"));
       } catch (error) {
-        toast(error.message || "Could not delete scrobble log entries", true);
+        toast(error.message || T("profile.scrobble.deleteFailed"), true);
       } finally {
         state.removingLog = false;
         syncSelection();
@@ -3869,7 +3872,7 @@
         host.innerHTML = groups.map((group) => `<section class="cw-hist-day" data-timeline-month="${esc(timelineMonthKey(group.epoch))}">
           <div class="cw-hist-day-head">
             <span class="material-symbols-rounded" aria-hidden="true">schedule</span>
-            <h3>${esc(group.epoch ? dayFmt(group.epoch) : "No date")}</h3>
+            <h3>${esc(group.epoch ? dayFmt(group.epoch) : T("profile.records.noDate"))}</h3>
             <span class="cw-hist-day-count">${esc(noun(group.items.length))}</span>
           </div>
           <div class="cw-hist-day-body">${group.items.map(render).join("")}</div>
@@ -3901,7 +3904,7 @@
     function tile(label, note, value, coverage = "") {
       const tag = coverage ? "button" : "span";
       const active = !!coverage && state.coverage === coverage;
-      const attrs = coverage ? ` type="button" data-timeline-coverage-set="${esc(coverage)}" aria-pressed="${active}" title="Filter on ${esc(label.toLowerCase())}"` : "";
+      const attrs = coverage ? ` type="button" data-timeline-coverage-set="${esc(coverage)}" aria-pressed="${active}" title="${TH("profile.records.filterOn", { label: label.toLowerCase() })}"` : "";
       return `<${tag} class="cw-hub-records-stat${active ? " active" : ""}"${attrs}${coverage ? "" : ` title="${esc(note)}"`}><strong>${esc(value)}</strong><span>${esc(label)}</span></${tag}>`;
     }
 
@@ -3934,7 +3937,7 @@
       const signature = JSON.stringify([counts?.all || 0, histogram]);
       if (signature !== scoresSignature) {
         scoresSignature = signature;
-        const all = `<button type="button" data-timeline-rating="" title="${esc(`All scores · ${noun(counts?.all)}`)}"><span class="cw-hist-score-value">All</span><small>${esc(count(counts?.all))}</small></button>`;
+        const all = `<button type="button" data-timeline-rating="" title="${TH("profile.ratings.allScores", { count: noun(counts?.all) })}"><span class="cw-hist-score-value">${TH("profile.types.all")}</span><small>${esc(count(counts?.all))}</small></button>`;
         host.innerHTML = all + values.map((value) => {
           const amount = Number(histogram[value]) || 0;
           const height = amount ? Math.max(8, Math.round((amount / max) * 100)) : 0;
@@ -3958,7 +3961,7 @@
       const rows = Array.isArray(providers) ? providers : [];
       const known = rows.map((entry) => String(entry?.provider || "").toLowerCase()).filter(Boolean);
       if (state.provider && !known.includes(state.provider)) state.provider = "";
-      select.innerHTML = [`<option value="">All providers</option>`].concat(rows.map((entry) => {
+      select.innerHTML = [`<option value="">${TH("profile.records.allProviders")}</option>`].concat(rows.map((entry) => {
         const key = String(entry?.provider || "").toLowerCase();
         const label = visibleProviderLabel(key) || key.toUpperCase();
         return `<option value="${esc(key)}" data-provider="${esc(key)}" data-label="${esc(label)}">${esc(label)} (${esc(count(entry?.count))})</option>`;
@@ -3975,7 +3978,7 @@
         menuClassName: "cw-profile-collection-menu",
         menuMinWidth: 230,
         getOptionData: (value, option) => ({
-          label: option?.textContent?.trim() || "Coverage",
+          label: option?.textContent?.trim() || T("profile.coverage.label"),
           icons: [{ symbol: icons[value] || "filter_list" }],
         }),
       });
@@ -3994,7 +3997,7 @@
       const start = total ? (page - 1) * pageSize : 0;
       const end = total ? Math.min(start + pageSize, total) : 0;
       const label = q("page-label");
-      if (label) label.textContent = total ? `Showing ${numberFmt.format(start + 1)}–${numberFmt.format(end)} of ${numberFmt.format(total)}` : "";
+      if (label) label.textContent = total ? T("profile.records.showingRange", { start: start + 1, end, total }) : "";
       const pages = q("pages");
       if (!pages) return;
       const step = (target, icon, title, disabled) => `<button type="button" data-timeline-page="${target}" title="${title}" aria-label="${title}"${disabled ? " disabled" : ""}><span class="material-symbols-rounded" aria-hidden="true">${icon}</span></button>`;
@@ -4003,7 +4006,7 @@
         const active = entry === page;
         return `<button type="button" class="${active ? "active" : ""}" data-timeline-page="${entry}"${active ? ' aria-current="page" disabled' : ""}>${numberFmt.format(entry)}</button>`;
       }).join("");
-      pages.innerHTML = step(page - 1, "chevron_left", "Previous page", page <= 1) + numbers + step(page + 1, "chevron_right", "Next page", page >= pageCount);
+      pages.innerHTML = step(page - 1, "chevron_left", T("common.paging.previous"), page <= 1) + numbers + step(page + 1, "chevron_right", T("common.paging.next"), page >= pageCount);
     }
 
     function syncSourceUi() {
@@ -4011,8 +4014,8 @@
       const host = panel();
       const remove = q("bulk")?.querySelector("[data-timeline-remove]");
       if (remove) {
-        remove.lastChild.textContent = state.source === "scrobble" ? "Delete log" : "Remove";
-        remove.setAttribute("aria-label", state.source === "scrobble" ? "Delete selected scrobble log entries" : "Remove selected records");
+        remove.lastChild.textContent = state.source === "scrobble" ? T("profile.scrobble.deleteLog") : T("common.actions.remove");
+        remove.setAttribute("aria-label", state.source === "scrobble" ? T("profile.scrobble.deleteSelected") : T("profile.remove.removeSelected"));
       }
       if (host) {
         host.dataset.source = state.source;
@@ -4040,13 +4043,13 @@
       host?.querySelectorAll("[data-timeline-toggle]").forEach((btn) => {
         btn.classList.toggle("active", state.timeline);
         btn.setAttribute("aria-pressed", String(state.timeline));
-        btn.title = state.timeline ? "Hide timeline" : "Show timeline";
+        btn.title = state.timeline ? T("profile.records.hideTimeline") : T("profile.records.showTimeline");
         btn.setAttribute("aria-label", btn.title);
       });
       const filters = host?.querySelector("[data-timeline-filters-toggle]");
       if (filters) {
         filters.hidden = !source.coverage;
-        filters.textContent = state.coverage === "all" ? "Filters" : "Filters · 1";
+        filters.textContent = state.coverage === "all" ? T("common.labels.filters") : `${T("common.labels.filters")} · 1`;
         filters.classList.toggle("active", state.coverage !== "all");
         if (!source.coverage) {
           q("filters").hidden = true;
@@ -4184,9 +4187,9 @@
           const card = routeActions.closest("[data-timeline-key]");
           const item = state.items.find(row => selectionKey(row) === card?.dataset.timelineKey);
           openCardActions(routeActions, [
-            { label: "View media details", icon: "info", run: () => card?.querySelector("[data-profile-poster-key]")?.click() },
-            ...(routeActions.hasAttribute("data-hub-route-actions") ? [{ label: "Open synced history", icon: "history", run: () => setSource("synced") }] : []),
-            ...(state.source === "scrobble" && selectable() && item?.id ? [{ label: "Delete log entry", icon: "delete", danger: true, disabled:state.removingLog, run: () => void removeScrobbleLog([item]) }] : []),
+            { label: T("profile.cards.viewDetails"), icon: "info", run: () => card?.querySelector("[data-profile-poster-key]")?.click() },
+            ...(routeActions.hasAttribute("data-hub-route-actions") ? [{ label: T("profile.cards.openHistory"), icon: "history", run: () => setSource("synced") }] : []),
+            ...(state.source === "scrobble" && selectable() && item?.id ? [{ label: T("profile.cards.deleteLog"), icon: "delete", danger: true, disabled:state.removingLog, run: () => void removeScrobbleLog([item]) }] : []),
           ]);
           return;
         }
@@ -4305,14 +4308,14 @@
   const coverageTiles = (stats, tile, count) => {
     const endpoints = Number(stats.endpoints) || 0;
     return [
-      tile("Everywhere", endpoints === 1 ? "On your provider" : `On all ${count(endpoints)} providers`, count(stats.full), "full"),
-      tile("Missing", "On some providers", count(stats.partial), "partial"),
+      tile(T("profile.tiles.everywhere"), endpoints === 1 ? T("profile.tiles.onYourProvider") : T("profile.tiles.onAll", { count: endpoints }), count(stats.full), "full"),
+      tile(T("profile.tiles.missing"), T("profile.tiles.onSome"), count(stats.partial), "partial"),
     ];
   };
 
   const historyPanel = accountPage ? null : createTimelinePanel({
     key: "history",
-    title: "History",
+    title: T("profile.history.title"),
     endpoint: "/api/profile/history",
     prefsKey: "cw.profile.history",
     aliases: { synced: "synced", sync: "synced", scrobble: "scrobble", scrobbles: "scrobble" },
@@ -4323,16 +4326,16 @@
         removeKind: "history",
         coverage: true,
         scores: false,
-        title: "Synced history",
+        title: T("profile.history.sourceSynced"),
         lede: "",
         noun: "play",
-        search: "Search synced history...",
-        empty: "No synced plays match this view.",
-        types: [["all", "apps", "All"], ["movie", "movie", "Movies"], ["episode", "play_circle", "Episodes"]],
+        search: T("profile.history.search"),
+        empty: T("profile.history.empty"),
+        types: [["all", "apps", T("profile.types.all")], ["movie", "movie", T("common.media.movies")], ["episode", "play_circle", T("common.media.episodes")]],
         tiles: (stats, tile, count) => [
-          tile("Plays", `${count(stats.plays)} ${Number(stats.plays) === 1 ? "title" : "titles"}`, count(stats.watches ?? stats.plays)),
+          tile(T("profile.tiles.plays"), T("profile.nouns.title", { count: Number(stats.plays) || 0 }), count(stats.watches ?? stats.plays)),
           ...coverageTiles(stats, tile, count),
-          tile("Providers", "Holding history", count(stats.endpoints)),
+          tile(T("settings.sync.providers"), T("profile.tiles.holdingHistory"), count(stats.endpoints)),
         ],
       },
       scrobble: {
@@ -4340,17 +4343,17 @@
         removeKind: "history",
         coverage: false,
         scores: false,
-        title: "Scrobbles",
-        lede: "Plays CrossWatch caught live from watchers and webhooks, and where it sent them",
+        title: T("profile.history.sourceScrobbles"),
+        lede: T("profile.scrobble.lede"),
         noun: "scrobble",
-        search: "Search scrobbles...",
-        empty: "No scrobbles match this view.",
-        types: [["all", "apps", "All"], ["movie", "movie", "Movies"], ["episode", "play_circle", "Episodes"]],
+        search: T("profile.scrobble.search"),
+        empty: T("profile.scrobble.empty"),
+        types: [["all", "apps", T("profile.types.all")], ["movie", "movie", T("common.media.movies")], ["episode", "play_circle", T("common.media.episodes")]],
         tiles: (stats, tile, count) => [
-          tile("Scrobbles", "Recorded live", count(stats.plays)),
-          tile("Movies", "Scrobbled", count(stats.movies)),
-          tile("Episodes", "Scrobbled", count(stats.episodes)),
-          tile("Hours", "Watched", numberFmt.format(Math.round((Number(stats.hours) || 0) * 10) / 10)),
+          tile(T("profile.history.sourceScrobbles"), T("profile.tiles.recordedLive"), count(stats.plays)),
+          tile(T("common.media.movies"), T("dashboard.activity.scrobbled"), count(stats.movies)),
+          tile(T("common.media.episodes"), T("dashboard.activity.scrobbled"), count(stats.episodes)),
+          tile(T("profile.tiles.hours"), T("common.media.watched"), numberFmt.format(Math.round((Number(stats.hours) || 0) * 10) / 10)),
         ],
       },
     },
@@ -4368,18 +4371,18 @@
         removeKind: "ratings",
         coverage: true,
         scores: true,
-        title: "Ratings",
+        title: T("profile.ratings.title"),
         lede: "",
         noun: "rating",
-        search: "Search ratings...",
-        empty: "No ratings match this view.",
-        types: [["all", "apps", "All"], ["movie", "movie", "Movies"], ["show", "tv", "Shows"], ["season", "stacks", "Seasons"], ["episode", "play_circle", "Episodes"]],
+        search: T("profile.ratings.search"),
+        empty: T("profile.ratings.empty"),
+        types: [["all", "apps", T("profile.types.all")], ["movie", "movie", T("common.media.movies")], ["show", "tv", T("common.media.shows")], ["season", "stacks", T("common.media.seasons")], ["episode", "play_circle", T("common.media.episodes")]],
         tiles: (stats, tile, count) => {
           const average = Number(stats.average) || 0;
           return [
-            tile("Ratings", average ? `Average ${numberFmt.format(average)} / 10` : "Synced ratings", count(stats.plays)),
+            tile(T("profile.ratings.title"), average ? T("profile.tiles.average", { value: average }) : T("profile.tiles.syncedRatings"), count(stats.plays)),
             ...coverageTiles(stats, tile, count),
-            tile("Conflicts", "Scores differ", count(stats.mismatch), "mismatch"),
+            tile(T("profile.tiles.conflicts"), T("profile.records.coverageMismatch"), count(stats.mismatch), "mismatch"),
           ];
         },
       },
@@ -4400,16 +4403,16 @@
         removeKind: "watchlist",
         coverage: true,
         scores: false,
-        title: "Watchlist",
+        title: T("common.media.watchlist"),
         lede: "",
         noun: "title",
-        search: "Filter by title, id or provider...",
-        empty: "No watchlist titles match this view.",
-        types: [["all", "apps", "All"], ["movie", "movie", "Movies"], ["show", "tv", "Shows"], ["anime", "animation", "Anime"]],
+        search: T("profile.watchlist.search"),
+        empty: T("profile.watchlist.empty"),
+        types: [["all", "apps", T("profile.types.all")], ["movie", "movie", T("common.media.movies")], ["show", "tv", T("common.media.shows")], ["anime", "animation", T("common.media.anime")]],
         tiles: (stats, tile, count) => [
-          tile("Titles", "On your watchlists", count(stats.plays)),
+          tile(T("profile.tiles.titles"), T("profile.tiles.onWatchlists"), count(stats.plays)),
           ...coverageTiles(stats, tile, count),
-          tile("Providers", "Holding watchlists", count(stats.endpoints)),
+          tile(T("settings.sync.providers"), T("profile.tiles.holdingWatchlists"), count(stats.endpoints)),
         ],
       },
     },
@@ -4486,7 +4489,7 @@
         return payload;
       } catch (error) {
         finishHubRequest(entry, null, true);
-        return { ok: false, message: String(error?.message || error || "Request failed") };
+        return { ok: false, message: String(error?.message || error || T("profile.playback.requestFailed")) };
       }
     }
 
@@ -4512,13 +4515,13 @@
       if (!values.length) return Math.min(25, top);
       return Math.max(2, Math.min(top, Math.round(values.reduce((sum, value) => sum + value, 0) / values.length)));
     };
-    const actionTitle = (action) => (action === "mark_watched" ? "Mark as watched" : action === "update_progress" ? "Edit progress" : "Remove progress");
+    const actionTitle = (action) => (action === "mark_watched" ? T("profile.playback.markWatchedTitle") : action === "update_progress" ? T("profile.playback.edit") : T("profile.playback.removeTitle"));
 
-    const titleFor = (item) => (item?.media_type === "movie" ? (item?.title || "Untitled") : (item?.series_title || item?.title || "Untitled"));
+    const titleFor = (item) => (item?.media_type === "movie" ? (item?.title || T("common.media.untitled")) : (item?.series_title || item?.title || T("common.media.untitled")));
     const codeFor = (item) => (item?.media_type !== "movie" && item?.season != null && item?.episode != null ? `S${timelinePad(item.season)}E${timelinePad(item.episode)}` : "");
     const subtitleFor = (item) => {
-      if (item?.media_type === "movie") return [item?.year, "Movie"].filter(Boolean).join(" · ");
-      return [item?.episode_title, item?.media_type === "anime_episode" ? "Anime" : "Episode"].filter(Boolean).join(" · ");
+      if (item?.media_type === "movie") return [item?.year, T("common.media.movie")].filter(Boolean).join(" · ");
+      return [item?.episode_title, item?.media_type === "anime_episode" ? T("common.media.anime") : T("common.media.episode")].filter(Boolean).join(" · ");
     };
     const formatRating = (value) => {
       const rating = Number(value);
@@ -4533,7 +4536,7 @@
           label = label.slice(prefix.length).replace(/^[\s_-]+/, "").trim();
         }
       }
-      return label || String(p?.instance_id || "").trim() || "Default";
+      return label || String(p?.instance_id || "").trim() || T("common.labels.default");
     };
     const settingsLabel = (p) => profileLabel(p);
     const providerOrder = (provider) => {
@@ -4543,7 +4546,7 @@
     };
     const progressRowsOf = (item) => recordsOf(item).map((record, index) => {
       const provider = String(record?.provider || "").toUpperCase();
-      const account = String(record?.instance_id || "default").toLowerCase() === "default" ? "Default" : profileLabel(record);
+      const account = String(record?.instance_id || "default").toLowerCase() === "default" ? T("common.labels.default") : profileLabel(record);
       const name = `${visibleProviderLabel(provider) || provider} · ${account}`;
       return { rid: String(index), provider, instance: String(record?.instance_id || "default"), provider_label: name, label: codeFor(item) ? `${codeFor(item)} on ${name}` : name, record };
     });
@@ -4562,27 +4565,27 @@
     };
     const errorName = (error) => {
       const provider = String(error?.provider || "").trim();
-      const label = String(error?.provider_label || visibleProviderLabel(provider) || provider || "Provider").trim();
+      const label = String(error?.provider_label || visibleProviderLabel(provider) || provider || T("common.labels.provider")).trim();
       const instance = String(error?.instance_label || error?.instance_id || "").trim();
       return !instance || /^default$/i.test(instance) || instance.toLowerCase() === label.toLowerCase() ? label : `${label} · ${instance}`;
     };
     const errorTitle = (error) => {
       const code = String(error?.error_code || "").toLowerCase();
-      if (code === "provider_timeout") return "Timed out";
-      if (code === "provider_unavailable") return "Unavailable";
-      if (code === "not_configured") return "Needs attention";
-      if (code.startsWith("http:")) return `Returned ${code.slice(5)}`;
-      return error?.retryable ? "Could not refresh" : "Notice";
+      if (code === "provider_timeout") return T("profile.playback.timedOut");
+      if (code === "provider_unavailable") return T("common.status.unavailable");
+      if (code === "not_configured") return T("profile.activity.status.attention");
+      if (code.startsWith("http:")) return T("profile.playback.returned", { code: code.slice(5) });
+      return error?.retryable ? T("profile.refresh.failed") : T("profile.playback.notice");
     };
 
     function selectBox(key) {
       if (!canAct()) return "";
       const checked = state.selected.has(key) ? " checked" : "";
-      return `<label class="cw-tl-select" title="Select"><input type="checkbox" data-playback-select="${esc(key)}"${checked} aria-label="Select"><span class="material-symbols-rounded" aria-hidden="true">check</span></label>`;
+      return `<label class="cw-tl-select" title="${TH("common.selection.select")}"><input type="checkbox" data-playback-select="${esc(key)}"${checked} aria-label="${TH("common.selection.select")}"><span class="material-symbols-rounded" aria-hidden="true">check</span></label>`;
     }
 
     function actions(item, key) {
-      return cardActionsButton(`data-playback-menu="${esc(key)}"`, `Actions for ${titleFor(item)}`);
+      return cardActionsButton(`data-playback-menu="${esc(key)}"`, T("profile.cards.actionsFor", { title: titleFor(item) }));
     }
 
     function card(item) {
@@ -4593,7 +4596,7 @@
       const remaining = remainingOf(item);
       const live = liveState(item);
       const liveBadge = live === "playing" || live === "buffering"
-        ? `<span class="cw-hist-badge cw-play-live"><span class="cw-play-live-dot" aria-hidden="true"></span>${live === "playing" ? "Playing now" : "Buffering"}</span>`
+        ? `<span class="cw-hist-badge cw-play-live"><span class="cw-play-live-dot" aria-hidden="true"></span>${live === "playing" ? T("profile.playback.playingNow") : T("profile.playback.buffering")}</span>`
         : "";
       const rating = Number(item?.rating) > 0
         ? `<span class="cw-play-rating" title="Rating ${esc(formatRating(item.rating))}"><span class="material-symbols-rounded" aria-hidden="true">star</span>${esc(formatRating(item.rating))}</span>`
@@ -4610,7 +4613,7 @@
         <span class="cw-hist-info">
           <strong class="cw-hist-name">${esc(title)}</strong>
           <span class="cw-play-meta"><span class="cw-hist-meta">${esc(subtitleFor(item))}</span>${rating}</span>
-          <span class="cw-play-progress"><strong>${pct == null ? "Unknown" : `${Math.round(pct)}%`} watched</strong><span>${esc(pausedLabel(item))}</span></span>
+          <span class="cw-play-progress"><strong>${pct == null ? TH("profile.playback.unknownWatched") : TH("profile.playback.percentWatched", { percent: `${Math.round(pct)}%` })}</strong><span>${esc(pausedLabel(item))}</span></span>
           <span class="cw-play-foot"><span class="cw-hist-providers">${providerChips(item)}</span>${actions(item, key)}</span>
         </span>
       </article>`;
@@ -4625,17 +4628,17 @@
         <button class="cw-hist-cell cw-hist-cell--art cw-play-open" type="button" data-profile-poster-key="${esc(storePosterItem(item))}" aria-label="Show details for ${esc(title)}">${timelineArt(item)}</button>
         <span class="cw-hist-cell cw-hist-cell--title">${selectBox(key)}<strong>${esc(title)}</strong>${code ? `<span class="cw-collection-pill">${esc(code)}</span>` : ""}</span>
         <span class="cw-hist-cell cw-hist-cell--when"><strong>${esc(remainingOf(item) || "—")}</strong><small>${esc(pausedLabel(item))}</small></span>
-        <span class="cw-hist-cell cw-hist-cell--type cw-play-cell--progress"><span class="cw-play-meter"><i style="width:${pct ?? 0}%"></i></span><strong>${pct == null ? "Unknown" : `${Math.round(pct)}%`}</strong></span>
+        <span class="cw-hist-cell cw-hist-cell--type cw-play-cell--progress"><span class="cw-play-meter"><i style="width:${pct ?? 0}%"></i></span><strong>${pct == null ? TH("common.status.unknown") : `${Math.round(pct)}%`}</strong></span>
         <span class="cw-hist-cell cw-hist-cell--where"><span class="cw-play-foot"><span class="cw-hist-providers">${providerChips(item)}</span>${actions(item, key)}</span></span>
       </article>`;
     }
 
     function emptyMessage() {
       const configured = state.providers.filter((p) => p.configured && p.read);
-      if (!configured.length) return "Connect a compatible provider to see playback progress.";
-      if (!configured.some((p) => p.included !== false)) return "Enable at least one provider profile under Providers.";
-      if (state.loading.length) return "Still waiting for a provider to respond.";
-      return state.errors.length ? "No playback records could be loaded." : "Nothing unfinished right now.";
+      if (!configured.length) return T("profile.playback.emptyConnect");
+      if (!configured.some((p) => p.included !== false)) return T("profile.playback.emptyEnable");
+      if (state.loading.length) return T("profile.playback.emptyWaiting");
+      return state.errors.length ? T("profile.playback.emptyFailed") : T("profile.playback.emptyNothing");
     }
 
     let playbackPaint = null;
@@ -4669,7 +4672,7 @@
         host.innerHTML = groups.map((group) => `<section class="cw-hist-day" data-timeline-month="${esc(timelineMonthKey(group.epoch))}">
           <div class="cw-hist-day-head">
             <span class="material-symbols-rounded" aria-hidden="true">pause_circle</span>
-            <h3>${esc(group.epoch ? dayFmt(group.epoch) : "Unknown date")}</h3>
+            <h3>${esc(group.epoch ? dayFmt(group.epoch) : T("profile.records.unknownDate"))}</h3>
             <span class="cw-hist-day-count">${esc(`${count(group.items.length)} unfinished`)}</span>
           </div>
           <div class="cw-hist-day-body">${group.items.map(render).join("")}</div>
@@ -4693,7 +4696,7 @@
         button.disabled = !!pending;
         button.setAttribute("aria-busy", String(active && !result));
         button.dataset.actionResult = result || "";
-        const label = result ? `${actionTitle(action)}: ${result === "success" ? "Completed" : "Failed"}` : active ? pending.message : actionTitle(action);
+        const label = result ? `${actionTitle(action)}: ${T(result === "success" ? "profile.page.completed" : "profile.page.failed")}` : active ? pending.message : actionTitle(action);
         button.title = label;
         button.setAttribute("aria-label", label);
         const icon = button.querySelector(".material-symbols-rounded");
@@ -4765,10 +4768,10 @@
       const failing = new Set(state.errors.map((error) => `${error.provider}:${error.instance_id}`)).size;
       const pending = state.loading.filter(entry => !entry.cached).length;
       host.innerHTML = [
-        tile("Unfinished", "Across your players", count(summary.total ?? state.total)),
-        tile("Almost done", "90% or more watched", count(summary.almost_done), { key: "progress", value: "90:100" }),
-        tile("Paused 30+ days", "Paused over 30 days", count(summary.stale), { key: "age", value: "older_30d" }),
-        tile("Providers", failing ? `${count(failing)} need attention` : pending ? `${count(pending)} still loading` : "All responding", `${count(Math.max(0, readable - failing - pending))}/${count(readable)}`),
+        tile(T("profile.tiles.unfinished"), T("profile.tiles.acrossPlayers"), count(summary.total ?? state.total)),
+        tile(T("profile.playback.almostDone"), T("profile.tiles.ninetyWatched"), count(summary.almost_done), { key: "progress", value: "90:100" }),
+        tile(T("profile.tiles.paused30"), T("profile.tiles.pausedOver30"), count(summary.stale), { key: "age", value: "older_30d" }),
+        tile(T("settings.sync.providers"), failing ? T("profile.tiles.needAttention", { count: failing }) : pending ? T("profile.tiles.stillLoading", { count: pending }) : T("profile.tiles.allResponding"), `${count(Math.max(0, readable - failing - pending))}/${count(readable)}`),
       ].join("");
     }
 
@@ -4776,8 +4779,8 @@
       const host = q("types");
       if (!host) return;
       const summary = state.summary || {};
-      const rows = [["", "apps", "All", summary.total], ["movie", "movie", "Movies", summary.movies], ["episode", "play_circle", "Episodes", summary.episodes]];
-      if (Number(summary.anime) > 0 || state.filters.type === "anime_episode") rows.push(["anime_episode", "animation", "Anime", summary.anime]);
+      const rows = [["", "apps", T("profile.types.all"), summary.total], ["movie", "movie", T("common.media.movies"), summary.movies], ["episode", "play_circle", T("common.media.episodes"), summary.episodes]];
+      if (Number(summary.anime) > 0 || state.filters.type === "anime_episode") rows.push(["anime_episode", "animation", T("common.media.anime"), summary.anime]);
       host.innerHTML = rows.map(([value, icon, label, amount]) => `<button class="${state.filters.type === value ? "active" : ""}" type="button" data-playback-type="${esc(value)}" aria-pressed="${state.filters.type === value}">
           <span class="material-symbols-rounded" aria-hidden="true">${esc(icon)}</span>
           <span>${esc(label)}</span>
@@ -4789,7 +4792,7 @@
       const select = q("provider");
       if (!select) return;
       const readable = state.providers.filter((p) => p.read && p.configured && p.included !== false);
-      const options = [`<option value="">All providers</option>`].concat(readable.map((p) => {
+      const options = [`<option value="">${TH("profile.records.allProviders")}</option>`].concat(readable.map((p) => {
         const provider = String(p.provider || "");
         const instance = String(p.instance_id || "default");
         const label = String(p.instance_label || "").trim() || visibleProviderLabel(provider) || provider.toUpperCase();
@@ -4816,9 +4819,9 @@
           getOptionData: (value, option) => ({ label: option?.textContent?.trim() || fallback, icons: [{ symbol: icons[value] || icons[""] }] }),
         });
       };
-      enhance(q("progress"), { "": "donut_large", "90:100": "flag" }, "Progress");
-      enhance(q("age"), { "": "schedule", older_30d: "hourglass_bottom" }, "Paused");
-      enhance(q("sort"), { "": "sort", last_updated: "schedule", progress_high: "trending_up", progress_low: "trending_down", remaining_time: "timer", rating_high: "star", title: "sort_by_alpha", provider: "hub" }, "Sort");
+      enhance(q("progress"), { "": "donut_large", "90:100": "flag" }, T("profile.playback.title"));
+      enhance(q("age"), { "": "schedule", older_30d: "hourglass_bottom" }, T("profile.playback.paused"));
+      enhance(q("sort"), { "": "sort", last_updated: "schedule", progress_high: "trending_up", progress_low: "trending_down", remaining_time: "timer", rating_high: "star", title: "sort_by_alpha", provider: "hub" }, T("common.labels.sort"));
     }
 
     function renderErrors() {
@@ -4883,7 +4886,7 @@
       const start = total ? (state.page - 1) * state.pageSize : 0;
       const end = total ? Math.min(start + state.pageSize, total) : 0;
       const label = q("page-label");
-      if (label) label.textContent = total ? `Showing ${numberFmt.format(start + 1)}–${numberFmt.format(end)} of ${numberFmt.format(total)}` : "";
+      if (label) label.textContent = total ? T("profile.records.showingRange", { start: start + 1, end, total }) : "";
       const pages = q("pages");
       if (!pages) return;
       const step = (target, icon, title, disabled) => `<button type="button" data-playback-page="${target}" title="${title}" aria-label="${title}"${disabled ? " disabled" : ""}><span class="material-symbols-rounded" aria-hidden="true">${icon}</span></button>`;
@@ -4892,13 +4895,13 @@
         const active = entry === state.page;
         return `<button type="button" class="${active ? "active" : ""}" data-playback-page="${entry}"${active ? ' aria-current="page" disabled' : ""}>${numberFmt.format(entry)}</button>`;
       }).join("");
-      pages.innerHTML = step(state.page - 1, "chevron_left", "Previous page", state.page <= 1) + numbers + step(state.page + 1, "chevron_right", "Next page", state.page >= pageCount);
+      pages.innerHTML = step(state.page - 1, "chevron_left", T("common.paging.previous"), state.page <= 1) + numbers + step(state.page + 1, "chevron_right", T("common.paging.next"), state.page >= pageCount);
     }
 
     let monthBar = null;
     const bar = () => monthBar || (monthBar = createMonthBar({
       host: () => q("timeline"),
-      noun: (value) => `${count(value)} unfinished`,
+      noun: (value) => T("profile.nouns.unfinished", { count: Number(value) || 0 }),
       zoom: state.zoom,
       onZoom: (level) => {
         state.zoom = level;
@@ -4924,7 +4927,7 @@
       panel()?.querySelectorAll("[data-playback-timeline]").forEach((btn) => {
         btn.classList.toggle("active", state.timeline);
         btn.setAttribute("aria-pressed", String(state.timeline));
-        btn.title = state.timeline ? "Hide timeline" : "Show timeline";
+        btn.title = state.timeline ? T("profile.records.hideTimeline") : T("profile.records.showTimeline");
         btn.setAttribute("aria-label", btn.title);
       });
     }
@@ -4966,7 +4969,7 @@
         state.loading = Array.isArray(data.loading) ? data.loading : [];
         if (!state.loading.length && data.refreshed_at) state.syncedAt = Date.parse(data.refreshed_at) || state.syncedAt;
         if (data.ok === false && !state.errors.length) {
-          state.errors = [{ provider: "", provider_label: "Playback", message: data.message || data.error || "Request failed.", retryable: true }];
+          state.errors = [{ provider: "", provider_label: T("profile.playback.label"), message: data.message || data.error || T("profile.playback.requestFailedDot"), retryable: true }];
         }
         state.failed = data.ok === false;
         if (data.summary && typeof data.summary === "object") state.summary = data.summary;
@@ -5000,9 +5003,9 @@
         return;
       }
       if (data.ok === false) {
-        state.errors = [{provider:"", provider_label:"Playback", message:data.message || data.error || "Request failed.", retryable:true}];
+        state.errors = [{provider:"", provider_label:T("profile.playback.label"), message:data.message || data.error || T("profile.playback.requestFailedDot"), retryable:true}];
         state.failed = true;
-        if (host) host.innerHTML = empty("Playback could not be loaded.");
+        if (host) host.innerHTML = empty(T("profile.playback.loadFailed"));
         renderErrors();
       } else {
         snapshot.update(data);
@@ -5108,7 +5111,7 @@
           event.preventDefault();
           const percent = Number(value.value);
           if (!Number.isFinite(percent) || percent < 2 || percent >= upper) {
-            if (error) error.textContent = `Use at least 2% and below ${Math.round(upper * 100) / 100}%. Use Watched for finished items.`;
+            if (error) error.textContent = T("profile.playback.rangeError", { upper: `${Math.round(upper * 100) / 100}%` });
             return;
           }
           result = Math.round(percent * 100) / 100;
@@ -5147,7 +5150,7 @@
         action,
         keys: new Set(items.map(keyOf)),
         bulk: confirmFirst,
-        message: action === "mark_watched" ? "Marking as watched…" : action === "remove_progress" ? "Removing progress…" : "Updating progress…",
+        message: action === "mark_watched" ? T("profile.playback.markingWatched") : action === "remove_progress" ? T("profile.playback.removingProgress") : T("profile.playback.updatingProgress"),
       };
       syncActionUI();
       try {
@@ -5178,12 +5181,12 @@
           const res = await postJson(urls[action], { ...payloads[0], progress_percent: progressPercent });
           succeeded = !!res.ok;
           showActionResult(action, items, payloads, [res], confirmFirst);
-          toast(res.message || (res.ok ? "Done" : "Action failed"), !res.ok);
+          toast(res.message || (res.ok ? T("common.status.done") : T("profile.playback.actionFailed")), !res.ok);
         } else {
           const res = await postJson("/api/playback_progress/actions/bulk", { action, progress_percent: progressPercent, items: payloads });
           if (res.ok === false && !Array.isArray(res.results)) {
             showActionResult(action, items, payloads, [], confirmFirst);
-            toast(res.message || "Action failed", true);
+            toast(res.message || T("profile.playback.actionFailed"), true);
             return;
           }
           const done = Number(res.successful) || 0;
@@ -5198,7 +5201,7 @@
         if (activeHubTab() === "overview") await loadOverview({force:true});
       } catch (error) {
         if (!state.actionFeedback) showActionResult(action, items, payloads, [], confirmFirst);
-        toast(error?.message || "Could not complete the action. Refresh to check its result.", true);
+        toast(error?.message || T("profile.playback.actionUnknown"), true);
       } finally {
         state.pendingAction = null;
         syncActionUI();
@@ -5241,7 +5244,7 @@
           return `<section class="pf-provider"><div class="pf-provider-head"><h4>${logo ? `<img src="${esc(logo)}" alt="" onerror="this.remove()">` : ""}${esc(label)}</h4></div><span class="pf-options">${pills}</span></section>`;
         })
         .join("");
-      return sections || `<div class="cw-tl-dialog-note">No connected playback providers were found.</div>`;
+      return sections || `<div class="cw-tl-dialog-note">${TH("profile.playback.noProviders")}</div>`;
     }
 
     async function openSettings() {
@@ -5255,12 +5258,12 @@
       const submit = dialog.querySelector('[type="submit"]');
       submit.disabled = true;
       settingsProfiles = [];
-      list.innerHTML = `<div class="cw-tl-dialog-note">Loading provider profiles...</div>`;
+      list.innerHTML = `<div class="cw-tl-dialog-note">${TH("profile.playback.loadingProfiles")}</div>`;
       if (!window.CW?.MobileUI?.openDialog(dialog)) dialog.showModal();
       const data = await request("/api/playback_progress/settings");
       if (!dialog.open) return;
       if (data.ok === false) {
-        list.innerHTML = empty("Playback settings could not be loaded.");
+        list.innerHTML = empty(T("profile.playback.settingsLoadFailed"));
         return;
       }
       settingsProfiles = Array.isArray(data.profiles) ? data.profiles : [];
@@ -5287,7 +5290,7 @@
       const error = q("providers-error");
       const seconds = Number(q("timeout")?.value);
       if (!Number.isFinite(seconds) || seconds < 3 || seconds > 60) {
-        if (error) error.textContent = "Use a timeout between 3 and 60 seconds.";
+        if (error) error.textContent = T("profile.playback.timeoutRange");
         return;
       }
       const profiles = settingsProfiles.filter(p => !(p.configured && p.read)).map(p => ({provider:p.provider, instance_id:p.instance_id, included:p.included !== false})).concat([...(q("provider-list")?.querySelectorAll("input[type=checkbox][data-provider]") || [])].map((input) => ({
@@ -5297,11 +5300,11 @@
       })));
       const res = await postJson(scopeUrl("/api/playback_progress/settings"), { profiles, provider_timeout_seconds: seconds, grouping:q("grouping")?.value || "automatic" });
       if (!res.ok) {
-        if (error) error.textContent = res.message || res.error || "Settings could not be saved.";
+        if (error) error.textContent = res.message || res.error || T("profile.playback.settingsSaveFailed");
         return;
       }
       dialog?.close();
-      toast("Playback settings saved");
+      toast(T("profile.playback.settingsSaved"));
       state.selected.clear();
       if ($("#profile-panel-overview")) void loadOverview().catch(() => {});
       await load({ force: true });
@@ -5321,9 +5324,9 @@
 
     function openActions(anchor, item, openDetails) {
       if (!item || state.pendingAction) return;
-      const entries = [{ label: "View media details", icon: "info", run: openDetails }];
+      const entries = [{ label: T("profile.cards.viewDetails"), icon: "info", run: openDetails }];
       if (canAct()) {
-        for (const [action, icon, label] of [["update_progress", "edit", "Edit progress"], ["mark_watched", "check_circle", "Mark as watched"], ["remove_progress", "delete", "Remove resume point"]]) {
+        for (const [action, icon, label] of [["update_progress", "edit", T("profile.playback.edit")], ["mark_watched", "check_circle", T("profile.playback.markWatchedTitle")], ["remove_progress", "delete", T("profile.playback.removeResume")]]) {
           if (item[CAPABILITY[action]]) entries.push({ label, icon, danger: action === "remove_progress", attrs: ` data-playback-action="${action}"`, run: () => runAction(action, [item]) });
         }
       }
@@ -5599,47 +5602,47 @@
     };
     $("#profile-avatar-replace")?.addEventListener("click", pick);
     $("#profile-avatar-remove")?.addEventListener("click", async (event) => {
-      if (!armConfirm(event.currentTarget, "Confirm remove")) return;
+      if (!armConfirm(event.currentTarget, T("profile.avatar.confirmRemove"))) return;
       try {
         const data = await del("/api/profile/avatar");
         renderProfile(data);
-        toast("Profile picture removed");
+        toast(T("profile.avatar.removed"));
       } catch (e) {
-        toast(e.message || "Could not remove profile picture", true);
+        toast(e.message || T("profile.avatar.removeFailed"), true);
       }
     });
     input?.addEventListener("change", () => {
       const file = input.files?.[0];
       if (!file) return;
       if (file.size > 5 * 1024 * 1024) {
-        toast("Profile picture must be 5 MB or smaller", true);
+        toast(T("profile.avatar.tooLarge"), true);
         input.value = "";
         return;
       }
       const allowed = ["image/png", "image/jpeg", "image/webp"];
       if (!allowed.includes(file.type)) {
-        toast("Use PNG, JPG or WebP", true);
+        toast(T("profile.avatar.types"), true);
         input.value = "";
         return;
       }
-      setAvatarUploadState({ visible: true, label: "Reading picture", percent: 3 });
+      setAvatarUploadState({ visible: true, label: T("profile.avatar.reading"), percent: 3 });
       let previewUrl = "";
       (async () => {
         try {
           const prepared = await prepareAvatarUpload(file);
           previewUrl = prepared.previewUrl;
           setAvatar(previewUrl);
-          setAvatarUploadState({ visible: true, label: "Uploading picture", percent: 50 });
+          setAvatarUploadState({ visible: true, label: T("profile.account.uploadingPicture"), percent: 50 });
           const data = await uploadAvatar(prepared.dataUrl, prepared.contentType, (percent) => {
-            setAvatarUploadState({ visible: true, label: "Uploading picture", percent: Math.max(50, percent) });
+            setAvatarUploadState({ visible: true, label: T("profile.account.uploadingPicture"), percent: Math.max(50, percent) });
           });
           if (data?.user?.avatar_url) data.user.avatar_url = bustUrl(data.user.avatar_url);
-          setAvatarUploadState({ visible: true, label: "Saving picture", percent: 100 });
+          setAvatarUploadState({ visible: true, label: T("profile.avatar.saving"), percent: 100 });
           renderProfile(data);
-          toast("Profile picture updated");
+          toast(T("profile.avatar.updated"));
         } catch (e) {
           setAvatar(profile?.avatar_url || "");
-          toast(e.message || "Could not upload profile picture", true);
+          toast(e.message || T("profile.avatar.uploadFailedToast"), true);
         } finally {
           if (previewUrl) setTimeout(() => URL.revokeObjectURL(previewUrl), 1000);
           setTimeout(() => setAvatarUploadState({ visible: false }), 500);
@@ -5655,9 +5658,9 @@
       try {
         const data = await post("/api/profile", { display_name: $("#profile-display-input")?.value || "" });
         renderProfile(data);
-        toast("Profile saved");
+        toast(T("profile.account.saved"));
       } catch (e) {
-        toast(e.message || "Could not save profile", true);
+        toast(e.message || T("profile.account.saveFailed"), true);
       }
     });
     const passwordForm = $("#profile-password-form");
@@ -5682,9 +5685,9 @@
         });
         renderProfile(data);
         showPasswordForm(false);
-        toast("Password changed");
+        toast(T("profile.security.passwordChanged"));
       } catch (e) {
-        toast(e.message || "Could not change password", true);
+        toast(e.message || T("profile.security.passwordFailed"), true);
       }
     });
   }
@@ -5693,7 +5696,7 @@
     const wrap = document.createElement("div");
     wrap.className = "cw-profile-codes";
     const title = document.createElement("strong");
-    title.textContent = "Backup codes";
+    title.textContent = T("profile.security.backupCodes");
     wrap.appendChild(title);
     for (const value of codes) {
       const code = document.createElement("code");
@@ -5711,17 +5714,17 @@
     const wrap = document.createElement("div");
     wrap.className = "cw-profile-codes cw-profile-codes--locked";
     const title = document.createElement("strong");
-    title.textContent = values.length ? "Backup codes ready" : "No backup codes available";
+    title.textContent = values.length ? T("profile.security.codesReady") : T("profile.security.noCodes");
     const copy = document.createElement("span");
     copy.textContent = values.length
-      ? "Each code works once if you lose your phone. Keep them somewhere safe."
-      : "No new backup codes were created.";
+      ? T("profile.security.codesHint")
+      : T("profile.security.noNewCodes");
     wrap.append(title, copy);
     if (values.length) {
       const reveal = document.createElement("button");
       reveal.className = "btn";
       reveal.type = "button";
-      reveal.textContent = "Show backup codes";
+      reveal.textContent = T("profile.security.showCodes");
       reveal.addEventListener("click", () => {
         host.replaceChildren(recoveryCodesList(values));
       }, { once: true });
@@ -5737,11 +5740,11 @@
     const unlink = $("#profile-plex-unlink");
     const linked = !!status?.linked;
     if (state) {
-      state.textContent = linked ? "Linked" : "Off";
+      state.textContent = linked ? T("settings.security.linked") : T("common.status.off");
       state.classList.toggle("is-enabled", linked);
     }
-    if (summary) summary.textContent = linked ? linkedAccountLabel(status, "Plex account") : "Not linked";
-    if (link) link.textContent = linked ? "Replace" : "Link";
+    if (summary) summary.textContent = linked ? linkedAccountLabel(status, T("profile.linked.plexAccount")) : T("settings.security.plex.notLinked");
+    if (link) link.textContent = linked ? T("profile.linked.replace") : T("common.actions.link");
     if (unlink) unlink.hidden = !linked;
     const logo = $("#profile-plex-logo");
     const path = providerLogo("PLEX");
@@ -5776,7 +5779,7 @@
       if (!data.pending) return data;
       await new Promise((resolve) => setTimeout(resolve, 1800));
     }
-    throw new Error("Plex link timed out");
+    throw new Error(T("profile.linked.plexTimeout"));
   }
 
   function wirePlexSso() {
@@ -5784,21 +5787,21 @@
       try {
         const data = await post("/api/app-auth/plex/link/start", {});
         if (data.auth_url) window.open(data.auth_url, "cwPlexLink", "popup,width=720,height=760");
-        toast("Finish linking in the Plex window");
+        toast(T("profile.linked.plexFinish"));
         const done = await pollPlexLink(data.state);
         renderPlexStatus(done);
-        toast("Plex account linked");
+        toast(T("profile.linked.plexLinked"));
       } catch (e) {
-        toast(e.message || "Could not link Plex account", true);
+        toast(e.message || T("profile.linked.plexLinkFailed"), true);
       }
     });
     $("#profile-plex-unlink")?.addEventListener("click", async (event) => {
-      if (!armConfirm(event.currentTarget, "Confirm unlink")) return;
+      if (!armConfirm(event.currentTarget, T("profile.linked.confirmUnlink"))) return;
       try {
         renderPlexStatus(await post("/api/app-auth/plex/unlink", {}));
-        toast("Plex account unlinked");
+        toast(T("profile.linked.plexUnlinked"));
       } catch (e) {
-        toast(e.message || "Could not unlink Plex account", true);
+        toast(e.message || T("profile.linked.plexUnlinkFailed"), true);
       }
     });
   }
@@ -5811,18 +5814,18 @@
     const configured = !!status?.configured;
     const linked = !!status?.linked;
     if (state) {
-      state.textContent = linked ? "Linked" : (configured ? "Off" : "Unavailable");
+      state.textContent = linked ? T("settings.security.linked") : (configured ? T("common.status.off") : T("common.status.unavailable"));
       state.classList.toggle("is-enabled", linked);
     }
     if (summary) {
       summary.textContent = !configured
-        ? "Not available on this server"
+        ? T("profile.linked.notOnServer")
         : linked
           ? linkedAccountLabel(status, "OIDC account")
-          : "Not linked";
+          : T("settings.security.plex.notLinked");
     }
     if (link) {
-      link.textContent = linked ? "Replace" : "Link";
+      link.textContent = linked ? T("profile.linked.replace") : T("common.actions.link");
       link.disabled = !configured;
     }
     if (unlink) unlink.hidden = !linked;
@@ -5842,7 +5845,7 @@
       if (!data.pending) return data;
       await new Promise((resolve) => setTimeout(resolve, 1800));
     }
-    throw new Error("OIDC link timed out");
+    throw new Error(T("profile.linked.oidcTimeout"));
   }
 
   function wireOidcSso() {
@@ -5850,21 +5853,21 @@
       try {
         const data = await post("/api/app-auth/oidc/link/start", {});
         if (data.auth_url) window.open(data.auth_url, "cwOidcLink", "popup,width=720,height=760");
-        toast("Finish linking in the OIDC window");
+        toast(T("profile.linked.oidcFinish"));
         const done = await pollOidcLink(data.state);
         renderOidcStatus(done);
-        toast("OIDC account linked");
+        toast(T("profile.linked.oidcLinked"));
       } catch (e) {
-        toast(e.message || "Could not link OIDC account", true);
+        toast(e.message || T("profile.linked.oidcLinkFailed"), true);
       }
     });
     $("#profile-oidc-unlink")?.addEventListener("click", async (event) => {
-      if (!armConfirm(event.currentTarget, "Confirm unlink")) return;
+      if (!armConfirm(event.currentTarget, T("profile.linked.confirmUnlink"))) return;
       try {
         renderOidcStatus(await post("/api/app-auth/oidc/unlink", {}));
-        toast("OIDC account unlinked");
+        toast(T("profile.linked.oidcUnlinked"));
       } catch (e) {
-        toast(e.message || "Could not unlink OIDC account", true);
+        toast(e.message || T("profile.linked.oidcUnlinkFailed"), true);
       }
     });
   }
@@ -5872,15 +5875,15 @@
   function wireSecurity() {
     $("#profile-sessions")?.addEventListener("click", async (event) => {
       const btn = event.target?.closest?.("[data-session-kill]");
-      if (!btn || !armConfirm(btn, "Confirm")) return;
+      if (!btn || !armConfirm(btn, T("common.actions.confirm"))) return;
       btn.disabled = true;
       try {
         const data = await del(`/api/profile/sessions/${encodeURIComponent(btn.dataset.sessionKill || "")}`);
         renderProfile(data);
-        toast("Session signed out");
+        toast(T("profile.devices.signedOut"));
       } catch (e) {
         btn.disabled = false;
-        toast(e.message || "Could not sign out session", true);
+        toast(e.message || T("profile.devices.signOutFailed"), true);
       }
     });
     const confirmBox = $("#profile-2fa-confirm");
@@ -5915,16 +5918,16 @@
           const host = $("#profile-2fa-setup");
           if (host) host.innerHTML = "";
           closeConfirm();
-          toast("Two-step verification turned off");
+          toast(T("profile.security.twoStepOff"));
         } else {
           const data = await post("/api/profile/recovery-codes", { current_password: current });
           renderProfile(data);
           closeConfirm();
           showRecoveryCodes(data.recovery_codes || []);
-          toast("New backup codes created");
+          toast(T("profile.security.codesCreated"));
         }
       } catch (e) {
-        toast(e.message || (action === "disable" ? "Could not disable 2FA" : "Could not generate recovery codes"), true);
+        toast(e.message || (action === "disable" ? T("profile.security.disableFailed") : T("profile.security.codesFailed")), true);
       } finally {
         if (confirmGo) confirmGo.disabled = false;
       }
@@ -5943,31 +5946,31 @@
       closeConfirm();
       try {
         const data = await post("/api/profile/totp/setup", {});
-        $("#profile-2fa-setup").innerHTML = `<div class="cw-profile-qr"><div class="cw-profile-qr-code">${data.qr_svg || '<span class="material-symbols-rounded" aria-hidden="true">qr_code_2</span>'}</div><div class="cw-profile-qr-copy"><strong>Scan with your authenticator app</strong><span>Or enter this setup key manually.</span><code>${esc(data.secret || "")}</code><div class="cw-profile-qr-verify"><input id="profile-2fa-code" placeholder="123456" inputmode="numeric" autocomplete="one-time-code"><button id="profile-2fa-verify-now" class="btn primary" type="button">Verify</button></div></div></div>`;
+        $("#profile-2fa-setup").innerHTML = `<div class="cw-profile-qr"><div class="cw-profile-qr-code">${data.qr_svg || '<span class="material-symbols-rounded" aria-hidden="true">qr_code_2</span>'}</div><div class="cw-profile-qr-copy"><strong>${TH("profile.security.scan")}</strong><span>${TH("profile.security.manualKey")}</span><code>${esc(data.secret || "")}</code><div class="cw-profile-qr-verify"><input id="profile-2fa-code" placeholder="123456" inputmode="numeric" autocomplete="one-time-code"><button id="profile-2fa-verify-now" class="btn primary" type="button">${TH("auth.login.verify")}</button></div></div></div>`;
         $("#profile-2fa-verify-now")?.addEventListener("click", async () => {
           try {
             const done = await post("/api/profile/totp/verify", { code: $("#profile-2fa-code")?.value || "" });
             renderProfile(done);
             if (Array.isArray(done.recovery_codes)) showRecoveryCodes(done.recovery_codes);
-            toast("Two-step verification turned on");
+            toast(T("profile.security.twoStepOn2"));
           } catch (e) {
-            toast(e.message || "Invalid verification code", true);
+            toast(e.message || T("auth.errors.invalid_verification_code"), true);
           }
         });
       } catch (e) {
-        toast(e.message || "Could not start 2FA setup", true);
+        toast(e.message || T("profile.security.setupFailed"), true);
       }
     });
-    $("#profile-2fa-disable-btn")?.addEventListener("click", () => askPassword("disable", "Enter your password to turn off two-step verification", "Turn off"));
-    $("#profile-recovery-btn")?.addEventListener("click", () => askPassword("recovery", "Enter your password to create new backup codes", "Create codes"));
+    $("#profile-2fa-disable-btn")?.addEventListener("click", () => askPassword("disable", T("profile.security.passwordToDisable"), T("settings.ai.assistant.turnOff")));
+    $("#profile-recovery-btn")?.addEventListener("click", () => askPassword("recovery", T("profile.security.passwordToCodes"), T("profile.security.createCodes")));
     $("#profile-revoke-sessions")?.addEventListener("click", async (event) => {
-      if (!armConfirm(event.currentTarget, "Confirm sign out")) return;
+      if (!armConfirm(event.currentTarget, T("profile.devices.confirmSignOut"))) return;
       try {
         const data = await post("/api/profile/sessions/revoke-others", {});
         renderProfile(data);
-        toast("Other sessions signed out");
+        toast(T("profile.devices.othersSignedOut"));
       } catch (e) {
-        toast(e.message || "Could not sign out other sessions", true);
+        toast(e.message || T("profile.devices.othersFailed"), true);
       }
     });
   }
@@ -6065,11 +6068,11 @@
             }),
           });
           renderProfile(data);
-          toast("Preferences saved");
+          toast(T("profile.settings.saved"));
           if (input.id === "profile-pref-timezone" || input.id === "profile-pref-time-format") refreshTimeDisplays();
         } catch (e) {
           renderPreferences(profile);
-          toast(e.message || "Preferences could not be saved", true);
+          toast(e.message || T("profile.settings.saveFailed"), true);
         } finally {
           inputs.forEach((node) => { node.disabled = false; });
           if (search) search.disabled = false;
@@ -6148,7 +6151,7 @@
       const line = document.createElement("div");
       line.className = "cw-hub-mobile-summary";
       const source = document.createElement("select");
-      source.setAttribute("aria-label", "History source");
+      source.setAttribute("aria-label", T("profile.filters.historySource"));
       source.dataset.cwNativeSelect = "true";
       sources.forEach((button) => source.add(new Option(button.textContent.trim(), button.dataset.timelineSource)));
       if (sources.length) line.append(source);
@@ -6157,12 +6160,12 @@
       toolbar.before(line);
       const chips = document.createElement("div");
       chips.className = "cw-hub-mobile-active";
-      chips.setAttribute("aria-label", "Active filters");
+      chips.setAttribute("aria-label", T("profile.filters.active"));
       toolbar.after(chips);
       const trigger = document.createElement("button");
       trigger.type = "button";
       trigger.className = "cw-hub-mobile-filter";
-      trigger.setAttribute("aria-label", "Filters and display options");
+      trigger.setAttribute("aria-label", T("profile.filters.trigger"));
       trigger.setAttribute("aria-haspopup", "dialog");
       trigger.innerHTML = '<span class="material-symbols-rounded" aria-hidden="true">tune</span><span hidden></span>';
       toolbar.append(trigger);
@@ -6171,7 +6174,7 @@
       pop.id = `profile-${key}-filterpop`;
       pop.hidden = true;
       pop.setAttribute("role", "group");
-      pop.setAttribute("aria-label", "Filters");
+      pop.setAttribute("aria-label", T("common.labels.filters"));
       toolbar.after(pop);
       const tail = document.createElement("div");
       tail.className = "cw-hub-records-tail";
@@ -6182,7 +6185,7 @@
       dialog.id = `profile-${key}-mobile-tools`;
       dialog.setAttribute("aria-labelledby", `${dialog.id}-title`);
       trigger.setAttribute("aria-controls", dialog.id);
-      dialog.innerHTML = `<header><h2 id="${dialog.id}-title">Filters and display</h2><button type="button" aria-label="Close filters"><span class="material-symbols-rounded" aria-hidden="true">close</span></button></header><div class="cw-hub-mobile-sheet-body"></div><footer><button type="button" class="cw-btn">Done</button></footer>`;
+      dialog.innerHTML = `<header><h2 id="${dialog.id}-title">${TH("profile.filters.title")}</h2><button type="button" aria-label="${TH("profile.filters.close")}"><span class="material-symbols-rounded" aria-hidden="true">close</span></button></header><div class="cw-hub-mobile-sheet-body"></div><footer><button type="button" class="cw-btn">${TH("common.status.done")}</button></footer>`;
       panel.append(dialog);
       const body = dialog.querySelector(".cw-hub-mobile-sheet-body");
       const moved = [];
@@ -6231,7 +6234,7 @@
             const button = document.createElement("button");
             button.type = "button";
             button.textContent = entry.label;
-            button.setAttribute("aria-label", `Remove ${entry.label} filter`);
+            button.setAttribute("aria-label", T("profile.filters.removeNamed", { name: entry.label }));
             const icon = document.createElement("span");
             icon.className = "material-symbols-rounded";
             icon.setAttribute("aria-hidden", "true");
@@ -6243,7 +6246,7 @@
           if (warning) {
             const button = document.createElement("button");
             button.type = "button";
-            button.textContent = warning === "loading" ? "Providers loading" : "Provider needs attention";
+            button.textContent = warning === "loading" ? T("profile.filters.providersLoading") : T("profile.filters.providerAttention");
             button.addEventListener("click", () => trigger.click());
             chips.append(button);
           }
@@ -6320,7 +6323,7 @@
         panel.classList.toggle("has-desktop-tools", !enabled);
         if (enabled) {
           trigger.firstElementChild.textContent = "tune";
-          trigger.setAttribute("aria-label", "Filters and display options");
+          trigger.setAttribute("aria-label", T("profile.filters.trigger"));
           trigger.setAttribute("aria-haspopup", "dialog");
           trigger.setAttribute("aria-controls", dialog.id);
           trigger.removeAttribute("aria-expanded");
@@ -6328,7 +6331,7 @@
           moveInto([".cw-hub-records-chips", ".cw-hist-scores", ".cw-hub-records-controls", ".cw-hub-records-tail", ".cw-hub-records-filters", ".cw-hub-records-tiles", ".cw-hub-progress-summary", ".cw-play-status"], body);
         } else {
           trigger.firstElementChild.textContent = "filter_list";
-          trigger.setAttribute("aria-label", "Filters");
+          trigger.setAttribute("aria-label", T("common.labels.filters"));
           trigger.removeAttribute("aria-haspopup");
           trigger.setAttribute("aria-controls", pop.id);
           trigger.setAttribute("aria-expanded", "false");
@@ -6352,7 +6355,7 @@
     wireSecurity();
     wirePlexSso();
     wireOidcSso();
-    await refreshProfile().catch(error => toast(error.message || "Profile could not be loaded", true));
+    await refreshProfile().catch(error => toast(error.message || T("profile.loadFailed"), true));
     void refreshPlexStatus();
     void refreshOidcStatus();
   }
@@ -6380,7 +6383,7 @@
     await resolveViewAs();
     const account = window.CW?.AuthState?.read?.()?.user;
     if (account) renderProfile({user:account});
-    void refreshProfile().catch((error) => toast(error.message || "Profile could not be loaded", true));
+    void refreshProfile().catch((error) => toast(error.message || T("profile.loadFailed"), true));
     historyPanel.wire();
     ratingsPanel.wire();
     playbackPanel.wire();

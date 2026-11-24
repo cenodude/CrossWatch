@@ -7,6 +7,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 import io
+from cw_platform import i18n as cw_i18n
 import json
 import shutil
 import zipfile
@@ -28,6 +29,7 @@ from cw_platform.orchestrator._state_store import StateStore
 import cw_platform.provider_instances as provider_instances
 from cw_platform.provider_instances import build_pair_config_view, get_provider_block
 from providers.sync._mod_CROSSWATCH import CROSSWATCHModule
+from tests.i18n_source import english_source
 
 ALICE_PROFILE_ID = "11111111111141118111111111111111"
 BOB_PROFILE_ID = "22222222222242228222222222222222"
@@ -834,10 +836,10 @@ def test_activity_recent_filters_by_user_profile(monkeypatch) -> None:
 
 
 def test_user_profile_manager_screen_is_mounted() -> None:
-    settings_html = Path("ui_frontend.py").read_text("utf-8")
-    providers_js = Path("assets/helpers/providers-ui.js").read_text("utf-8")
-    manager_js = Path("assets/js/user-profiles.js").read_text("utf-8")
-    app_users_js = Path("assets/js/app-users.js").read_text("utf-8")
+    settings_html = english_source(Path("ui_frontend.py").read_text("utf-8"))
+    providers_js = english_source(Path("assets/helpers/providers-ui.js").read_text("utf-8"))
+    manager_js = english_source(Path("assets/js/user-profiles.js").read_text("utf-8"))
+    app_users_js = english_source(Path("assets/js/app-users.js").read_text("utf-8"))
     app_users_css = Path("assets/css/app-users.css").read_text("utf-8")
     css = Path("assets/css/auth-providers.css").read_text("utf-8")
 
@@ -877,7 +879,8 @@ def test_user_profile_manager_screen_is_mounted() -> None:
     assert "grid-template-columns: repeat(2, minmax(0, 1fr));" in app_users_css
     assert "grid-template-columns: repeat(2, minmax(0, 1fr)) !important;" in app_users_css
     wizard_css = Path("assets/css/user-profile-wizard.css").read_text("utf-8")
-    assert "Confirm delete" in manager_js
+    assert 'TH(hasLogin ? "profile.manager.ui.deleteWithLogin" : "profile.manager.ui.confirmDelete")' in manager_js
+    assert cw_i18n.t("en", "profile.manager.ui.confirmDelete") == "Confirm delete"
     assert "cwUserProfilesOpenNew" in manager_js
     assert "cw-upm-floating-host" in manager_js
     assert "w.confirm" not in manager_js
@@ -903,7 +906,7 @@ def test_user_profile_manager_screen_is_mounted() -> None:
     assert 'id="app_user_create_form"' not in settings_html
     assert 'id="btn-app-user-profile-create"' in settings_html
     assert 'autocomplete="username"' in settings_html
-    assert "cwAppUsersSavePending" in Path("assets/helpers/settings-save.js").read_text("utf-8")
+    assert "cwAppUsersSavePending" in english_source(Path("assets/helpers/settings-save.js").read_text("utf-8"))
     assert "#page-settings .cw-app-card-head .cw-app-user-add" in app_users_css
 
 
@@ -918,7 +921,7 @@ def test_events_audit_domain_is_admin_only_for_managed_users(monkeypatch) -> Non
 
 
 def test_events_modal_has_admin_only_audits_tab() -> None:
-    js = Path("assets/js/events/index.js").read_text("utf-8")
+    js = english_source(Path("assets/js/events/index.js").read_text("utf-8"))
 
     assert 'value: "scrobble", label: "Scrobble"' in js
     assert 'value: "audit", label: "Audits"' in js
@@ -931,8 +934,8 @@ def test_events_modal_has_admin_only_audits_tab() -> None:
 
 
 def test_overview_profile_avatar_link_replaces_selector() -> None:
-    html = Path("ui_frontend.py").read_text("utf-8")
-    js = Path("assets/js/overview-profile.js").read_text("utf-8")
+    html = english_source(Path("ui_frontend.py").read_text("utf-8"))
+    js = english_source(Path("assets/js/overview-profile.js").read_text("utf-8"))
     css = Path("assets/crosswatch.css").read_text("utf-8")
 
     assert "cw-nav-profile-link" in html
@@ -970,9 +973,9 @@ def test_profile_avatar_is_seeded_in_main_and_profile_html() -> None:
 
 
 def test_account_menu_preserves_existing_avatar_node_for_same_url() -> None:
-    js = Path("assets/helpers/account-menu.js").read_text("utf-8")
-    overview = Path("assets/js/overview-profile.js").read_text("utf-8")
-    profile = Path("assets/js/profile-page.js").read_text("utf-8")
+    js = english_source(Path("assets/helpers/account-menu.js").read_text("utf-8"))
+    overview = english_source(Path("assets/js/overview-profile.js").read_text("utf-8"))
+    profile = english_source(Path("assets/js/profile-page.js").read_text("utf-8"))
 
     assert 'const existing = node.querySelector("img")?.getAttribute("src") || "";' in js
     assert "if (url && existing === url)" in js
@@ -1147,10 +1150,10 @@ def test_crosswatch_module_uses_profile_root_from_config_view(tmp_path: Path) ->
 
 
 def test_editor_removes_local_tracker_source() -> None:
-    editor_js = Path("assets/js/editor.js").read_text("utf-8")
-    sources_js = Path("assets/js/editor/sources.js").read_text("utf-8")
-    chrome_js = Path("assets/js/editor/chrome.js").read_text("utf-8")
-    load_js = Path("assets/js/editor/load-controller.js").read_text("utf-8")
+    editor_js = english_source(Path("assets/js/editor.js").read_text("utf-8"))
+    sources_js = english_source(Path("assets/js/editor/sources.js").read_text("utf-8"))
+    chrome_js = english_source(Path("assets/js/editor/chrome.js").read_text("utf-8"))
+    load_js = english_source(Path("assets/js/editor/load-controller.js").read_text("utf-8"))
 
     assert 'option value="tracker"' not in editor_js
     assert 'const SOURCES = ["state", "manual", "playlist"];' in sources_js
@@ -1305,15 +1308,21 @@ def test_status_probes_are_scoped_to_managed_user_profile() -> None:
 
 
 def test_main_status_crosswatch_vip_copy() -> None:
-    text = Path("assets/js/main-status.js").read_text("utf-8")
-    provider_meta = Path("assets/helpers/provider-meta.js").read_text("utf-8")
+    text = english_source(Path("assets/js/main-status.js").read_text("utf-8"))
+    provider_meta = english_source(Path("assets/helpers/provider-meta.js").read_text("utf-8"))
     css = Path("assets/crosswatch.css").read_text("utf-8")
 
     assert 'case "CROSSWATCH"' in text
-    assert "Plan: VIP" in text
-    assert "Plan: Free" in text
-    assert "Plan: Premiere" in text
-    assert "You've earned it" in text
+    from cw_platform import i18n
+
+    en = i18n.messages("en")
+    assert 'T("Plan: {{plan}}", { plan: "VIP" })' in text
+    assert '"Free"' in text
+    assert 'T("Plan: {{plan}}", { plan: "Premiere" })' in text
+    assert "\"You've earned it\"" in text
+    assert en["dashboard.status.plan"] == "Plan: {{plan}}"
+    assert en["dashboard.status.planFree"] == "Free"
+    assert en["dashboard.status.earnedIt"] == "You've earned it"
     assert "SIMKL plan:" not in text
     assert "VIP status" not in text
     assert "Free account" not in text
@@ -1324,14 +1333,14 @@ def test_main_status_crosswatch_vip_copy() -> None:
 
 
 def test_crosswatch_tracker_settings_live_only_in_connection_modal() -> None:
-    settings_html = Path("ui_frontend.py").read_text("utf-8")
-    settings_ui = Path("assets/helpers/settings-ui.js").read_text("utf-8")
-    settings_save = Path("assets/helpers/settings-save.js").read_text("utf-8")
+    settings_html = english_source(Path("ui_frontend.py").read_text("utf-8"))
+    settings_ui = english_source(Path("assets/helpers/settings-ui.js").read_text("utf-8"))
+    settings_save = english_source(Path("assets/helpers/settings-save.js").read_text("utf-8"))
     auth_html = Path("providers/auth/_auth_CROSSWATCH.py").read_text("utf-8")
-    auth_js = Path("assets/auth/auth.crosswatch.js").read_text("utf-8")
-    auth_shared = Path("assets/auth/auth.shared.js").read_text("utf-8")
+    auth_js = english_source(Path("assets/auth/auth.crosswatch.js").read_text("utf-8"))
+    auth_shared = english_source(Path("assets/auth/auth.shared.js").read_text("utf-8"))
     auth_css = Path("assets/css/auth-providers.css").read_text("utf-8")
-    providers_ui = Path("assets/helpers/providers-ui.js").read_text("utf-8")
+    providers_ui = english_source(Path("assets/helpers/providers-ui.js").read_text("utf-8"))
 
     assert 'data-target="tracker"' not in settings_html
     assert 'data-tab="tracker"' not in settings_html
@@ -1384,7 +1393,7 @@ def test_crosswatch_tracker_settings_live_only_in_connection_modal() -> None:
 
 
 def test_provider_connection_modal_saves_profile_label_before_global_settings() -> None:
-    providers_ui = Path("assets/helpers/providers-ui.js").read_text("utf-8")
+    providers_ui = english_source(Path("assets/helpers/providers-ui.js").read_text("utf-8"))
 
     label_save = "saveVisibleProfileLabels?.(panel)"
     settings_save = "window.saveSettings?.()"
@@ -1394,9 +1403,9 @@ def test_provider_connection_modal_saves_profile_label_before_global_settings() 
 
 
 def test_tmdb_metadata_modal_refreshes_saved_key_before_opening() -> None:
-    settings_ui = Path("assets/helpers/settings-ui.js").read_text("utf-8")
-    settings_save = Path("assets/helpers/settings-save.js").read_text("utf-8")
-    providers_ui = Path("assets/helpers/providers-ui.js").read_text("utf-8")
+    settings_ui = english_source(Path("assets/helpers/settings-ui.js").read_text("utf-8"))
+    settings_save = english_source(Path("assets/helpers/settings-save.js").read_text("utf-8"))
+    providers_ui = english_source(Path("assets/helpers/providers-ui.js").read_text("utf-8"))
 
     assert "async function cwRefreshTmdbMetadataState" in settings_ui
     assert "cfg?.tmdb?.api_key || cfg?.metadata?.tmdb_api_key" in settings_ui
@@ -1416,7 +1425,7 @@ def test_tmdb_metadata_modal_refreshes_saved_key_before_opening() -> None:
 
 
 def test_connection_modals_mount_and_bind_before_opening() -> None:
-    providers_ui = Path("assets/helpers/providers-ui.js").read_text("utf-8")
+    providers_ui = english_source(Path("assets/helpers/providers-ui.js").read_text("utf-8"))
 
     ensure_overlay = providers_ui.split("function ensureAuthOverlay", 1)[1].split("function providerHome", 1)[0]
     assert "slot.appendChild(overlay);" in ensure_overlay
@@ -1446,10 +1455,10 @@ def test_connection_modals_mount_and_bind_before_opening() -> None:
 
 def test_maintenance_tracker_archive_uses_profile_selector_toolbar() -> None:
     root = Path(__file__).resolve().parents[1]
-    modal_js = (root / "assets" / "js" / "maintenance" / "index.js").read_text("utf-8")
+    modal_js = english_source((root / "assets" / "js" / "maintenance" / "index.js").read_text("utf-8"))
     modal_css = (root / "assets" / "js" / "maintenance" / "styles.css").read_text("utf-8")
-    icon_select_js = (root / "assets" / "helpers" / "icon-select.js").read_text("utf-8")
-    profile_select_js = (root / "assets" / "helpers" / "profile-select.js").read_text("utf-8")
+    icon_select_js = english_source((root / "assets" / "helpers" / "icon-select.js").read_text("utf-8"))
+    profile_select_js = english_source((root / "assets" / "helpers" / "profile-select.js").read_text("utf-8"))
 
     assert "tracker-archive-options" in modal_js
     assert "tracker-profile-control" in modal_js
@@ -1471,8 +1480,8 @@ def test_maintenance_tracker_archive_uses_profile_selector_toolbar() -> None:
 
 def test_maintenance_rebuild_state_refreshes_main_page_caches() -> None:
     root = Path(__file__).resolve().parents[1]
-    modal_js = (root / "assets" / "js" / "maintenance" / "index.js").read_text("utf-8")
-    helper_js = (root / "assets" / "helpers" / "maintenance.js").read_text("utf-8")
+    modal_js = english_source((root / "assets" / "js" / "maintenance" / "index.js").read_text("utf-8"))
+    helper_js = english_source((root / "assets" / "helpers" / "maintenance.js").read_text("utf-8"))
 
     assert "function applySyncStateReset(result = {})" in helper_js
     assert '"insights.tiles.v1", "cw.dashboardWidgets.data.v1", "cw.profileWidgets.data.v1"' in helper_js
@@ -1754,10 +1763,10 @@ def test_analyzer_treats_crosswatch_as_tracker_provider() -> None:
 
 
 def test_profile_labels_are_used_in_analyzer_and_events_modals() -> None:
-    analyzer_js = Path("assets/js/analyzer/index.js").read_text("utf-8")
-    events_js = Path("assets/js/events/index.js").read_text("utf-8")
-    scrobbler_js = Path("assets/js/scrobbler.js").read_text("utf-8")
-    dashboard_js = Path("assets/js/dashboard-widgets.js").read_text("utf-8")
+    analyzer_js = english_source(Path("assets/js/analyzer/index.js").read_text("utf-8"))
+    events_js = english_source(Path("assets/js/events/index.js").read_text("utf-8"))
+    scrobbler_js = english_source(Path("assets/js/scrobbler.js").read_text("utf-8"))
+    dashboard_js = english_source(Path("assets/js/dashboard-widgets.js").read_text("utf-8"))
 
     assert "/api/provider-instances" in analyzer_js
     assert "row.label" in analyzer_js
@@ -1810,7 +1819,7 @@ def test_exporter_options_label_crosswatch_profiles_from_config(tmp_path: Path, 
 
 def test_editor_import_provider_options_include_instance_labels() -> None:
     editor_api = Path("api/editorAPI.py").read_text("utf-8")
-    editor_importers = Path("assets/js/editor/importers.js").read_text("utf-8")
+    editor_importers = english_source(Path("assets/js/editor/importers.js").read_text("utf-8"))
 
     assert "_provider_instance_label" in editor_api
     assert '"instance_label": instance_label' in editor_api
@@ -1822,7 +1831,7 @@ def test_editor_import_provider_options_include_instance_labels() -> None:
 
 
 def test_non_admin_tabs_are_guarded_in_spa_router() -> None:
-    core_js = Path("assets/helpers/core.js").read_text("utf-8")
+    core_js = english_source(Path("assets/helpers/core.js").read_text("utf-8"))
     css = Path("assets/crosswatch.css").read_text("utf-8")
 
     assert "function canUseRouteTab(tab)" in core_js
@@ -1843,7 +1852,7 @@ def test_non_admin_tabs_are_guarded_in_spa_router() -> None:
 
 
 def test_insights_footer_requires_stats_card() -> None:
-    js = Path("assets/js/insights.js").read_text("utf-8")
+    js = english_source(Path("assets/js/insights.js").read_text("utf-8"))
 
     assert 'const stats = $("#stats-card");' in js
     assert 'if (!stats) {' in js
@@ -1991,7 +2000,7 @@ def test_profile_nav_uses_full_user_links_for_write_managed_user() -> None:
 
 
 def test_profile_page_redirects_stale_app_hashes_to_the_app_shell() -> None:
-    js = Path("assets/js/profile-page.js").read_text("utf-8")
+    js = english_source(Path("assets/js/profile-page.js").read_text("utf-8"))
 
     assert 'window.location?.pathname !== "/profile"' in js
     assert '"playback_progress"' in js
@@ -2112,7 +2121,7 @@ def test_main_shell_has_early_hash_route_hint() -> None:
     import ui_frontend
 
     html = ui_frontend.get_index_html(include_admin=True)
-    core_js = Path("assets/helpers/core.js").read_text("utf-8")
+    core_js = english_source(Path("assets/helpers/core.js").read_text("utf-8"))
 
     assert "data-cw-initial-tab" in html
     assert 'const tabs = new Set(["snapshots", "capture_compare", "playlists", "editor", "analyzer", "events", "logs", "import_export", "interactive_sync", "maintenance", "backups", "settings"]);' in html
@@ -2123,7 +2132,7 @@ def test_main_shell_has_early_hash_route_hint() -> None:
 
 
 def test_profile_2fa_setup_uses_spacious_qr_layout() -> None:
-    js = Path("assets/js/profile-page.js").read_text("utf-8")
+    js = english_source(Path("assets/js/profile-page.js").read_text("utf-8"))
     css = Path("assets/css/profile-page.css").read_text("utf-8")
 
     assert "cw-profile-qr-code" in js
@@ -2137,7 +2146,7 @@ def test_profile_2fa_setup_uses_spacious_qr_layout() -> None:
 
 
 def test_profile_last_watched_uses_provider_branding_icons() -> None:
-    js = Path("assets/js/profile-page.js").read_text("utf-8")
+    js = english_source(Path("assets/js/profile-page.js").read_text("utf-8"))
     css = Path("assets/css/profile-page.css").read_text("utf-8")
 
     assert "window.CW?.ProviderMeta?.logoPath?.(provider)" in js
@@ -2166,7 +2175,7 @@ def test_profile_last_watched_uses_provider_branding_icons() -> None:
 
 
 def test_profile_show_tmdb_id_reads_nested_ids_show_ids() -> None:
-    js = Path("assets/js/profile-page.js").read_text("utf-8")
+    js = english_source(Path("assets/js/profile-page.js").read_text("utf-8"))
 
     # history widget rows nest the show id at ids.show_ids, not at top level
     show = js[js.index("  const showTmdbId = (item) => {"):js.index("  const titleOf =")]
@@ -2178,8 +2187,8 @@ def test_profile_show_tmdb_id_reads_nested_ids_show_ids() -> None:
 
 
 def test_profile_watchlist_rows_reuse_widget_art_url() -> None:
-    js = Path("assets/js/profile-page.js").read_text("utf-8")
-    helper = Path("assets/helpers/watchlist-preview.js").read_text("utf-8")
+    js = english_source(Path("assets/js/profile-page.js").read_text("utf-8"))
+    helper = english_source(Path("assets/helpers/watchlist-preview.js").read_text("utf-8"))
     css = Path("assets/css/profile-page.css").read_text("utf-8")
 
     assert "artUrl,\n    gridArtUrl," in helper
@@ -2193,7 +2202,7 @@ def test_profile_watchlist_rows_reuse_widget_art_url() -> None:
 
 
 def test_watchlist_widget_stacks_updated_stamp_on_profile_only() -> None:
-    helper = Path("assets/helpers/watchlist-preview.js").read_text("utf-8")
+    helper = english_source(Path("assets/helpers/watchlist-preview.js").read_text("utf-8"))
     shared_css = Path("assets/crosswatch.css").read_text("utf-8")
     css = Path("assets/css/profile-page.css").read_text("utf-8")
 
@@ -2212,7 +2221,7 @@ def test_dashboard_layout_tools_are_profile_page_only() -> None:
 
 
 def test_overview_profile_helper_locks_managed_shell_to_profile() -> None:
-    js = Path("assets/js/overview-profile.js").read_text("utf-8")
+    js = english_source(Path("assets/js/overview-profile.js").read_text("utf-8"))
 
     assert "dataset?.cwProfileId" in js
     assert 'status?.is_admin || authUser?.is_admin' in js
@@ -2227,7 +2236,7 @@ def test_overview_profile_helper_locks_managed_shell_to_profile() -> None:
 
 
 def test_quick_add_uses_authenticated_write_gate() -> None:
-    js = Path("assets/js/main.js").read_text("utf-8")
+    js = english_source(Path("assets/js/main.js").read_text("utf-8"))
 
     assert 'fetch("/api/app-auth/status"' in js
     assert "window.CW?.AuthState?.read?.()" in js
@@ -2239,8 +2248,8 @@ def test_quick_add_uses_authenticated_write_gate() -> None:
 
 
 def test_setup_wizard_uses_privacy_backdrop() -> None:
-    modals = Path("assets/js/modals.js").read_text("utf-8")
-    host = Path("assets/js/modals/core/host.js").read_text("utf-8")
+    modals = english_source(Path("assets/js/modals.js").read_text("utf-8"))
+    host = english_source(Path("assets/js/modals/core/host.js").read_text("utf-8"))
     css = Path("assets/js/modals/core/styles.css").read_text("utf-8")
     flat = Path("assets/themes/flat.css").read_text("utf-8")
 
@@ -2527,7 +2536,7 @@ def test_managed_editor_send_targets_are_profile_scoped(monkeypatch) -> None:
 
 
 def test_playing_card_uses_overview_profile_scope() -> None:
-    js = Path("assets/js/playingcard.js").read_text("utf-8")
+    js = english_source(Path("assets/js/playingcard.js").read_text("utf-8"))
 
     assert "window.CW?.OverviewProfile?.id" in js
     assert "user_profile=${encodeURIComponent(id)}" in js
@@ -2537,8 +2546,8 @@ def test_playing_card_uses_overview_profile_scope() -> None:
 
 
 def test_playing_card_art_starts_early_and_skips_redundant_image_updates() -> None:
-    driver = Path("assets/js/playingcard.js").read_text("utf-8")
-    renderer = Path("assets/helpers/playing-card.js").read_text("utf-8")
+    driver = english_source(Path("assets/js/playingcard.js").read_text("utf-8"))
+    renderer = english_source(Path("assets/helpers/playing-card.js").read_text("utf-8"))
 
     assert "const buildBackdropUrl = (p, meta = null)" in driver
     assert "backdrop: buildBackdropUrl(p, meta)" in driver
@@ -2672,7 +2681,7 @@ def test_insights_are_profile_scoped(monkeypatch) -> None:
 
 
 def test_insights_snapshot_modal_is_crosswatch_profile_aware() -> None:
-    insights_js = Path("assets/js/insights.js").read_text("utf-8")
+    insights_js = english_source(Path("assets/js/insights.js").read_text("utf-8"))
 
     assert "CW_SNAPSHOT_PROFILE_KEY" in insights_js
     assert "_by_profile" in insights_js
@@ -2737,7 +2746,7 @@ def test_status_probes_keep_partially_configured_named_instances() -> None:
 
 
 def test_connection_cards_show_default_and_friendly_profile_names() -> None:
-    ui = Path("assets/helpers/providers-ui.js").read_text("utf-8")
+    ui = english_source(Path("assets/helpers/providers-ui.js").read_text("utf-8"))
 
     assert "function profileFriendlyName(cfg, provider, id)" in ui
     assert "function authProfileSummary(card, cfg)" in ui
@@ -2756,11 +2765,14 @@ def test_connection_cards_show_default_and_friendly_profile_names() -> None:
 
 
 def test_connection_cards_name_failed_profiles_and_dot_each_profile() -> None:
-    ui = Path("assets/helpers/providers-ui.js").read_text("utf-8")
+    ui = english_source(Path("assets/helpers/providers-ui.js").read_text("utf-8"))
 
     assert "function failedProfileIds(" in ui
     assert "function authProfileState(" in ui
-    assert "Check connection: ${shown}${overflow}" in ui
+    assert 'T("Check connection: {{names}}", { names: `${shown}${overflow}` })' in ui
+    from cw_platform import i18n as _i18n
+
+    assert _i18n.t("en", "connections.status.checkNamed", names="Kids") == "Check connection: Kids"
     assert "if (entry.configured === true) return \"ok\";" in ui
     assert "data?.instances && typeof data.instances === \"object\"" in ui
     assert "${okCount} of ${names.length} connected" in ui
@@ -2777,7 +2789,7 @@ def test_connection_cards_name_failed_profiles_and_dot_each_profile() -> None:
 
 
 def test_connection_delete_guard_ignores_unconfigured_default() -> None:
-    ui = Path("assets/helpers/providers-ui.js").read_text("utf-8")
+    ui = english_source(Path("assets/helpers/providers-ui.js").read_text("utf-8"))
     guard = ui.split("function connectionDeleteBlockedByProfiles(", 1)[1].split("\n  }", 1)[0]
 
     assert 'if (!ids.includes("default")) return false;' in guard
@@ -2785,7 +2797,7 @@ def test_connection_delete_guard_ignores_unconfigured_default() -> None:
 
 
 def test_profile_delete_refreshes_config_cache() -> None:
-    shared = Path("assets/auth/auth.shared.js").read_text("utf-8")
+    shared = english_source(Path("assets/auth/auth.shared.js").read_text("utf-8"))
     handler = shared.split("btnDel.addEventListener(", 1)[1].split("\n      });", 1)[0]
 
     assert "invalidateConfigCache" in handler
@@ -2794,14 +2806,14 @@ def test_profile_delete_refreshes_config_cache() -> None:
 
 
 def test_profile_switcher_skips_unconfigured_default() -> None:
-    shared = Path("assets/auth/auth.shared.js").read_text("utf-8")
+    shared = english_source(Path("assets/auth/auth.shared.js").read_text("utf-8"))
 
     assert 'if (want === "default" && defaultRow.configured === false)' in shared
     assert 'item.id !== "default" && item.configured' in shared
 
 
 def test_auth_remount_preserves_open_connection_overlay() -> None:
-    ui = Path("assets/helpers/providers-ui.js").read_text("utf-8")
+    ui = english_source(Path("assets/helpers/providers-ui.js").read_text("utf-8"))
     body = ui.split("async function mountAuthProviders(", 1)[1].split("initMountedAuthSections(slot);", 1)[0]
 
     assert 'const overlay = slot.querySelector(":scope > .cw-auth-overlay");' in body
@@ -2812,7 +2824,7 @@ def test_auth_remount_preserves_open_connection_overlay() -> None:
 
 
 def test_connection_overlay_ignores_backdrop_clicks() -> None:
-    ui = Path("assets/helpers/providers-ui.js").read_text("utf-8")
+    ui = english_source(Path("assets/helpers/providers-ui.js").read_text("utf-8"))
     handler = ui.split("slot.addEventListener(\"click\",", 1)[1].split("\n    });", 1)[0]
 
     assert "[data-cw-auth-close]" in handler
@@ -2870,7 +2882,7 @@ def test_status_probes_keep_used_default_when_it_is_configured() -> None:
 
 
 def test_sync_visibility_skips_redundant_select_rebuilds() -> None:
-    core = Path("assets/helpers/core.js").read_text("utf-8")
+    core = english_source(Path("assets/helpers/core.js").read_text("utf-8"))
     fn = core.split("function applySyncVisibility()", 1)[1].split("\n  }", 1)[0]
 
     assert "const wanted = PROVIDER_ORDER.filter((key) => allowed.has(key));" in fn
@@ -2881,7 +2893,7 @@ def test_sync_visibility_skips_redundant_select_rebuilds() -> None:
 
 
 def test_auth_dots_batch_layout_reads_before_writes() -> None:
-    status = Path("assets/js/main-status.js").read_text("utf-8")
+    status = english_source(Path("assets/js/main-status.js").read_text("utf-8"))
     apply_fn = status.split("function applyAuthDots(cfg)", 1)[1].split("\n  }", 1)[0]
     read_fn = status.split("function readDotTargets()", 1)[1].split("\n  }", 1)[0]
 
@@ -2893,7 +2905,7 @@ def test_auth_dots_batch_layout_reads_before_writes() -> None:
 
 
 def test_status_provider_visibility_reuses_configured_set() -> None:
-    status = Path("assets/js/main-status.js").read_text("utf-8")
+    status = english_source(Path("assets/js/main-status.js").read_text("utf-8"))
 
     assert "function configuredProviderSet(cfg = getCachedConfig())" in status
     assert "isStatusProviderVisible(key, data, cfg = getCachedConfig(), configured = null)" in status
@@ -2954,7 +2966,7 @@ def test_webhook_rows_expose_user_profile_without_touching_instance_label() -> N
 
 
 def test_route_and_webhook_cards_render_profile_connector() -> None:
-    js = Path("assets/js/scrobbler.js").read_text("utf-8")
+    js = english_source(Path("assets/js/scrobbler.js").read_text("utf-8"))
 
     assert "function profileConnector(row)" in js
     assert "user_profile_label" in js
@@ -2988,7 +3000,7 @@ def test_route_card_accent_is_purple_only_with_user_profile() -> None:
 
 
 def test_cards_tag_user_profile_class() -> None:
-    js = Path("assets/js/scrobbler.js").read_text("utf-8")
+    js = english_source(Path("assets/js/scrobbler.js").read_text("utf-8"))
     webhooks = js.split("function renderWebhooks(", 1)[1].split("function renderRoutes(", 1)[0]
     routes = js.split("function renderRoutes(", 1)[1]
 
@@ -2997,7 +3009,7 @@ def test_cards_tag_user_profile_class() -> None:
 
 
 def test_scrobbler_cards_summarize_media_ignore_filters() -> None:
-    js = Path("assets/js/scrobbler.js").read_text("utf-8")
+    js = english_source(Path("assets/js/scrobbler.js").read_text("utf-8"))
     webhooks = js.split("function renderWebhooks(", 1)[1].split("function renderRoutes(", 1)[0]
     routes = js.split("function renderRoutes(", 1)[1]
 
@@ -3011,7 +3023,7 @@ def test_scrobbler_cards_summarize_media_ignore_filters() -> None:
 
 
 def test_pair_config_profile_display_sits_before_mode_control() -> None:
-    js = Path("assets/js/modals/pair-config/index.js").read_text("utf-8")
+    js = english_source(Path("assets/js/modals/pair-config/index.js").read_text("utf-8"))
     css = Path("assets/js/modals/pair-config/styles.css").read_text("utf-8")
 
     assert "cx-user-profile-slot" in js
@@ -3033,7 +3045,7 @@ def test_pair_config_profile_display_sits_before_mode_control() -> None:
 
 
 def test_pair_config_instance_select_hides_unconfigured_default() -> None:
-    js = Path("assets/js/modals/pair-config/index.js").read_text("utf-8")
+    js = english_source(Path("assets/js/modals/pair-config/index.js").read_text("utf-8"))
     block = js.split("function renderInstanceSelects(", 1)[1].split("function resetPairUserProfileControl(", 1)[0]
 
     assert '[["default",{id:"default",label:"Default"}]]' not in block
@@ -3045,7 +3057,7 @@ def test_pair_config_instance_select_hides_unconfigured_default() -> None:
 
 
 def test_pair_config_pins_saved_instance_that_became_unconfigured() -> None:
-    js = Path("assets/js/modals/pair-config/index.js").read_text("utf-8")
+    js = english_source(Path("assets/js/modals/pair-config/index.js").read_text("utf-8"))
     block = js.split("function renderInstanceSelects(", 1)[1].split("function resetPairUserProfileControl(", 1)[0]
 
     assert "savedInstances:{src:null,dst:null}" in js
@@ -3054,7 +3066,7 @@ def test_pair_config_pins_saved_instance_that_became_unconfigured() -> None:
     assert "if(!scoped&&pin&&pin===want&&!rows.some(row=>row.id===pin))" in block
     assert 'if(scoped) rows=rows.filter(row=>row.id!=="default"&&row.configured!==false)' in block
     assert 'pin==="default"?[stale,...rows]:[...rows,stale]' in block
-    assert "row.stale?`${row.label} - not configured`:row.label" in block
+    assert 'row.stale?T("{{name}} - not configured",{name:row.label}):row.label' in block
     assert 'rows=[{id:"default",label:"Default",stale:!!state.instancesLoaded}]' in block
     assert "state.instancesLoaded=!!r.ok" in js
 
@@ -3072,8 +3084,8 @@ def test_provider_instances_report_unconfigured_default_beside_configured_profil
     assert by_id["PLEX-P01"]["configured"] is True
 
 def test_scrobbler_modals_have_conditional_user_profile_display() -> None:
-    route_js = Path("assets/js/modals/scrobbler-route/index.js").read_text("utf-8")
-    webhook_js = Path("assets/js/modals/scrobbler-webhook/index.js").read_text("utf-8")
+    route_js = english_source(Path("assets/js/modals/scrobbler-route/index.js").read_text("utf-8"))
+    webhook_js = english_source(Path("assets/js/modals/scrobbler-webhook/index.js").read_text("utf-8"))
     css = Path("assets/css/components.css").read_text("utf-8")
 
     assert "/api/user-profiles" in route_js
@@ -3101,7 +3113,7 @@ def test_scrobbler_modals_have_conditional_user_profile_display() -> None:
 
 
 def test_scrobbler_route_and_webhook_modals_are_not_backdrop_dismissible() -> None:
-    modals_js = Path("assets/js/modals.js").read_text("utf-8")
+    modals_js = english_source(Path("assets/js/modals.js").read_text("utf-8"))
 
     assert "ModalRegistry.open('scrobbler-webhook', { ...props, dismissible: false })" in modals_js
     assert "ModalRegistry.open('scrobbler-route', { ...props, dismissible: false })" in modals_js
@@ -3184,8 +3196,8 @@ def test_status_probe_scope_accepts_admin_requested_profile(monkeypatch) -> None
 
 
 def test_status_frontend_sends_selected_profile() -> None:
-    api_js = Path("assets/helpers/api.js").read_text("utf-8")
-    core_js = Path("assets/helpers/core.js").read_text("utf-8")
+    api_js = english_source(Path("assets/helpers/api.js").read_text("utf-8"))
+    core_js = english_source(Path("assets/helpers/core.js").read_text("utf-8"))
 
     assert "qs.push(`user_profile=${encodeURIComponent(profile)}`)" in api_js
     assert '`${KEY.status}:${profile || "all"}`' in api_js
@@ -3260,7 +3272,7 @@ def test_view_as_leaves_audit_identity_untouched(monkeypatch) -> None:
 
 
 def test_view_as_header_transport_is_scoped_to_safe_and_allowlisted_calls() -> None:
-    api_js = Path("assets/helpers/api.js").read_text("utf-8")
+    api_js = english_source(Path("assets/helpers/api.js").read_text("utf-8"))
     sync_api = Path("api/syncAPI.py").read_text("utf-8")
 
     assert 'const VIEW_AS_HEADER = "X-CW-View-As";' in api_js
@@ -3271,7 +3283,7 @@ def test_view_as_header_transport_is_scoped_to_safe_and_allowlisted_calls() -> N
 
 
 def test_status_badges_hide_out_of_scope_providers() -> None:
-    js = Path("assets/js/main-status.js").read_text("utf-8")
+    js = english_source(Path("assets/js/main-status.js").read_text("utf-8"))
 
     assert "function matchesOverviewProfile(key, data)" in js
     assert "if (!matchesOverviewProfile(key, data)) return false;" in js
@@ -3306,7 +3318,7 @@ def test_view_as_query_overrides_ambient_header(monkeypatch) -> None:
 
 
 def test_events_modal_has_profile_filter_in_more_filters() -> None:
-    js = Path("assets/js/events/index.js").read_text("utf-8")
+    js = english_source(Path("assets/js/events/index.js").read_text("utf-8"))
 
     assert "function withEventScope(u, eventScope)" in js
     assert 'if (!url.pathname.startsWith("/api/events/")) return u;' in js
@@ -3320,7 +3332,7 @@ def test_events_modal_has_profile_filter_in_more_filters() -> None:
 
 
 def test_profile_hero_prefers_last_scrobble_over_history() -> None:
-    js = Path("assets/js/profile-page.js").read_text("utf-8")
+    js = english_source(Path("assets/js/profile-page.js").read_text("utf-8"))
 
     assert "function renderHero(scrobbleItems, historyItems)" in js
     assert "const item = newestItem(scrobbleItems) || newestItem(historyItems);" in js
@@ -3348,7 +3360,7 @@ def test_profile_hero_prefers_last_scrobble_over_history() -> None:
 
 
 def test_continue_watching_cards_show_provider_icons() -> None:
-    js = Path("assets/js/profile-page.js").read_text("utf-8")
+    js = english_source(Path("assets/js/profile-page.js").read_text("utf-8"))
     css = Path("assets/css/profile-page.css").read_text("utf-8")
 
     assert "const progressProviders = (item) => {" in js

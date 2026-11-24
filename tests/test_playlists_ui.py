@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from tests.i18n_source import english_source
 
 REPO = Path(__file__).resolve().parents[1]
 
@@ -14,7 +15,7 @@ def test_index_html_registers_playlists_page():
 
 
 def test_core_js_routes_playlists_tab():
-    core = (REPO / "assets" / "helpers" / "core.js").read_text(encoding="utf-8")
+    core = english_source((REPO / "assets" / "helpers" / "core.js").read_text(encoding="utf-8"))
     assert '"/assets/js/playlists.js"' in core
     assert 'byId("page-playlists")' in core
     assert '"playlists"' in core
@@ -25,7 +26,7 @@ def test_playlists_assets_exist():
 
 
 def test_playlists_page_is_modal_first_overview():
-    js = (REPO / "assets" / "js" / "playlists.js").read_text(encoding="utf-8")
+    js = english_source((REPO / "assets" / "js" / "playlists.js").read_text(encoding="utf-8"))
     css = (REPO / "assets" / "css" / "pages.css").read_text(encoding="utf-8")
     assert "Playlist endpoints" in js
     assert "Mappings" in js
@@ -57,7 +58,7 @@ def test_playlists_page_is_modal_first_overview():
 
 
 def test_playlists_modals_cover_create_edit_delete_flows():
-    js = (REPO / "assets" / "js" / "playlists.js").read_text(encoding="utf-8")
+    js = english_source((REPO / "assets" / "js" / "playlists.js").read_text(encoding="utf-8"))
     assert "function openEndpointModal" in js
     assert "function openMappingModal" in js
     assert "function openRulesetManager" in js
@@ -101,7 +102,7 @@ def test_playlists_modals_cover_create_edit_delete_flows():
 
 
 def test_endpoint_modal_uses_guided_playlist_picker():
-    js = (REPO / "assets" / "js" / "playlists.js").read_text(encoding="utf-8")
+    js = english_source((REPO / "assets" / "js" / "playlists.js").read_text(encoding="utf-8"))
     css = (REPO / "assets" / "css" / "pages.css").read_text(encoding="utf-8")
     assert "function nextSequenceName" in js
     assert "function nextEndpointName" in js
@@ -141,7 +142,7 @@ def test_endpoint_modal_uses_guided_playlist_picker():
 
 
 def test_mapping_modal_uses_guided_endpoint_picker():
-    js = (REPO / "assets" / "js" / "playlists.js").read_text(encoding="utf-8")
+    js = english_source((REPO / "assets" / "js" / "playlists.js").read_text(encoding="utf-8"))
     css = (REPO / "assets" / "css" / "pages.css").read_text(encoding="utf-8")
     assert "function generatedMappingName" in js
     assert "function nextMappingName" in js
@@ -156,7 +157,7 @@ def test_mapping_modal_uses_guided_endpoint_picker():
     assert 'const isWatchlist = rawType.includes("watchlist")' in js
     assert 'isWatchlist ? "Watchlist"' in js
     assert "selectedShowNote: false" in js
-    assert "selectedData.showNote = data.selectedShowNote" in (REPO / "assets" / "helpers" / "icon-select.js").read_text(encoding="utf-8")
+    assert "selectedData.showNote = data.selectedShowNote" in english_source((REPO / "assets" / "helpers" / "icon-select.js").read_text(encoding="utf-8"))
     assert 'class="pl-mapping-wizard"' in js
     assert 'class="pl-map-ruleset-card pl-map-advanced"' in js
     assert 'class="pl-map-toggle"' in js
@@ -168,7 +169,7 @@ def test_mapping_modal_uses_guided_endpoint_picker():
 
 
 def test_playlist_actions_use_partial_overview_refresh():
-    js = (REPO / "assets" / "js" / "playlists.js").read_text(encoding="utf-8")
+    js = english_source((REPO / "assets" / "js" / "playlists.js").read_text(encoding="utf-8"))
     assert "async function refreshOverview" in js
     assert "function refreshSection" in js
     assert "function updateMappingActions" in js
@@ -177,7 +178,7 @@ def test_playlist_actions_use_partial_overview_refresh():
 
 
 def test_playlists_initial_load_uses_page_shell_and_section_skeletons():
-    js = (REPO / "assets" / "js" / "playlists.js").read_text(encoding="utf-8")
+    js = english_source((REPO / "assets" / "js" / "playlists.js").read_text(encoding="utf-8"))
     assert "loaded: false" in js
     assert "loading: false" in js
     assert "const EMPTY_PROVIDER_RETRIES = 2" in js
@@ -190,7 +191,7 @@ def test_playlists_initial_load_uses_page_shell_and_section_skeletons():
 
 
 def test_playlists_provider_banner():
-    js = (REPO / "assets" / "js" / "playlists.js").read_text(encoding="utf-8")
+    js = english_source((REPO / "assets" / "js" / "playlists.js").read_text(encoding="utf-8"))
     assert "PLAYLIST_COMPATIBLE_PROVIDERS" in js
     assert '["PLEX", "TRAKT", "MDBLIST", "JELLYFIN", "EMBY", "PUBLICMETADB", "SIMKL", "TMDB", "FLICKLIST", "SILO", "TOFA", "CROSSWATCH"]' in js
     assert "Playlists need at least one compatible provider" in js
@@ -205,7 +206,7 @@ def test_playlists_provider_banner():
 
 
 def test_endpoint_and_mapping_tables_use_compact_icon_actions():
-    js = (REPO / "assets" / "js" / "playlists.js").read_text(encoding="utf-8")
+    js = english_source((REPO / "assets" / "js" / "playlists.js").read_text(encoding="utf-8"))
     css = (REPO / "assets" / "css" / "pages.css").read_text(encoding="utf-8")
     assert "function endpointRef" in js
     assert "function mappingTargetRefs" in js
@@ -257,7 +258,7 @@ def test_endpoint_and_mapping_tables_use_compact_icon_actions():
 
 
 def test_playlists_overview_uses_dashboard_table_body():
-    js = (REPO / "assets" / "js" / "playlists.js").read_text(encoding="utf-8")
+    js = english_source((REPO / "assets" / "js" / "playlists.js").read_text(encoding="utf-8"))
     css = (REPO / "assets" / "css" / "pages.css").read_text(encoding="utf-8")
     assert "function endpointIdentity" in js
     assert "function statCard" in js
@@ -266,7 +267,7 @@ def test_playlists_overview_uses_dashboard_table_body():
     assert 'if (counts.unresolved) chips.push(activityChangeChip("Unresolved", counts.unresolved, "help", "unresolved"));' in js
     assert 'chips.length ? chips.join("") : `<span class="pl-muted">No changes</span>`' in js
     assert 'const unresolved = Number(result.unresolved_count || result.unresolved || 0);' in js
-    assert 'warningBits.push(`${unresolved} unresolved`)' in js
+    assert 'warningBits.push(T("{{count}} unresolved", {count: unresolved}))' in js
     assert "function openActivityClear" in js
     assert "activityClear: ()" in js
     assert "state.activity = Array.isArray(cleared.activity) ? cleared.activity : [];" in js
@@ -292,7 +293,7 @@ def test_playlists_overview_uses_dashboard_table_body():
 
 
 def test_discovery_mapping_modal_collapses_advanced_options():
-    js = (REPO / "assets" / "js" / "playlists.js").read_text(encoding="utf-8")
+    js = english_source((REPO / "assets" / "js" / "playlists.js").read_text(encoding="utf-8"))
     assert "function endpointIsDiscovery" in js
     assert 'id="pl-map-discovery-help"' in js
     assert '["#pl-map-direction", "#pl-map-ruleset", "#pl-map-membership", "#pl-map-order"]' in js
@@ -317,7 +318,7 @@ def test_playlist_modals_use_styled_scrollbars_and_muted_selection():
 
 
 def test_pair_overlay_playlist_managed_pairs_open_playlist_mapping():
-    js = (REPO / "assets" / "js" / "connections.pairs.overlay.js").read_text(encoding="utf-8")
+    js = english_source((REPO / "assets" / "js" / "connections.pairs.overlay.js").read_text(encoding="utf-8"))
     css = (REPO / "assets" / "css" / "components.css").read_text(encoding="utf-8")
     assert "const isPlaylistManagedPair" in js
     assert "window.cxOpenPlaylistMappingsForPair = openPlaylistMappingsForPair" in js
@@ -342,8 +343,8 @@ def test_pair_overlay_playlist_managed_pairs_open_playlist_mapping():
 
 
 def test_playlists_module_exposes_pair_mapping_modal_entrypoint():
-    js = (REPO / "assets" / "js" / "playlists.js").read_text(encoding="utf-8")
-    pair_modal = (REPO / "assets" / "js" / "modals" / "pair-config" / "index.js").read_text(encoding="utf-8")
+    js = english_source((REPO / "assets" / "js" / "playlists.js").read_text(encoding="utf-8"))
+    pair_modal = english_source((REPO / "assets" / "js" / "modals" / "pair-config" / "index.js").read_text(encoding="utf-8"))
     assert "pairMappings: (id) => request(`${BASE}/pairs/${encodeURIComponent(id)}/mappings`)" in js
     assert "async function openMappingForPair" in js
     assert "function returnToSyncPairsOverview" in js
@@ -359,9 +360,9 @@ def test_playlists_module_exposes_pair_mapping_modal_entrypoint():
 
 
 def test_pair_config_hides_playlist_feature_tab():
-    rules = (REPO / "assets" / "js" / "modals" / "pair-config" / "custom-rules.js").read_text(encoding="utf-8")
-    flow = (REPO / "assets" / "js" / "modals" / "pair-config" / "flow.js").read_text(encoding="utf-8")
-    pair_modal = (REPO / "assets" / "js" / "modals" / "pair-config" / "index.js").read_text(encoding="utf-8")
+    rules = english_source((REPO / "assets" / "js" / "modals" / "pair-config" / "custom-rules.js").read_text(encoding="utf-8"))
+    flow = english_source((REPO / "assets" / "js" / "modals" / "pair-config" / "flow.js").read_text(encoding="utf-8"))
+    pair_modal = english_source((REPO / "assets" / "js" / "modals" / "pair-config" / "index.js").read_text(encoding="utf-8"))
 
     assert 'const keys = ["watchlist", "ratings", "history", "progress", "collection"];' in rules
     assert '["playlists", "pl"]' not in flow
@@ -371,7 +372,7 @@ def test_pair_config_hides_playlist_feature_tab():
 
 
 def test_main_hub_treats_playlists_as_first_class_feature():
-    main = (REPO / "assets" / "js" / "main.js").read_text(encoding="utf-8")
+    main = english_source((REPO / "assets" / "js" / "main.js").read_text(encoding="utf-8"))
     css = (REPO / "assets" / "crosswatch.css").read_text(encoding="utf-8")
     assert '["playlists", "queue_music"]' in main
     assert "progress: true, playlists: true" in main
@@ -385,8 +386,8 @@ def test_main_hub_treats_playlists_as_first_class_feature():
 
 
 def test_insights_settings_enables_playlist_statistics():
-    insights = (REPO / "assets" / "js" / "insights.js").read_text(encoding="utf-8")
-    modal = (REPO / "assets" / "js" / "modals" / "insight-settings" / "index.js").read_text(encoding="utf-8")
+    insights = english_source((REPO / "assets" / "js" / "insights.js").read_text(encoding="utf-8"))
+    modal = english_source((REPO / "assets" / "js" / "modals" / "insight-settings" / "index.js").read_text(encoding="utf-8"))
     assert "playlists: f.playlists !== false" in insights
     assert "playlists: f.playlists !== false" in modal
     assert "Show playlist sync tiles." in modal
@@ -407,7 +408,7 @@ def test_insights_playlist_statistics_use_endpoint_counts():
 
 
 def test_insights_main_load_uses_lightweight_stats_first():
-    insights = (REPO / "assets" / "js" / "insights.js").read_text(encoding="utf-8")
+    insights = english_source((REPO / "assets" / "js" / "insights.js").read_text(encoding="utf-8"))
     api = (REPO / "api" / "insightAPI.py").read_text(encoding="utf-8")
 
     assert "refreshInsightsFastThenFull" in insights
@@ -440,7 +441,7 @@ def test_playlist_runner_emits_live_summary_events():
 
 
 def test_ruleset_modal_uses_guided_visual_builder():
-    js = (REPO / "assets" / "js" / "playlists.js").read_text(encoding="utf-8")
+    js = english_source((REPO / "assets" / "js" / "playlists.js").read_text(encoding="utf-8"))
     css = (REPO / "assets" / "css" / "pages.css").read_text(encoding="utf-8")
     assert "RULESET_PRESETS" in js
     assert "Direct sync" in js
@@ -478,7 +479,7 @@ def test_ruleset_modal_uses_guided_visual_builder():
 
 
 def test_ruleset_builder_preserves_payload_shape():
-    js = (REPO / "assets" / "js" / "playlists.js").read_text(encoding="utf-8")
+    js = english_source((REPO / "assets" / "js" / "playlists.js").read_text(encoding="utf-8"))
     for key in [
         "direction",
         "initial_sync",
@@ -523,7 +524,7 @@ def test_playlists_api_routes_registered():
 
 
 def test_playlists_simple_view_is_default_and_keeps_advanced_tables():
-    js = (REPO / "assets" / "js" / "playlists.js").read_text(encoding="utf-8")
+    js = english_source((REPO / "assets" / "js" / "playlists.js").read_text(encoding="utf-8"))
     css = (REPO / "assets" / "css" / "pages.css").read_text(encoding="utf-8")
     assert 'localStorage.getItem("cw.playlists.advanced") === "1"' in js
     assert "if (!state.advanced) return renderListsSimple();" in js
@@ -537,7 +538,7 @@ def test_playlists_simple_view_is_default_and_keeps_advanced_tables():
 
 
 def test_playlists_sync_wizard_creates_lists_and_sync_in_one_flow():
-    js = (REPO / "assets" / "js" / "playlists.js").read_text(encoding="utf-8")
+    js = english_source((REPO / "assets" / "js" / "playlists.js").read_text(encoding="utf-8"))
     assert "function openSyncWizard" in js
     assert 'data-action="sync-wizard"' in js
     assert 'data-action="sync-wizard-publish"' in js

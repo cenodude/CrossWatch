@@ -3,12 +3,14 @@
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 
 (function () {
+  const T = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.t?.(key, vars) ?? key;
+  const TH = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.html?.(key, vars) ?? key;
   let _renderBusy = false;
   let _pick = { source: "", target: "" };
 
   const key = (s) => String(s || "").trim().toUpperCase();
   const providerMeta = () => window.CW?.ProviderMeta || null;
-  const providerLabel = (item, providerKey) => providerMeta()?.label?.(providerKey) || String(item?.label || item?.name || providerKey || "Provider");
+  const providerLabel = (item, providerKey) => providerMeta()?.label?.(providerKey) || String(item?.label || item?.name || providerKey || T("connections.overlay.provider"));
   const providerClass = (providerKey) => providerMeta()?.brandInfo?.(providerKey)?.cls || "";
   const providerLogo = (providerKey) => providerMeta()?.logoPath?.(providerKey) || "";
   const truthy = (v) => {
@@ -50,7 +52,7 @@
   function featureDots(features) {
     return FEATURE_ORDER.map(([field, cls, label]) => {
       const on = truthy(features?.[field]);
-      return `<span class="prov-dot ${cls} ${on ? "on" : ""}" title="${label}"></span>`;
+      return `<span class="prov-dot ${cls} ${on ? "on" : ""}" title="${TH(`connections.features.${field}`)}"></span>`;
     }).join("");
   }
 
@@ -63,7 +65,7 @@
       : providers;
 
     if (!Array.isArray(visibleProviders) || !visibleProviders.length) {
-      board.innerHTML = '<div class="prov-empty">No providers discovered.</div>';
+      board.innerHTML = '<div class="prov-empty">' + TH("connections.overlay.none") + '</div>';
       syncLegacySelectors();
       return;
     }
@@ -79,22 +81,22 @@
       const isTarget = providerKey === target;
       const sourceOnly = !isSource && !!source && item?.capabilities?.can_target === false;
       const btnClass = isSource ? "selected" : (source && !isTarget ? "target" : "");
-      const btnText = isSource ? "Clear Source" : (sourceOnly ? "Source only" : (source ? "Set as Target" : "Set as Source"));
+      const btnText = isSource ? T("connections.overlay.clearSource") : (sourceOnly ? T("connections.overlay.sourceOnly") : (source ? T("connections.overlay.setTarget") : T("connections.overlay.setSource")));
       const logo = providerLogo(providerKey);
       const watermarkStyle = logo ? ` style="--wm:url('${logo}')"` : "";
       const badge = isSource
-        ? '<span class="prov-badge">Source selected</span>'
-        : (isTarget ? '<span class="prov-badge">Target selected</span>' : "");
+        ? '<span class="prov-badge">' + TH("connections.overlay.sourceSelected") + '</span>'
+        : (isTarget ? '<span class="prov-badge">' + TH("connections.overlay.targetSelected") + '</span>' : "");
 
       return `
         <article class="card prov-card ${cls} ${isSource ? "is-source" : ""} ${isTarget ? "is-target" : ""}" data-prov="${providerKey}" data-sync-prov="${providerKey}">
           <div class="prov-watermark" aria-hidden="true"${watermarkStyle}></div>
           <div class="prov-main">
             <div class="prov-title">${label}</div>
-            <div class="prov-features" aria-label="Supported features">${featureDots(item.features || {})}</div>
+            <div class="prov-features" aria-label="${TH("connections.overlay.features")}">${featureDots(item.features || {})}</div>
             <div class="prov-actions">
-              <button type="button" class="prov-btn ${btnClass}" data-action="pick" data-prov="${providerKey}"${sourceOnly ? ' disabled title="This provider can only be used as a source"' : ""}>${btnText}</button>
-              ${isSource && item?.capabilities?.can_target !== false ? `<button type="button" class="prov-btn target" data-action="instance" data-prov="${providerKey}">Set as Target</button>` : ""}
+              <button type="button" class="prov-btn ${btnClass}" data-action="pick" data-prov="${providerKey}"${sourceOnly ? ' disabled title="' + TH("connections.overlay.onlySource") + '"' : ""}>${btnText}</button>
+              ${isSource && item?.capabilities?.can_target !== false ? `<button type="button" class="prov-btn target" data-action="instance" data-prov="${providerKey}">${TH("connections.overlay.setTarget")}</button>` : ""}
               ${badge}
             </div>
           </div>

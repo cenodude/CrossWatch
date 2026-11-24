@@ -14,6 +14,7 @@ from providers.scrobble.scrobble import ScrobbleEvent
 from providers.webhooks.config import sink_configured, webhook_sinks
 
 import pytest
+from tests.i18n_source import english_source
 
 
 @pytest.fixture(autouse=True)
@@ -256,8 +257,8 @@ def test_floppy_sink_uses_nested_duration_when_raw_has_zero_first(monkeypatch: A
 
 
 def test_scrobbler_route_modal_lists_floppy_sink() -> None:
-    text = (ROOT / "assets" / "js" / "modals" / "scrobbler-route" / "index.js").read_text("utf-8")
-    meta = (ROOT / "assets" / "helpers" / "provider-meta.js").read_text("utf-8")
+    text = english_source((ROOT / "assets" / "js" / "modals" / "scrobbler-route" / "index.js").read_text("utf-8"))
+    meta = english_source((ROOT / "assets" / "helpers" / "provider-meta.js").read_text("utf-8"))
 
     assert '"floppy"' in text.split("const sinks")[1].split("]")[0]
     assert 'floppy: "Floppy"' in text
@@ -267,7 +268,7 @@ def test_scrobbler_route_modal_lists_floppy_sink() -> None:
 
 
 def test_scrobbler_webhook_modal_lists_floppy_sink() -> None:
-    text = (ROOT / "assets" / "js" / "modals" / "scrobbler-webhook" / "index.js").read_text("utf-8")
+    text = english_source((ROOT / "assets" / "js" / "modals" / "scrobbler-webhook" / "index.js").read_text("utf-8"))
 
     assert '"floppy"' in text.split("const sinks")[1].split("]")[0]
     assert '"floppy"' in text.split("const ratingSinks")[1].split("]")[0]

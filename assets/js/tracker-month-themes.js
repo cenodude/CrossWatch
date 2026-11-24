@@ -2,23 +2,25 @@
 /* CrossWatch - Shared monthly poster and banner themes */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 
+const T = (key, vars) => (globalThis.window?.CW?.I18n || globalThis.window?.__cwI18n)?.t?.(key, vars) ?? key;
+
 export const themes = [
-  {id:"new-year",name:"New Year",a:"#ffe2a1",b:"#a6bcff",ink:"#232b57",motif:"fireworks"},
-  {id:"valentine",name:"Valentine's Day",a:"#ffb5c8",b:"#ff749a",ink:"#532237",motif:"hearts"},
-  {id:"patrick",name:"St. Patrick's Day",a:"#b9efa6",b:"#efcc78",ink:"#174d39",motif:"clover"},
-  {id:"easter",name:"Easter",a:"#ffe5a7",b:"#c9adff",ink:"#493858",motif:"eggs"},
-  {id:"spring",name:"Spring",a:"#ffc9dc",b:"#b4e6b4",ink:"#35483d",motif:"blossoms"},
-  {id:"summer",name:"Summer",a:"#ffdc89",b:"#74e3dd",ink:"#154c59",motif:"sun"},
-  {id:"autumn",name:"Autumn",a:"#ffc07e",b:"#e18c99",ink:"#563139",motif:"leaves"},
-  {id:"winter",name:"Winter",a:"#c2efff",b:"#acb9ff",ink:"#263b59",motif:"snow"},
-  {id:"thanksgiving",name:"Thanksgiving",a:"#ffd08a",b:"#d5996c",ink:"#51362a",motif:"harvest"},
-  {id:"carnival",name:"Carnival",a:"#ffc86d",b:"#cb9cff",ink:"#42265d",motif:"mask"},
-  {id:"diwali",name:"Diwali",a:"#ffda81",b:"#ff93bb",ink:"#562647",motif:"lamps"},
-  {id:"lunar-new-year",name:"Lunar New Year",a:"#ffe09a",b:"#ff9094",ink:"#642b32",motif:"lanterns"},
-  {id:"eid",name:"Eid",a:"#f2dea4",b:"#9cddcf",ink:"#194b4d",motif:"crescent"},
-  {id:"halloween",name:"Halloween",a:"#ffb777",b:"#be9aff",ink:"#49304e",motif:"bats"},
-  {id:"christmas",name:"Christmas",a:"#f7d49a",b:"#98dcbf",ink:"#244b40",motif:"evergreen"},
-];
+  {id:"new-year",a:"#ffe2a1",b:"#a6bcff",ink:"#232b57",motif:"fireworks"},
+  {id:"valentine",a:"#ffb5c8",b:"#ff749a",ink:"#532237",motif:"hearts"},
+  {id:"patrick",a:"#b9efa6",b:"#efcc78",ink:"#174d39",motif:"clover"},
+  {id:"easter",a:"#ffe5a7",b:"#c9adff",ink:"#493858",motif:"eggs"},
+  {id:"spring",a:"#ffc9dc",b:"#b4e6b4",ink:"#35483d",motif:"blossoms"},
+  {id:"summer",a:"#ffdc89",b:"#74e3dd",ink:"#154c59",motif:"sun"},
+  {id:"autumn",a:"#ffc07e",b:"#e18c99",ink:"#563139",motif:"leaves"},
+  {id:"winter",a:"#c2efff",b:"#acb9ff",ink:"#263b59",motif:"snow"},
+  {id:"thanksgiving",a:"#ffd08a",b:"#d5996c",ink:"#51362a",motif:"harvest"},
+  {id:"carnival",a:"#ffc86d",b:"#cb9cff",ink:"#42265d",motif:"mask"},
+  {id:"diwali",a:"#ffda81",b:"#ff93bb",ink:"#562647",motif:"lamps"},
+  {id:"lunar-new-year",a:"#ffe09a",b:"#ff9094",ink:"#642b32",motif:"lanterns"},
+  {id:"eid",a:"#f2dea4",b:"#9cddcf",ink:"#194b4d",motif:"crescent"},
+  {id:"halloween",a:"#ffb777",b:"#be9aff",ink:"#49304e",motif:"bats"},
+  {id:"christmas",a:"#f7d49a",b:"#98dcbf",ink:"#244b40",motif:"evergreen"},
+].map(theme => Object.defineProperty(theme, "name", {enumerable: true, get: () => T(`tracker.month.themes.${theme.id}`)}));
 export const holidays = themes.filter(t=>!["spring","summer","autumn","winter"].includes(t.id));
 const byId = new Map(themes.map(t=>[t.id,t]));
 const common = ["new-year","valentine","patrick","easter","halloween","christmas"];

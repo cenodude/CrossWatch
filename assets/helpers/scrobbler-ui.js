@@ -1,4 +1,6 @@
 (function (w, d) {
+  const T = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.t?.(key, vars) ?? key;
+  const TH = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.html?.(key, vars) ?? key;
   w.CW ||= {};
 
   const FILTER_LABEL_STYLE = "font-size:11px;font-weight:900;letter-spacing:.12em;text-transform:uppercase;color:rgba(224,230,246,.68)";
@@ -9,7 +11,7 @@
     btn.type = "button";
     btn.className = "cx-help material-symbols-rounded";
     btn.setAttribute("data-tip-id", tipId);
-    btn.setAttribute("aria-label", "Help");
+    btn.setAttribute("aria-label", T("scrobbler.ui.help"));
     btn.textContent = "help";
     return btn;
   }
@@ -168,7 +170,7 @@
     if (!titleRow) {
       titleRow = d.createElement("div");
       titleRow.className = "sc-advanced-title muted";
-      titleRow.textContent = "Advanced";
+      titleRow.textContent = T("scrobbler.ui.advanced");
       header.appendChild(titleRow);
     }
     ensureInlineHelp(titleRow, "sc-help-watch-advanced");

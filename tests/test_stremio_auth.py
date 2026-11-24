@@ -8,6 +8,7 @@ from typing import Any
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from tests.i18n_source import english_source
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -153,7 +154,7 @@ def test_stremio_ui_branding_and_local_logo() -> None:
     meta = (ROOT / "assets" / "helpers" / "provider-meta.js").read_text(encoding="utf-8")
     providers_css = (ROOT / "assets" / "css" / "providers.css").read_text(encoding="utf-8")
     loader = (ROOT / "assets" / "auth" / "auth_loader.js").read_text(encoding="utf-8")
-    ui = (ROOT / "assets" / "helpers" / "providers-ui.js").read_text(encoding="utf-8")
+    ui = english_source((ROOT / "assets" / "helpers" / "providers-ui.js").read_text(encoding="utf-8"))
     auth_ui = (ROOT / "assets" / "auth" / "auth.stremio.js").read_text(encoding="utf-8")
     logo = ROOT / "assets" / "img" / "STREMIO.png"
 

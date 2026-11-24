@@ -1,5 +1,7 @@
 /* assets/helpers/profile-select.js */
 (function () {
+  const T = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.t?.(key, vars) ?? key;
+  const TH = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.html?.(key, vars) ?? key;
   const CW = (window.CW ||= {});
   const text = (v, fallback = "") => String(v ?? fallback).trim();
   const keyOf = (v) => CW.ProviderMeta?.keyOf?.(v) || text(v).toUpperCase();
@@ -13,12 +15,12 @@
   }
 
   function profileOption(value, option) {
-    const label = labelOf(value, option) || "Default";
+    const label = labelOf(value, option) || T("common.profileSelect.default");
     return { label, icons: [{ symbol: "badge" }], note: text(option?.dataset?.note), showNote: false };
   }
 
   function userProfileOption(value, option) {
-    const label = labelOf(value, option) || "Default";
+    const label = labelOf(value, option) || T("common.profileSelect.default");
     return { label, icons: [{ symbol: "account_circle" }], note: text(option?.dataset?.note), showNote: false };
   }
 

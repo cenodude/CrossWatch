@@ -2,30 +2,34 @@
 /* CrossWatch - Sync topology health summary and refresh handling */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 
+const I18N = () => globalThis.window?.CW?.I18n || globalThis.window?.__cwI18n;
+const T = (key, vars) => I18N()?.t?.(key, vars) ?? key;
+const TH = (key, vars) => I18N()?.html?.(key, vars) ?? key;
 import { esc } from "./graph.js";
 import { baselineCopy, clearBaselines, loadBaseline } from "./baseline.js";
 
 const stateVersion = new URL(import.meta.url).searchParams.get("v") || window.__CW_VERSION__ || "";
 const { currentTopology } = await import(`./state.js?v=${encodeURIComponent(stateVersion)}`);
 
-export const statusLabel = result => ({ attention: "Attention required", review: "Review recommended", healthy: "Healthy" }[result.status]);
+const TR = (key, vars) => I18N()?.rich?.(key, vars) ?? key;
+export const statusLabel = result => ["attention", "review", "healthy"].includes(result.status) ? T(`modals.topology.status.${result.status}`) : undefined;
 export const statusIcon = result => ({ attention: "error", review: "info", healthy: "check_circle" }[result.status]);
 export function summaryCopy(result) {
   if (result.baseline) return baselineCopy(result);
-  if (!result.activePairs) return "Enable a sync pair to visualize your routes.";
-  if (result.unsupportedPairs) return "Some enabled features lack provider support. Review pair settings and available routes.";
-  if (!result.graphs.length) return "No synchronization features are enabled in these pairs.";
-  if (result.status === "attention") return "Multiple routes may write different values. Review the affected features.";
-  if (result.status === "review") return "A few routes deserve a closer look.";
-  if (result.activePairs === 1) return "One active pair. Your routes are easy to follow.";
-  return "Your synchronization routes are healthy.";
+  if (!result.activePairs) return T("modals.topology.enablePair");
+  if (result.unsupportedPairs) return T("modals.topology.lackSupport");
+  if (!result.graphs.length) return T("modals.topology.noFeatures");
+  if (result.status === "attention") return T("modals.topology.multiple");
+  if (result.status === "review") return T("modals.topology.closer");
+  if (result.activePairs === 1) return T("modals.topology.onePair");
+  return T("modals.topology.healthyRoutes");
 }
 
 function renderSummary() {
   const host = document.getElementById("sync-topology-health");
   if (!host) return;
   if (!Array.isArray(window.cx?.pairs) || !Array.isArray(window.cx?.providers)) {
-    host.innerHTML = '<div class="topology-kicker">Topology health</div><p class="topology-copy" role="status">Waiting for sync configuration…</p>';
+    host.innerHTML = `<div class="topology-kicker">${TH("modals.topology.health.title")}</div><p class="topology-copy" role="status">${TH("modals.topology.waiting")}</p>`;
     return;
   }
   const result = currentTopology();
@@ -33,16 +37,16 @@ function renderSummary() {
   const minimal = result.activePairs <= 1 && !result.findings.length;
   host.classList.toggle("is-minimal", minimal);
   const state = result.acknowledged ? "review" : result.unsupportedPairs ? "review" : result.status;
-  const label = result.acknowledged ? "Acknowledged" : result.unsupportedPairs ? "Review recommended" : result.activePairs || result.baseline ? statusLabel(result) : "No active pairs";
+  const label = result.acknowledged ? T("modals.topology.acknowledged") : result.unsupportedPairs ? T("modals.topology.status.review") : result.activePairs || result.baseline ? statusLabel(result) : T("modals.topology.noActivePairs");
   const focus = document.activeElement?.closest?.("#sync-topology-health button")?.dataset.action;
   host.innerHTML = `<div class="topology-summary-content"><div class="topology-summary-main">
-    <div class="topology-summary-title"><h4 class="topology-kicker" id="topology-health-title">Topology health</h4>
+    <div class="topology-summary-title"><h4 class="topology-kicker" id="topology-health-title">${TH("modals.topology.health.title")}</h4>
       <span class="topology-status is-${state}"><span class="material-symbol" aria-hidden="true">${result.acknowledged || result.unsupportedPairs ? "info" : statusIcon(result)}</span>${label}</span></div>
-    <div class="topology-counters" aria-label="Topology summary"><span><strong>${result.activePairs}</strong> active ${result.activePairs === 1 ? "pair" : "pairs"}</span>
-      ${minimal ? "" : `<span><strong>${result.conflicts}</strong> ${result.conflicts === 1 ? "conflict" : "conflicts"}</span><span><strong>${result.loops}</strong> ${result.loops === 1 ? "loop" : "loops"}</span><span><strong>${result.suggestions}</strong> ${result.suggestions === 1 ? "suggestion" : "suggestions"}</span>`}</div>
+    <div class="topology-counters" aria-label="${TH("modals.topology.summaryLabel")}"><span>${TR("modals.topology.activePairs", {count: result.activePairs})}</span>
+      ${minimal ? "" : `<span>${TR("modals.topology.conflicts", {count: result.conflicts})}</span><span>${TR("modals.topology.loops", {count: result.loops})}</span><span>${TR("modals.topology.suggestions", {count: result.suggestions})}</span>`}</div>
     <p class="topology-copy">${summaryCopy(result)} <span class="topology-scope">${esc(result.scope)}</span></p>
-    </div></div><div class="topology-summary-actions"><button type="button" class="btn topology-primary" data-action="view">View topology</button>
-      ${result.findings.some(finding => !finding.informational) ? `<button type="button" class="btn" data-action="review">${result.status === "healthy" ? `Review ${result.suggestions === 1 ? "suggestion" : "suggestions"}` : "Review findings"}</button>` : ""}</div>`;
+    </div></div><div class="topology-summary-actions"><button type="button" class="btn topology-primary" data-action="view">${TH("modals.topology.view")}</button>
+      ${result.findings.some(finding => !finding.informational) ? `<button type="button" class="btn" data-action="review">${result.status === "healthy" ? TH("modals.topology.reviewSuggestions", {count: result.suggestions}) : TH("modals.topology.reviewFindings")}</button>` : ""}</div>`;
   host.querySelectorAll("button").forEach(button => button.addEventListener("click", async () => {
     button.disabled = true;
     try {
@@ -51,7 +55,7 @@ function renderSummary() {
       await openModal("sync-topology", { review: button.dataset.action === "review", trigger: button });
     } catch (error) {
       console.warn("[topology] modal failed", error);
-      host.querySelector(".topology-copy").textContent = "Could not open topology. Please try again.";
+      host.querySelector(".topology-copy").textContent = T("modals.topology.openFailed");
     } finally { button.disabled = false; }
   }));
   if (focus) host.querySelector(`[data-action="${focus}"]`)?.focus({ preventScroll: true });

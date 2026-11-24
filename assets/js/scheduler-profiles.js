@@ -2,15 +2,17 @@
 /* CrossWatch - Per-profile sync schedules */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 (function (w, d) {
+  const T = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.t?.(key, vars) ?? key;
+  const TH = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.html?.(key, vars) ?? key;
   if (w.cwSchedulerProfiles) return;
 
   const LIST_ID = "cw-psch-list";
   const OWN_ID = "cw-psch-own";
   const MODES = [
-    ["hourly", "Every hour"],
-    ["every_n_hours", "Every few hours"],
-    ["daily_time", "Once a day"],
-    ["custom_interval", "Custom interval"],
+    ["hourly", T("scheduler.profiles.everyHour")],
+    ["every_n_hours", T("scheduler.profiles.everyFew")],
+    ["daily_time", T("scheduler.profiles.onceDay")],
+    ["custom_interval", T("scheduler.profiles.custom")],
   ];
   let rows = [];
   let openId = "";
@@ -37,27 +39,27 @@
   }
 
   function summary(schedule) {
-    if (!schedule?.enabled) return "Off";
-    if (schedule.mode === "hourly") return "Every hour";
-    if (schedule.mode === "daily_time") return `Daily at ${schedule.daily_time}`;
+    if (!schedule?.enabled) return T("scheduler.profiles.off");
+    if (schedule.mode === "hourly") return T("scheduler.profiles.everyHour");
+    if (schedule.mode === "daily_time") return T("scheduler.profiles.dailyAt", {time: schedule.daily_time});
     if (schedule.mode === "custom_interval") {
       const minutes = Number(schedule.custom_interval_minutes || 0);
-      return minutes % 60 === 0 ? `Every ${minutes / 60} hour${minutes === 60 ? "" : "s"}` : `Every ${minutes} minutes`;
+      return minutes % 60 === 0 ? T("scheduler.profiles.everyHours", {count: minutes / 60}) : T("scheduler.profiles.everyMinutes", {count: minutes});
     }
     const hours = Number(schedule.every_n_hours || 0);
-    return `Every ${hours} hour${hours === 1 ? "" : "s"}`;
+    return T("scheduler.profiles.everyHours", {count: hours});
   }
 
   function runLine(row) {
     const parts = [];
-    if (row.schedule?.enabled && row.next_run_iso) parts.push(`Next run ${row.next_run_iso}`);
-    if (row.last_run_at) parts.push(`Last run ${new Date(row.last_run_at * 1000).toLocaleString()}${row.last_run_ok === false ? " (failed)" : ""}`);
+    if (row.schedule?.enabled && row.next_run_iso) parts.push(T("scheduler.profiles.nextRun", {when: row.next_run_iso}));
+    if (row.last_run_at) parts.push(`${T("scheduler.profiles.lastRun", {when: new Date(row.last_run_at * 1000).toLocaleString((w.CW?.I18n || w.__cwI18n)?.locale)})}${row.last_run_ok === false ? ` (${T("scheduler.profiles.failed")})` : ""}`);
     return parts.join(" · ");
   }
 
   function pairsLine(row) {
     const count = Number(row.pair_count || 0);
-    return count ? `${count} pair${count === 1 ? "" : "s"}` : "No pairs assigned";
+    return count ? T("scheduler.profiles.pairs", {count}) : T("scheduler.profiles.noPairs");
   }
 
   function editor(row) {
@@ -68,26 +70,26 @@
         <label class="cw-psch-toggle">
           <input type="checkbox" data-psch-field="enabled" ${s.enabled ? "checked" : ""}>
           <span class="cw-psch-toggle-track" aria-hidden="true"></span>
-          <span>Run ${esc(row.label)}'s pairs on their own schedule</span>
+          <span>${TH("scheduler.profiles.runOwn", {name: row.label})}</span>
         </label>
         <div class="cw-psch-fields">
-          <label class="cw-psch-field"><span>Frequency</span>
+          <label class="cw-psch-field"><span>${TH("scheduler.profiles.frequency")}</span>
             <select data-psch-field="mode">${MODES.map(([value, label]) => `<option value="${value}" ${s.mode === value ? "selected" : ""}>${label}</option>`).join("")}</select>
           </label>
-          <label class="cw-psch-field" data-psch-for="every_n_hours" ${show("every_n_hours")}><span>Every (hours)</span>
+          <label class="cw-psch-field" data-psch-for="every_n_hours" ${show("every_n_hours")}><span>${TH("scheduler.profiles.everyHoursLabel")}</span>
             <input type="number" min="1" max="168" step="1" data-psch-field="every_n_hours" value="${esc(s.every_n_hours)}">
           </label>
-          <label class="cw-psch-field" data-psch-for="daily_time" ${show("daily_time")}><span>Time</span>
+          <label class="cw-psch-field" data-psch-for="daily_time" ${show("daily_time")}><span>${TH("scheduler.profiles.time")}</span>
             <input type="time" data-psch-field="daily_time" value="${esc(s.daily_time)}">
           </label>
-          <label class="cw-psch-field" data-psch-for="custom_interval" ${show("custom_interval")}><span>Every (minutes, at least 60)</span>
+          <label class="cw-psch-field" data-psch-for="custom_interval" ${show("custom_interval")}><span>${TH("scheduler.profiles.everyMinutesLabel")}</span>
             <input type="number" min="60" max="10080" step="15" data-psch-field="custom_interval_minutes" value="${esc(s.custom_interval_minutes)}">
           </label>
         </div>
-        <p class="cw-psch-note">Runs only ${esc(row.label)}'s pairs (${esc(pairsLine(row).toLowerCase())}). While this is on, the global schedule skips them.</p>
+        <p class="cw-psch-note">${TH("scheduler.profiles.runsOnly", {name: row.label, pairs: pairsLine(row).toLowerCase()})}</p>
         <div class="cw-psch-actions">
           <span class="cw-psch-run">${esc(runLine(row))}</span>
-          <button type="button" class="cw-psch-save" data-psch-save="${esc(row.id)}">Save schedule</button>
+          <button type="button" class="cw-psch-save" data-psch-save="${esc(row.id)}">${TH("scheduler.profiles.save")}</button>
         </div>
       </div>`;
   }
@@ -112,7 +114,7 @@
         <button type="button" class="cw-psch-row-head" data-psch-toggle="${esc(row.id)}" aria-expanded="${openId === row.id}">
           <span class="cw-psch-row-name"><strong>${esc(row.label)}</strong><small>${esc(pairsLine(row))}</small></span>
           <span class="cw-psch-badge${row.schedule?.enabled ? " is-on" : ""}">${esc(summary(row.schedule))}</span>
-          <span class="cw-psch-row-next">${esc(row.schedule?.enabled ? row.next_run_iso || "Waiting for next check" : "Uses the global schedule")}</span>
+          <span class="cw-psch-row-next">${esc(row.schedule?.enabled ? row.next_run_iso || T("scheduler.profiles.waiting") : T("scheduler.profiles.global"))}</span>
           <span class="material-symbols-rounded cw-psch-chev" aria-hidden="true">expand_more</span>
         </button>
         ${openId === row.id ? editor(row) : ""}
@@ -122,11 +124,11 @@
         <div class="cw-psch-head">
           <span class="material-symbols-rounded cw-psch-icon" aria-hidden="true">groups</span>
           <div class="cw-psch-head-copy">
-            <strong>Profile schedules</strong>
-            <small>Give a profile its own timing. Its pairs then leave the global schedule.</small>
+            <strong>${TH("scheduler.profiles.title")}</strong>
+            <small>${TH("scheduler.profiles.sub")}</small>
           </div>
         </div>
-        <div class="cw-psch-rows">${items || '<p class="cw-psch-note">No profiles yet.</p>'}</div>
+        <div class="cw-psch-rows">${items || '<p class="cw-psch-note">' + TH("scheduler.profiles.none") + '</p>'}</div>
       </section>`;
   }
 
@@ -193,9 +195,9 @@
       });
       rows = rows.map((row) => (row.id === id ? { ...row, ...saved } : row));
       render();
-      toast(saved?.schedule?.enabled ? `Schedule saved: ${summary(saved.schedule)}` : "Profile schedule turned off", true);
+      toast(saved?.schedule?.enabled ? T("scheduler.profiles.saved", {summary: summary(saved.schedule)}) : T("scheduler.profiles.turnedOff"), true);
     } catch (e) {
-      toast(`Could not save schedule: ${e?.message || e}`, false);
+      toast(T("scheduler.profiles.saveFailed", {error: String(e?.message || e)}), false);
       button.disabled = false;
     }
   }

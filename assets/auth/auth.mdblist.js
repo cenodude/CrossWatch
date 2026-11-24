@@ -1,5 +1,7 @@
 // assets/auth/auth.mdblist.js
 (function () {
+  const T = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.t?.(key, vars) ?? key;
+  const TH = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.html?.(key, vars) ?? key;
   if (window._mdblPatched) return;
   window._mdblPatched = true;
 
@@ -51,14 +53,14 @@
   function friendlyError(code) {
     const key = String(code || "").trim();
     const map = {
-      api_key_required: "Enter your MDBList API key",
-      invalid_api_key: "Invalid MDBList API key",
-      validation_timeout: "MDBList validation timed out",
-      validation_failed: "Could not validate MDBList API key",
-      validation_bad_response: "MDBList returned an invalid validation response",
-      save_failed: "Saving MDBList key failed",
+      api_key_required: T("connections.validation.apiKeyRequired", {provider: "MDBList"}),
+      invalid_api_key: T("connections.validation.invalidApiKey", {provider: "MDBList"}),
+      validation_timeout: T("connections.validation.timeout", {provider: "MDBList"}),
+      validation_failed: T("connections.validation.validateKeyFailed", {provider: "MDBList"}),
+      validation_bad_response: T("connections.auth.mdbl.badResponse"),
+      save_failed: T("connections.validation.saveKeyFailed", {provider: "MDBList"}),
     };
-    return map[key] || key.replace(/_/g, " ") || "Saving MDBList key failed";
+    return map[key] || key.replace(/_/g, " ") || T("connections.validation.saveKeyFailed", {provider: "MDBList"});
   }
 
   async function getCfg() {
@@ -100,7 +102,7 @@
   }
 
   async function copyField(id, btn) {
-    return Shared.copyField(id, btn, { emptyMessage: "Nothing to copy" });
+    return Shared.copyField(id, btn, { emptyMessage: T("connections.auth.nothingToCopy") });
   }
 
   const MDBL_ICON_COPY = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>';
@@ -125,7 +127,7 @@
     const t = el("mdblist_qc_timer"); if (!t) return;
     const left = Math.max(0, Math.round((mdblQcDeadline - Date.now()) / 1000));
     const mm = Math.floor(left / 60), ss = String(left % 60).padStart(2, "0");
-    t.textContent = left > 0 ? ("Expires in " + mm + ":" + ss) : "";
+    t.textContent = left > 0 ? T("connections.auth.expiresIn", {time: mm + ":" + ss}) : "";
   }
   function mdblQcStop() {
     if (mdblQcTimer) { clearInterval(mdblQcTimer); mdblQcTimer = null; }
@@ -137,14 +139,14 @@
     if (mdblQcTimer) { clearInterval(mdblQcTimer); mdblQcTimer = null; }
     stopPoll();
     mdblQcDeadline = 0;
-    const st = el("mdblist_qc_status"); if (st) st.textContent = "Link code expired. Restart to try again.";
+    const st = el("mdblist_qc_status"); if (st) st.textContent = T("connections.auth.codeExpiredRestart");
     const t = el("mdblist_qc_timer"); if (t) t.textContent = "";
     mdblQcShowRestart();
   }
   function mdblQcShowCode(code, secondsLeft) {
     const codeInput = el("mdblist_device_code"); if (codeInput) codeInput.value = code || "";
     const codeEl = el("mdblist_qc_code"); if (codeEl) codeEl.textContent = code || "------";
-    const st = el("mdblist_qc_status"); if (st) st.textContent = "Waiting for approval…";
+    const st = el("mdblist_qc_status"); if (st) st.textContent = T("connections.auth.waitingApprovalEllipsis");
     mdblQcDeadline = Date.now() + (Math.max(30, Number(secondsLeft) || 300) * 1000);
     mdblQcSetState(true);
     mdblQcUpdateTimer();
@@ -156,10 +158,10 @@
     if (!code || code === "------") return;
     let ok = false;
     ok = (await window.cwCopyText?.(code)) === true;
-    if (!ok) { note("Copy failed"); return; }
-    btn.classList.add("copied"); btn.innerHTML = MDBL_ICON_CHECK; btn.title = "Copied!";
+    if (!ok) { note(T("connections.auth.copyFailed")); return; }
+    btn.classList.add("copied"); btn.innerHTML = MDBL_ICON_CHECK; btn.title = T("connections.auth.copiedBang");
     if (mdblQcCopyRevert) clearTimeout(mdblQcCopyRevert);
-    mdblQcCopyRevert = setTimeout(function () { btn.classList.remove("copied"); btn.innerHTML = MDBL_ICON_COPY; btn.title = "Copy code"; }, 1400);
+    mdblQcCopyRevert = setTimeout(function () { btn.classList.remove("copied"); btn.innerHTML = MDBL_ICON_COPY; btn.title = T("connections.auth.copyCode"); }, 1400);
   }
 
   function setMethodUI(method) {
@@ -222,15 +224,15 @@
         if (code && data.pending.user_code) code.value = txt(data.pending.user_code);
         if (data.pending.user_code && !(mdblPoller && mdblPoller.isRunning())) startPoll(Math.max(2, Number(data.pending.interval || 5)));
       }
-      let msg = ok ? (statusMethod === "api_key" ? "Connected with API key" : "Connected with Device Code") : "Not connected";
-      if (data.pending && !data.device_configured) msg = "Waiting for Device Code approval";
-      if (ok && data.expires_at && statusMethod === "device_code") msg = "Connected with Device Code";
+      let msg = ok ? (statusMethod === "api_key" ? T("connections.auth.withKey") : T("connections.auth.withDevice")) : T("connections.auth.notConnected");
+      if (data.pending && !data.device_configured) msg = T("connections.auth.waitingDevice");
+      if (ok && data.expires_at && statusMethod === "device_code") msg = T("connections.auth.withDevice");
       setConn(data.pending && !data.device_configured ? false : ok, msg);
       if (ok) { try { mdblQcStop(); } catch (_) {} }
-      if (showToast) note(ok ? "MDBList verified" : "MDBList not connected");
+      if (showToast) note(ok ? T("connections.auth.gen.verified", {provider: "MDBList"}) : T("connections.auth.gen.notConnected", {provider: "MDBList"}));
     } catch {
-      setConn(false, "MDBList verify failed");
-      if (showToast) note("MDBList verify failed");
+      setConn(false, T("connections.auth.gen.verifyFailedShort", {provider: "MDBList"}));
+      if (showToast) note(T("connections.auth.gen.verifyFailedShort", {provider: "MDBList"}));
     }
   }
 
@@ -262,7 +264,7 @@
       await saveAuth({ auth_method: method });
       await refresh(false);
     } catch {
-      note("MDBList method switch failed");
+      note(T("connections.auth.mdbl.switchFailed"));
     }
   }
 
@@ -270,19 +272,19 @@
     const i = el("mdblist_key");
     const keyState = readSecretField(i);
     if (!keyState.value) {
-      if (keyState.masked || (i && i.dataset.hasKey === "1")) { await refresh(true); note("Key unchanged"); return; }
-      note("Enter your MDBList API key"); return;
+      if (keyState.masked || (i && i.dataset.hasKey === "1")) { await refresh(true); note(T("connections.auth.keyUnchanged")); return; }
+      note(T("connections.validation.apiKeyRequired", {provider: "MDBList"})); return;
     }
     try {
       methodOverride = "";
       await saveAuth({ auth_method: "api_key", api_key: keyState.value });
       maskInput(i, true);
       setApiHintVisible(false);
-      note("MDBList API key saved");
+      note(T("connections.auth.mdbl.keySaved"));
       await refresh(true);
       emitConnected();
     } catch (e) {
-      const msg = e && e.message ? e.message : "Saving MDBList key failed";
+      const msg = e && e.message ? e.message : T("connections.validation.saveKeyFailed", {provider: "MDBList"});
       setConn(false, msg);
       note(msg);
     }
@@ -297,14 +299,14 @@
       onAuthorized: async () => {
         methodOverride = "";
         try { mdblQcStop(); } catch (_) {}
-        note("MDBList connected");
+        note(T("connections.auth.gen.connected", {provider: "MDBList"}));
         await hydrate();
         emitConnected();
       },
       onExpired: () => mdblQcTimeout(),
       onTimeout: () => mdblQcTimeout(),
       onTerminal: (verdict) => {
-        const label = String((verdict && verdict.message) || "").replace(/_/g, " ") || "Authorization failed";
+        const label = String((verdict && verdict.message) || "").replace(/_/g, " ") || T("connections.auth.authFailed");
         const st = el("mdblist_qc_status"); if (st) st.textContent = label;
         setConn(false, label);
         if (mdblQcTimer) { clearInterval(mdblQcTimer); mdblQcTimer = null; }
@@ -340,7 +342,7 @@
     const startBtn = el("mdblist_device_start");
     if (startBtn) { startBtn.disabled = true; startBtn.classList.add("busy"); }
 
-    const win = Shared.openWaitWindow("MDBList", "Requesting an MDBList code...", "MDBLIST");
+    const win = Shared.openWaitWindow("MDBList", T("connections.auth.mdbl.requesting"), "MDBLIST");
     try {
       methodOverride = "device_code";
       const r = await fetchJSON(mdblApi("/api/mdblist/device/start"), {
@@ -358,20 +360,20 @@
 
       const helpEl = el("mdblist_qc_help");
       if (helpEl) helpEl.textContent = win
-        ? "Opening the MDBList approval page — enter this code there and approve CrossWatch."
-        : "Open the MDBList approval page and enter this code to approve CrossWatch.";
+        ? T("connections.auth.mdbl.opening")
+        : T("connections.auth.mdbl.open");
 
       mdblQcShowCode(code, secs);
-      setConn(false, "Waiting for approval");
+      setConn(false, T("connections.auth.waitingForApproval"));
       startPoll(Math.max(2, Number(data.interval || 5)));
 
       if (!Shared.showWaitCode(win, { key: "MDBLIST", label: "MDBList", code, url })) {
-        note("Popup blocked - open the MDBList page and enter the code.");
+        note(T("connections.auth.mdbl.popup"));
       }
     } catch (e) {
       try { if (win && !win.closed) win.close(); } catch (_) {}
       try { mdblQcStop(); } catch (_) {}
-      note("MDBList Device Code start failed: " + (e && e.message ? e.message : e));
+      note(T("connections.auth.mdbl.deviceFailed", {error: String(e && e.message ? e.message : e)}));
     } finally {
       if (startBtn) { startBtn.disabled = false; startBtn.classList.remove("busy"); }
     }
@@ -388,10 +390,10 @@
       const code = el("mdblist_device_code"); if (code) code.value = "";
       const codeEl = el("mdblist_qc_code"); if (codeEl) codeEl.textContent = "------";
       setConn(false);
-      note("MDBList disconnected");
+      note(T("connections.auth.gen.disconnected", {provider: "MDBList"}));
       await hydrate();
     } catch {
-      note("MDBList disconnect failed");
+      note(T("connections.auth.gen.disconnectFailed", {provider: "MDBList"}));
     }
   }
 

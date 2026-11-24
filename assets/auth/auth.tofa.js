@@ -2,6 +2,8 @@
 // CrossWatch - Tofa Auth UI
 // Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 (function () {
+  const T = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.t?.(key, vars) ?? key;
+  const TH = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.html?.(key, vars) ?? key;
   if (window._tofaAuthPatched) return;
   window._tofaAuthPatched = true;
 
@@ -64,7 +66,7 @@
     save.disabled = !canSave;
     save.classList.toggle("is-disabled", !canSave);
     if (canSave) save.removeAttribute("title");
-    else save.title = chosen?.has_pin ? "Enter the profile PIN before saving." : "Connect this instance before saving.";
+    else save.title = chosen?.has_pin ? T("connections.auth.enterPinBefore") : T("connections.auth.connectBeforeSave");
   }
 
   function syncConnectLocked() {
@@ -76,7 +78,7 @@
     if (!node) return;
     node.classList.remove("hidden", "ok", "warn");
     node.classList.add(ok ? "ok" : "warn");
-    node.textContent = msg || (ok ? "Connected" : "Not connected");
+    node.textContent = msg || (ok ? T("connections.auth.connected") : T("connections.auth.notConnected"));
     notifyModalState();
   }
 
@@ -130,7 +132,7 @@
       return;
     }
     const left = Math.max(0, Math.floor(exp - Date.now() / 1000));
-    node.textContent = left ? `Expires in ${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")}` : "Expired";
+    node.textContent = left ? T("connections.auth.expiresIn", {time: `${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")}`}) : T("connections.auth.expired");
   }
 
   function stopExpiryTimer() {
@@ -159,7 +161,7 @@
     const url = el("tofa_server_url");
     if (url) {
       url.disabled = locked;
-      url.title = locked ? "Disconnect Tofa to change the server." : "";
+      url.title = locked ? T("connections.auth.gen.disconnectToChange", {provider: "Tofa"}) : "";
     }
     const ssl = el("tofa_verify_ssl");
     if (ssl) ssl.disabled = locked;
@@ -192,7 +194,7 @@
     sel.innerHTML = "";
     const placeholder = document.createElement("option");
     placeholder.value = "";
-    placeholder.textContent = profiles.length ? (effective ? "Selected profile unavailable" : "Select Tofa profile") : "No Tofa profiles loaded";
+    placeholder.textContent = profiles.length ? (effective ? T("connections.auth.profileUnavailableSel") : T("connections.auth.gen.selectProfile", {provider: "Tofa"})) : T("connections.auth.gen.noProfiles", {provider: "Tofa"});
     placeholder.disabled = true;
     placeholder.selected = true;
     sel.appendChild(placeholder);
@@ -232,10 +234,10 @@
       profileSelectionReady = connected || authenticated;
       syncConnectLocked();
       renderServer(data);
-      if (data.reconnect_required) setStatus(false, "Tofa session ended - disconnect and connect again");
-      else if (connected && data.profile_pin_required) setStatus(false, "Enter the Tofa profile PIN again");
-      else if (connected) setStatus(true, data.profile_name ? `Tofa connected - ${data.profile_name}` : "Tofa connected");
-      else if (authenticated) setStatus(false, "Choose a Tofa profile to finish setup");
+      if (data.reconnect_required) setStatus(false, T("connections.auth.gen.sessionEndedDisconnect", {provider: "Tofa"}));
+      else if (connected && data.profile_pin_required) setStatus(false, T("connections.auth.gen.enterPinAgain", {provider: "Tofa"}));
+      else if (connected) setStatus(true, data.profile_name ? T("connections.auth.connectedProfile", {provider: "Tofa", profile: data.profile_name}) : T("connections.auth.gen.connected", {provider: "Tofa"}));
+      else if (authenticated) setStatus(false, T("connections.auth.gen.chooseProfile", {provider: "Tofa"}));
       else hideStatus();
       await refreshProfiles(data, gen);
       if (gen !== viewGen) return;
@@ -248,32 +250,32 @@
       connected = false;
       authenticated = false;
       syncConnectLocked();
-      setStatus(false, "Tofa status failed");
+      setStatus(false, T("connections.auth.gen.statusFailed", {provider: "Tofa"}));
     }
   }
 
   function friendlyError(code) {
     switch (String(code || "")) {
-      case "invalid_url": return "Enter a valid Tofa server URL";
-      case "connection_failed": return "Could not reach the Tofa server";
-      case "ssl_error": return "SSL check failed - fix the certificate or turn off Verify SSL";
-      case "not_tofa": return "That URL is not a Tofa server";
-      case "server_unclaimed": return "This Tofa server is not set up yet - finish its setup first";
-      case "invalid_connect_url": return "This Tofa server reports an unexpected sign-in service";
-      case "http_error": return "Tofa server returned an error";
-      case "disconnect_first": return "Disconnect Tofa before changing the server";
-      case "rate_limited": return "Tofa is rate limiting sign-in - try again shortly";
-      case "service_unavailable": return "Tofa service unavailable";
-      case "reconnect_required": return "Tofa session ended - connect again";
-      case "authentication_failed": return "Tofa authentication failed";
-      case "profile_unavailable": return "Selected Tofa profile is unavailable";
-      case "profile_locked": return "Enter the profile PIN";
-      case "pin_required": return "Enter the profile PIN";
-      case "invalid_pin": return "Incorrect profile PIN";
-      case "pin_locked": return "Too many incorrect PINs - try again later";
-      case "invalid_response": return "Tofa returned an unexpected response";
-      case "denied": return "The sign-in was denied on Tofa";
-      default: return "Tofa request failed";
+      case "invalid_url": return T("connections.auth.gen.validServerUrl", {provider: "Tofa"});
+      case "connection_failed": return T("connections.auth.gen.reachServer", {provider: "Tofa"});
+      case "ssl_error": return T("connections.auth.sslFailed");
+      case "not_tofa": return T("connections.auth.gen.notServer", {provider: "Tofa"});
+      case "server_unclaimed": return T("connections.auth.gen.notSetUp", {provider: "Tofa"});
+      case "invalid_connect_url": return T("connections.auth.gen.unexpectedService", {provider: "Tofa"});
+      case "http_error": return T("connections.auth.gen.serverReturnedError", {provider: "Tofa"});
+      case "disconnect_first": return T("connections.auth.gen.disconnectBefore", {provider: "Tofa"});
+      case "rate_limited": return T("connections.auth.gen.rateLimitingSignIn", {provider: "Tofa"});
+      case "service_unavailable": return T("connections.auth.gen.serviceUnavailable", {provider: "Tofa"});
+      case "reconnect_required": return T("connections.auth.gen.sessionEnded", {provider: "Tofa"});
+      case "authentication_failed": return T("connections.auth.gen.authenticationFailed", {provider: "Tofa"});
+      case "profile_unavailable": return T("connections.auth.gen.profileUnavailable", {provider: "Tofa"});
+      case "profile_locked": return T("connections.auth.enterPin");
+      case "pin_required": return T("connections.auth.enterPin");
+      case "invalid_pin": return T("connections.auth.incorrectPin");
+      case "pin_locked": return T("connections.auth.pinLocked");
+      case "invalid_response": return T("connections.validation.returnedUnexpected", {provider: "Tofa"});
+      case "denied": return T("connections.auth.gen.deniedOn", {provider: "Tofa"});
+      default: return T("connections.auth.gen.requestFailedShort", {provider: "Tofa"});
     }
   }
 
@@ -306,22 +308,22 @@
         return { state: "pending", intervalMs: Math.max(5000, Number(data?.interval || 5) * 1000) };
       },
       onPending() {
-        setPolling("Waiting for approval...");
+        setPolling(T("connections.auth.waitingApproval"));
       },
       async onAuthorized() {
         setLoginState(false);
         setPolling("");
         authenticated = true;
         profileSelectionReady = true;
-        note("Tofa sign-in approved");
+        note(T("connections.auth.gen.signInApproved", {provider: "Tofa"}));
         try { window.dispatchEvent(new CustomEvent("auth-changed")); } catch {}
         await refresh();
-        if (!connected) setStatus(false, "Choose a Tofa profile to finish setup");
+        if (!connected) setStatus(false, T("connections.auth.gen.chooseProfile", {provider: "Tofa"}));
       },
       onExpired() {
         setLoginState(false);
         setPolling("");
-        setStatus(false, "Tofa code expired - connect again");
+        setStatus(false, T("connections.auth.gen.codeExpiredConnect", {provider: "Tofa"}));
       },
       onTerminal(verdict) {
         setLoginState(false);
@@ -329,7 +331,7 @@
       },
       onTimeout() {
         setLoginState(false);
-        setStatus(false, "Tofa sign-in timed out");
+        setStatus(false, T("connections.auth.gen.signInTimedOut", {provider: "Tofa"}));
       },
     });
     return poller;
@@ -341,13 +343,13 @@
       setStatus(false, friendlyError("invalid_url"));
       return;
     }
-    const win = Shared.openWaitWindow("Tofa", "Contacting Tofa...", "TOFA");
+    const win = Shared.openWaitWindow("Tofa", T("connections.auth.gen.contactingShort", {provider: "Tofa"}), "TOFA");
     const gen = ++loginGen;
     const startPollUrl = api("/api/tofa/device/poll");
     try {
       profileSelectionReady = false;
       renderProfiles([], "", false);
-      setStatus(false, "Contacting Tofa server...");
+      setStatus(false, T("connections.auth.gen.contactingServerShort", {provider: "Tofa"}));
       const r = await jsonPost("/api/tofa/device/start", { server_url: serverUrl, verify_ssl: !!el("tofa_verify_ssl")?.checked });
       if (gen !== loginGen) {
         try { if (win && !win.closed) win.close(); } catch {}
@@ -356,14 +358,14 @@
       const data = r.data || {};
       if (!r.ok || !data.ok) throw new Error(String(data.error || "start_failed"));
       setLoginState(true, data);
-      setStatus(false, "Waiting for Tofa approval");
-      setPolling("Waiting for approval...");
+      setStatus(false, T("connections.auth.gen.waitingApproval", {provider: "Tofa"}));
+      setPolling(T("connections.auth.waitingApproval"));
       const url = txt(data.verification_uri_complete || data.verification_uri);
       if (url && win && !win.closed) {
         Shared.showWaitCode(win, { key: "TOFA", label: "Tofa", code: txt(data.user_code), url, shouldContinue: () => gen === loginGen });
       } else if (url) {
         try { window.open(url, "_blank", "noopener"); } catch {}
-        note("Popup blocked - open the Tofa link page.");
+        note(T("connections.auth.tofa.popup"));
       } else {
         try { if (win && !win.closed) win.close(); } catch {}
       }
@@ -390,11 +392,11 @@
       syncServerUI();
       stopPendingLogin(false);
       renderProfiles([], "", false);
-      setStatus(false, "Tofa disconnected");
-      note("Tofa disconnected");
+      setStatus(false, T("connections.auth.gen.disconnected", {provider: "Tofa"}));
+      note(T("connections.auth.gen.disconnected", {provider: "Tofa"}));
       try { window.dispatchEvent(new CustomEvent("auth-changed")); } catch {}
     } catch {
-      note("Tofa disconnect failed");
+      note(T("connections.auth.gen.disconnectFailed", {provider: "Tofa"}));
     }
   }
 
@@ -415,7 +417,7 @@
     profileSelectionReady = true;
     savedProfileId = String(chosen.id);
     syncPinField();
-    setStatus(true, `Tofa connected - ${txt(r.data?.profile_name || chosen.name)}`);
+    setStatus(true, T("connections.auth.connectedProfile", {provider: "Tofa", profile: txt(r.data?.profile_name || chosen.name)}));
     try { window.invalidateConfigCache?.(); } catch {}
     try { window.CW?.Cache?.invalidate?.("config"); } catch {}
     setTimeout(async () => {
@@ -424,7 +426,7 @@
       try { window.manualRefreshStatus?.(); } catch {}
     }, 0);
     try { window.dispatchEvent(new CustomEvent("auth-changed")); } catch {}
-    if (!opts.silent) note("Tofa profile saved");
+    if (!opts.silent) note(T("connections.auth.gen.profileSaved", {provider: "Tofa"}));
     return true;
   }
 
@@ -453,7 +455,7 @@
     if (copy && !copy.__wired) {
       copy.addEventListener("click", (ev) => {
         ev.preventDefault();
-        void Shared.copyField("tofa_code_input", copy, { emptyMessage: "Nothing to copy" });
+        void Shared.copyField("tofa_code_input", copy, { emptyMessage: T("connections.auth.nothingToCopy") });
       });
       copy.__wired = true;
     }
@@ -466,7 +468,7 @@
     if (!host) return;
     if (!connected) {
       host.__cwSyncUsersState = null;
-      host.innerHTML = '<div class="cw-wl cw-su"><div class="cw-wl-empty">Connect Tofa and choose a profile before adding household users.</div></div>';
+      host.innerHTML = `<div class="cw-wl cw-su"><div class="cw-wl-empty">${TH("connections.auth.chooseBeforeUsers", {provider: "Tofa"})}</div></div>`;
       return;
     }
     try { window.CW?.SyncUsers?.mount(host, "tofa", profile.getInstance ? profile.getInstance() : "default"); } catch {}
@@ -497,7 +499,7 @@
     if (!host) return;
     if (!connected) {
       wlHandle = null;
-      host.innerHTML = '<div class="cw-wl"><div class="cw-wl-empty">Connect Tofa and choose a profile before whitelisting libraries.</div></div>';
+      host.innerHTML = `<div class="cw-wl"><div class="cw-wl-empty">${TH("connections.auth.chooseBeforeLibs", {provider: "Tofa"})}</div></div>`;
       return;
     }
     if (!librariesHydrated) {
@@ -513,7 +515,7 @@
       host.innerHTML = "";
       wlHandle = window.cwWhitelistTable.mount({
         host,
-        features: [{ key: "hist", label: "History" }, { key: "prog", label: "Progress" }, { key: "coll", label: "Collections" }, { key: "scr", label: "Scrobble", title: "Libraries the watcher reads from. Scrobble destinations use History and Progress, or the libraries set on the route." }],
+        features: [{ key: "hist", label: T("connections.auth.feat.history") }, { key: "prog", label: T("connections.auth.feat.progress") }, { key: "coll", label: T("connections.auth.feat.collections") }, { key: "scr", label: T("connections.auth.feat.scrobble"), title: T("connections.auth.feat.scrobbleWatcherTitle") }],
         getLibs: () => libraries,
         isOn: (fk, id) => libSets[fk].has(String(id)),
         selectedIds: () => Object.values(libSets).flatMap((set) => [...set]),

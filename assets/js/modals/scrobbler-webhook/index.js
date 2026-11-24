@@ -1,5 +1,7 @@
 /* CrossWatch - Scrobbler Webhook Modal */
 import { createIdentityMap, identityMapSupported } from "../core/identity-map.js";
+const T = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.t?.(key, vars) ?? key;
+const TH = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.html?.(key, vars) ?? key;
 const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const label = (v) => window.CW?.ProviderMeta?.label?.(v) || ({ plex: "Plex", jellyfin: "Jellyfin", emby: "Emby", trakt: "Trakt", simkl: "SIMKL", mdblist: "MDBList", crosswatch: "CrossWatch", floppy: "Floppy", punchplay: "PunchPlay", bingebase: "BingeBase", flicklist: "FlickList", wetrakr: "WeTrakr", anilist: "AniList", myanimelist: "MyAnimeList", kitsu: "Kitsu", scrob: "Scrob" }[String(v || "").toLowerCase()] || String(v || "").toUpperCase());
 const sinks = ["myanimelist", "kitsu", "plex", "jellyfin", "emby", "kodi", "crosswatch", "trakt", "simkl", "mdblist", "floppy", "punchplay", "bingebase", "flicklist", "wetrakr", "anilist", "scrob", "silo", "tofa"];
@@ -48,8 +50,8 @@ function mountIdentityMap() {
     target: sink,
     targetInstance: sinkInst,
     exclude: props.mode === "edit" ? `webhook:${String(src.provider || "").toLowerCase()}:${normInst(src.instance)}:${sink}` : "",
-    intro: `Send each person's plays to their own identity on ${label(sink)}.`,
-    note: users.length ? "The user filter on the Filters tab still applies, so add these people there or leave it empty." : "",
+    intro: T("scrobbler.routeModal.identityIntro", {provider: label(sink)}),
+    note: users.length ? T("scrobbler.webhookModal.userFilterNote") : "",
     enabled: d.enabled,
     mapping: d.mapping,
     onChange: (v) => { d.enabled = v.enabled; d.mapping = v.mapping; },
@@ -210,7 +212,7 @@ async function pickUser(btn, keepTab = currentActiveTab()) {
     provider: source.provider,
     instance: source.instance,
     anchorEl: btn,
-    title: `Pick ${label(source.provider)} user`,
+    title: T("scrobbler.routeModal.pickUser", {provider: label(source.provider)}),
     overlay: false,
     onPick: (user) => appendListValue("scw-users", user.name || user.id),
   });
@@ -225,7 +227,7 @@ async function fetchServerUuid(targetId, btn, keepTab = currentActiveTab()) {
   const old = labelEl?.textContent;
   if (btn) {
     btn.disabled = true;
-    if (labelEl) labelEl.textContent = "Fetching";
+    if (labelEl) labelEl.textContent = T("scrobbler.routeModal.fetching");
   }
   try {
     const res = await fetch(`/api/plex/server_uuid?instance=${encodeURIComponent(source.instance)}`, { cache: "no-store", credentials: "same-origin" });
@@ -234,12 +236,12 @@ async function fetchServerUuid(targetId, btn, keepTab = currentActiveTab()) {
     appendListValue(targetId, data.server_uuid);
     preserveVisiblePanel(keepTab);
   } catch (err) {
-    render([{ message: err.message || "Could not fetch Plex server UUID." }]);
+    render([{ message: err.message || T("scrobbler.routeModal.uuidFailed") }]);
     preserveVisiblePanel(keepTab);
   } finally {
     if (btn && root?.contains(btn)) {
       btn.disabled = false;
-      if (labelEl) labelEl.textContent = old || "Fetch";
+      if (labelEl) labelEl.textContent = old || T("scrobbler.routeModal.fetch");
     }
   }
 }
@@ -271,7 +273,7 @@ function sourceProfiles(provider) {
 function sourceProviderSelect(current) {
   const provs = sourceProviders().sort((a, b) => label(a).localeCompare(label(b), undefined, { sensitivity: "base", numeric: true }));
   const dis = props.mode === "edit" ? "disabled" : "";
-  if (!provs.length) return `<select class="input" id="scw-source-provider" disabled><option value="">No configured media instance</option></select>`;
+  if (!provs.length) return `<select class="input" id="scw-source-provider" disabled><option value="">${TH("scrobbler.webhookModal.noMedia")}</option></select>`;
   return `<select class="input" id="scw-source-provider" ${dis}>${provs.map((p) => `<option value="${esc(p)}" ${p === current.provider ? "selected" : ""}>${esc(label(p))}</option>`).join("")}</select>`;
 }
 
@@ -279,7 +281,7 @@ function sourceProfileSelect(provider, currentInst) {
   const list = sourceProfiles(provider).sort((a, b) => profileOptionLabel(a).localeCompare(profileOptionLabel(b), undefined, { sensitivity: "base", numeric: true }));
   const dis = props.mode === "edit" ? "disabled" : "";
   const cur = String(currentInst || "default");
-  if (!list.length) return `<select class="input" id="scw-source-instance" ${dis}><option value="default">Default</option></select>`;
+  if (!list.length) return `<select class="input" id="scw-source-instance" ${dis}><option value="default">${TH("scrobbler.routeModal.default")}</option></select>`;
   return `<select class="input" id="scw-source-instance" ${dis}>${list.map((p) => `<option value="${esc(p.instance)}" title="${esc(p.instance)}" ${p.instance === cur ? "selected" : ""}>${esc(profileOptionLabel(p))}</option>`).join("")}</select>`;
 }
 
@@ -295,7 +297,7 @@ function profileOptionLabel(profile) {
 
 function profileName(instance) {
   const value = String(instance || "").trim();
-  if (!value || value === "default") return "Default";
+  if (!value || value === "default") return T("scrobbler.routeModal.default");
   return value;
 }
 
@@ -304,7 +306,7 @@ function userProfileField() {
   if (!current) return "";
   const profile = userProfiles.find((p) => p.id === current);
   if (!profile || !profileCanOwnWebhook(profile, selectedWebhook())) return "";
-  return `<div class="scrm-profile-row">${fieldIcon("account_circle", "Assigned profile", `<div class="scrm-profile-display" aria-label="Assigned profile"><span>${esc(profile.label)}</span></div>`)}</div>`;
+  return `<div class="scrm-profile-row">${fieldIcon("account_circle", T("scrobbler.routeModal.assignedProfile"), `<div class="scrm-profile-display" aria-label="${TH("scrobbler.routeModal.assignedProfile")}"><span>${esc(profile.label)}</span></div>`)}</div>`;
 }
 
 function profileInstanceValues(profile, provider) {
@@ -380,7 +382,7 @@ function modalAttrs(provider) {
 }
 
 function modalTitle() {
-  return props.mode === "create" ? "Add webhook" : "Edit webhook";
+  return props.mode === "create" ? T("scrobbler.webhookModal.add") : T("scrobbler.webhookModal.edit");
 }
 
 function navButton(key, icon, title, copy) {
@@ -438,13 +440,13 @@ function selectedSinkInstance(sink) {
 
 function sinkSelect(current) {
   const available = availableSinks().sort((a, b) => label(a).localeCompare(label(b), undefined, { sensitivity: "base", numeric: true }));
-  if (!available.length) return `<option value="" selected disabled>No configured destination provider</option>`;
+  if (!available.length) return `<option value="" selected disabled>${TH("scrobbler.routeModal.noDestination")}</option>`;
   return available.map((s) => `<option value="${esc(s)}" ${s === current ? "selected" : ""}>${esc(label(s))}</option>`).join("");
 }
 
 function sinkProfileSelect(sink, currentInst) {
   const profiles = sinkProfiles(sink).sort((a, b) => profileOptionLabel(a).localeCompare(profileOptionLabel(b), undefined, { sensitivity: "base", numeric: true }));
-  if (!profiles.length) return `<option value="" selected disabled>No configured instance</option>`;
+  if (!profiles.length) return `<option value="" selected disabled>${TH("scrobbler.routeModal.noInstance")}</option>`;
   const cur = String(currentInst || "default");
   return profiles.map((p) => `<option value="${esc(p.instance)}" title="${esc(p.instance)}" ${p.instance === cur ? "selected" : ""}>${esc(profileOptionLabel(p))}</option>`).join("");
 }
@@ -452,11 +454,11 @@ function sinkProfileSelect(sink, currentInst) {
 function endpointBlock(current) {
   return `
     <div class="scrm-provider-card scwm-endpoint-card">
-      <div class="scrm-card-head"><span class="scrm-provider-mark"><span class="material-symbols-rounded">link</span></span><div><strong>Endpoint URL</strong><small>Use this URL in ${esc(label(current.provider))}</small></div></div>
+      <div class="scrm-card-head"><span class="scrm-provider-mark"><span class="material-symbols-rounded">link</span></span><div><strong>${TH("scrobbler.webhookModal.endpointUrl")}</strong><small>${TH("scrobbler.webhookModal.useUrlIn", {provider: label(current.provider)})}</small></div></div>
       <div class="scrm-endpoint scwm-endpoint">
-        ${current.endpoint_url ? `<input type="text" readonly value="${esc(current.endpoint_url)}" title="${esc(current.endpoint_url)}" aria-label="Endpoint URL" spellcheck="false" data-copy-field>` : "<code>Saved instance will receive a URL</code>"}
-        <button type="button" class="btn small sc2-icon-btn material-symbols-rounded" data-copy="${esc(current.endpoint_url || "")}" title="Copy URL">content_copy</button>
-        <button type="button" class="btn small danger sc2-icon-btn cw-danger-confirm" data-regenerate title="Regeneration is destructive for the old endpoint URL."><span class="material-symbols-rounded">sync_lock</span></button>
+        ${current.endpoint_url ? `<input type="text" readonly value="${esc(current.endpoint_url)}" title="${esc(current.endpoint_url)}" aria-label="${TH("scrobbler.webhookModal.endpointUrl")}" spellcheck="false" data-copy-field>` : "<code>" + TH("scrobbler.webhookModal.savedUrl") + "</code>"}
+        <button type="button" class="btn small sc2-icon-btn material-symbols-rounded" data-copy="${esc(current.endpoint_url || "")}" title="${TH("scrobbler.routeModal.copyUrl")}">content_copy</button>
+        <button type="button" class="btn small danger sc2-icon-btn cw-danger-confirm" data-regenerate title="${TH("scrobbler.page.regenHint")}"><span class="material-symbols-rounded">sync_lock</span></button>
       </div>
     </div>
   `;
@@ -465,7 +467,7 @@ function endpointBlock(current) {
 function journeyHelp(key) {
   const url = window.CW?.HelpLinks?.url?.(key) || "";
   if (!url) return "";
-  return `<a class="scrm-journey-help" href="${esc(url)}" target="_blank" rel="noopener noreferrer" aria-label="Open guide" title="Open guide"><span class="material-symbols-rounded" aria-hidden="true">help</span></a>`;
+  return `<a class="scrm-journey-help" href="${esc(url)}" target="_blank" rel="noopener noreferrer" aria-label="${TH("scrobbler.routeModal.openGuide")}" title="${TH("scrobbler.routeModal.openGuide")}"><span class="material-symbols-rounded" aria-hidden="true">help</span></a>`;
 }
 
 function fieldIcon(icon, labelText, html) {
@@ -480,24 +482,24 @@ function sourcePanel(current) {
     <section class="scrm-panel ${activeTab === "source" ? "active" : ""}" data-panel="source">
       <div class="scrm-journey scrm-journey-compact">
         <span class="material-symbols-rounded scrm-journey-icon">webhook</span>
-        <div><strong>Attach a webhook to a media instance</strong><p>Forward inbound Plex, Jellyfin, or Emby webhook events to one tracker.</p></div>
+        <div><strong>${TH("scrobbler.webhookModal.attach")}</strong><p>${TH("scrobbler.webhookModal.attachHint")}</p></div>
         ${journeyHelp("scrobbler-webhooks")}
       </div>
       ${userProfileField()}
       <div class="scrm-route-grid">
         <div ${providerCardAttrs(current.provider)}>
-          <div class="scrm-card-head"><span class="scrm-provider-mark">${providerIcon(current.provider)}</span><div><strong>Source</strong><small>${esc(label(current.provider))}</small></div></div>
+          <div class="scrm-card-head"><span class="scrm-provider-mark">${providerIcon(current.provider)}</span><div><strong>${TH("scrobbler.routeModal.source")}</strong><small>${esc(label(current.provider))}</small></div></div>
           <div class="scrm-fields">
-            ${fieldIcon("dns", "Media server", sourceProviderSelect(current))}
-            ${fieldIcon("badge", "Profile", sourceProfileSelect(current.provider, current.provider_instance))}
+            ${fieldIcon("dns", T("scrobbler.webhookModal.mediaServer"), sourceProviderSelect(current))}
+            ${fieldIcon("badge", T("scrobbler.routeModal.profile"), sourceProfileSelect(current.provider, current.provider_instance))}
           </div>
         </div>
         <div class="scrm-route-arrow"><span class="material-symbols-rounded">arrow_forward</span></div>
         <div ${providerCardAttrs(sink)}>
-          <div class="scrm-card-head"><span class="scrm-provider-mark">${providerIcon(sink)}</span><div><strong>Destination</strong><small>${esc(label(sink))}</small></div></div>
+          <div class="scrm-card-head"><span class="scrm-provider-mark">${providerIcon(sink)}</span><div><strong>${TH("scrobbler.routeModal.destination")}</strong><small>${esc(label(sink))}</small></div></div>
           <div class="scrm-fields">
-            ${fieldIcon("gps_fixed", "Tracker", `<select class="input" id="scw-sink" ${sinkDisabled}>${sinkSelect(sink)}</select>`)}
-            ${fieldIcon("badge", "Profile", `<select class="input" id="scw-sink-instance" ${sinkDisabled}>${sinkProfileSelect(sink, sinkInst)}</select>`)}
+            ${fieldIcon("gps_fixed", T("scrobbler.webhookModal.tracker"), `<select class="input" id="scw-sink" ${sinkDisabled}>${sinkSelect(sink)}</select>`)}
+            ${fieldIcon("badge", T("scrobbler.routeModal.profile"), `<select class="input" id="scw-sink-instance" ${sinkDisabled}>${sinkProfileSelect(sink, sinkInst)}</select>`)}
           </div>
         </div>
       </div>
@@ -510,7 +512,7 @@ function sourcePanel(current) {
 async function addFilterEntry(id, addLabel) {
   const ta = root?.querySelector(`#${id}`);
   if (!ta) return;
-  const val = ((await (window.CW?.MobileUI?.prompt || window.prompt)(`Add ${addLabel}`)) || "").trim();
+  const val = ((await (window.CW?.MobileUI?.prompt || window.prompt)(T("scrobbler.routeModal.addPrompt", {what: addLabel}))) || "").trim();
   if (val) {
     const lines = ta.value.split("\n").map((s) => s.trim()).filter(Boolean);
     if (!lines.some((l) => l.toLowerCase() === val.toLowerCase())) lines.push(val);
@@ -532,31 +534,31 @@ function filterRow(o) {
       <div class="scrm-filter-tools">
         <button type="button" class="scwm-filter-icon material-symbols-rounded" data-add-filter="${o.id}" data-add-label="${esc(addLabel)}" title="Add ${esc(addLabel)}" aria-label="Add ${esc(addLabel)}">add</button>
         ${action}
-        <button type="button" class="scwm-filter-icon material-symbols-rounded" data-clear-filter="${o.id}" title="Clear" aria-label="Clear">close</button>
+        <button type="button" class="scwm-filter-icon material-symbols-rounded" data-clear-filter="${o.id}" title="${TH("scrobbler.routeModal.clear")}" aria-label="${TH("scrobbler.routeModal.clear")}">close</button>
       </div>
     </div>`;
 }
 
 function filtersPanel(provider, filt) {
   const isPlex = provider === "plex";
-  const rows = [filterRow({ title: "Username whitelist", subtitle: "Only forward events from these usernames.", id: "scw-users", value: valuesText(filt.username_whitelist), placeholder: "One username per line", addLabel: "username", actionAttr: "data-pick-user", actionIcon: "person_search", actionTitle: "Find users" })];
+  const rows = [filterRow({ title: T("scrobbler.routeModal.userWhitelist"), subtitle: T("scrobbler.webhookModal.userWhitelistHint"), id: "scw-users", value: valuesText(filt.username_whitelist), placeholder: T("scrobbler.routeModal.oneUsername"), addLabel: T("scrobbler.routeModal.what.username"), actionAttr: "data-pick-user", actionIcon: "person_search", actionTitle: T("scrobbler.routeModal.findUsers") })];
   if (isPlex) {
-    rows.push(filterRow({ title: "Server UUID allowlist", subtitle: "Control which servers are allowed.", id: "scw-allow", value: valuesText(filt.server_uuid_whitelist || (filt.server_uuid ? [filt.server_uuid] : [])), placeholder: "One server UUID per line", dot: "scrm-dot-allow", addLabel: "server UUID", actionAttr: `data-fetch-uuid="scw-allow"`, actionIcon: "search", actionTitle: "Fetch server UUID" }));
-    rows.push(filterRow({ title: "Server UUID blocklist", subtitle: "Control which servers are blocked.", id: "scw-block", value: valuesText(filt.server_uuid_blacklist), placeholder: "One server UUID per line", dot: "scrm-dot-block", addLabel: "server UUID", actionAttr: `data-fetch-uuid="scw-block"`, actionIcon: "search", actionTitle: "Fetch server UUID" }));
+    rows.push(filterRow({ title: T("scrobbler.routeModal.uuidAllow"), subtitle: T("scrobbler.routeModal.uuidAllowHint"), id: "scw-allow", value: valuesText(filt.server_uuid_whitelist || (filt.server_uuid ? [filt.server_uuid] : [])), placeholder: T("scrobbler.routeModal.oneUuid"), dot: "scrm-dot-allow", addLabel: T("scrobbler.routeModal.what.uuid"), actionAttr: `data-fetch-uuid="scw-allow"`, actionIcon: "search", actionTitle: T("scrobbler.routeModal.fetchUuid") }));
+    rows.push(filterRow({ title: T("scrobbler.routeModal.uuidBlock"), subtitle: T("scrobbler.routeModal.uuidBlockHint"), id: "scw-block", value: valuesText(filt.server_uuid_blacklist), placeholder: T("scrobbler.routeModal.oneUuid"), dot: "scrm-dot-block", addLabel: T("scrobbler.routeModal.what.uuid"), actionAttr: `data-fetch-uuid="scw-block"`, actionIcon: "search", actionTitle: T("scrobbler.routeModal.fetchUuid") }));
   }
-  rows.push(filterRow({ title: "Ignored path prefixes", subtitle: "Skip media files under these placeholder folders.", id: "scw-ignore-paths", value: valuesText(filt.ignored_path_prefixes), placeholder: "One path prefix per line", dot: "scrm-dot-block", addLabel: "path" }));
-  rows.push(filterRow({ title: "Ignored filename patterns", subtitle: "Skip media files whose filename contains these values.", id: "scw-ignore-patterns", value: valuesText(filt.ignored_filename_patterns), placeholder: "{edition-Trailer}", dot: "scrm-dot-block", addLabel: "pattern" }));
-  rows.push(filterRow({ title: "Ignored editions", subtitle: "Skip media with these edition names.", id: "scw-ignore-editions", value: valuesText(filt.ignored_editions), placeholder: "Trailer", dot: "scrm-dot-block", addLabel: "edition" }));
+  rows.push(filterRow({ title: T("scrobbler.routeModal.ignorePaths"), subtitle: T("scrobbler.routeModal.ignorePathsHint"), id: "scw-ignore-paths", value: valuesText(filt.ignored_path_prefixes), placeholder: T("scrobbler.routeModal.onePath"), dot: "scrm-dot-block", addLabel: T("scrobbler.routeModal.what.path") }));
+  rows.push(filterRow({ title: T("scrobbler.routeModal.ignorePatterns"), subtitle: T("scrobbler.routeModal.ignorePatternsHint"), id: "scw-ignore-patterns", value: valuesText(filt.ignored_filename_patterns), placeholder: "{edition-Trailer}", dot: "scrm-dot-block", addLabel: T("scrobbler.routeModal.what.pattern") }));
+  rows.push(filterRow({ title: T("scrobbler.routeModal.ignoreEditions"), subtitle: T("scrobbler.routeModal.ignoreEditionsHint"), id: "scw-ignore-editions", value: valuesText(filt.ignored_editions), placeholder: "Trailer", dot: "scrm-dot-block", addLabel: T("scrobbler.routeModal.what.edition") }));
   return `
     <section class="scrm-panel ${activeTab === "filters" ? "active" : ""}" data-panel="filters">
       <div class="scrm-journey scrm-journey-compact">
         <span class="material-symbols-rounded scrm-journey-icon">filter_alt</span>
-        <div><strong>Filter inbound webhook events</strong><p>Only forward events that match these filters. Leave empty to accept everything from this source.</p></div>
+        <div><strong>${TH("scrobbler.webhookModal.filterTitle")}</strong><p>${TH("scrobbler.webhookModal.filterHint")}</p></div>
         ${journeyHelp("scrobbler-filters")}
       </div>
       <div class="scrm-filter-rows">${rows.join("")}</div>
-      <label class="scrm-toggle-row"><span class="scrm-toggle-copy"><span class="material-symbols-rounded">movie_filter</span><span><strong>Ignore Agregarr placeholder trailers</strong><small>Skip files marked as Trailer editions or stored beside .comingsoon markers.</small></span></span><span class="scrm-switch"><input type="checkbox" id="scw-ignore-agregarr" ${filt.ignore_agregarr_trailers ? "checked" : ""}><span class="scrm-switch-track"></span></span></label>
-      <label class="scrm-toggle-row"><span class="scrm-toggle-copy"><span class="material-symbols-rounded">star</span><span><strong>Ignore specials (Season 0)</strong><small>Skip scrobbles for Season 0 / specials episodes.</small></span></span><span class="scrm-switch"><input type="checkbox" id="scw-ignore-specials" ${filt.ignore_specials ? "checked" : ""}><span class="scrm-switch-track"></span></span></label>
+      <label class="scrm-toggle-row"><span class="scrm-toggle-copy"><span class="material-symbols-rounded">movie_filter</span><span><strong>${TH("scrobbler.routeModal.agregarr")}</strong><small>${TH("scrobbler.routeModal.agregarrHint")}</small></span></span><span class="scrm-switch"><input type="checkbox" id="scw-ignore-agregarr" ${filt.ignore_agregarr_trailers ? "checked" : ""}><span class="scrm-switch-track"></span></span></label>
+      <label class="scrm-toggle-row"><span class="scrm-toggle-copy"><span class="material-symbols-rounded">star</span><span><strong>${TH("scrobbler.routeModal.specials")}</strong><small>${TH("scrobbler.routeModal.specialsHint")}</small></span></span><span class="scrm-switch"><input type="checkbox" id="scw-ignore-specials" ${filt.ignore_specials ? "checked" : ""}><span class="scrm-switch-track"></span></span></label>
     </section>
   `;
 }
@@ -571,34 +573,34 @@ function ratingsPanel(provider, ratingsTargets) {
   const targets = visibleRatingSinks(ratingsTargets);
   const globalTargets = globalRatingTargets();
   const globalWarn = globalTargets.length
-    ? `<div class="scrm-note is-warn"><span class="material-symbols-rounded">warning</span><span>Global Plex ratings is on and already forwarding to <strong>${esc(globalTargets.map(label).join(", "))}</strong>. This webhook sends ratings <em>in addition</em> to the global one — only enable trackers here if this instance needs different destinations.</span></div>`
+    ? `<div class="scrm-note is-warn"><span class="material-symbols-rounded">warning</span><span>${TH("scrobbler.webhookModal.globalRatings", {targets: globalTargets.map(label).join(", ")})}</span></div>`
     : "";
   return `
     <section class="scrm-panel ${activeTab === "ratings" ? "active" : ""}" data-panel="ratings">
       <div class="scrm-journey scrm-journey-compact">
         <span class="material-symbols-rounded scrm-journey-icon">star</span>
-        <div><strong>Plex ratings</strong><p>Forward Plex ratings received on this webhook to the selected trackers.</p></div>
+        <div><strong>${TH("scrobbler.webhookModal.plexRatings")}</strong><p>${TH("scrobbler.webhookModal.plexRatingsHint")}</p></div>
       </div>
       ${globalWarn}
       <div class="scrm-targets">${targets.length ? targets.map((sink) => {
         const configured = sinkProfiles(sink).length > 0;
         return `<label class="scrm-target${configured ? "" : " is-unconfigured"}"><input type="checkbox" data-rating="${esc(sink)}" ${ratingsTargets.includes(sink) ? "checked" : ""}><span class="scrm-target-mark">${providerIcon(sink)}</span><span>${esc(label(sink))}${configured ? "" : " - not configured"}</span></label>`;
-      }).join("") : `<span class="scrm-muted">No configured rating destinations</span>`}</div>
+      }).join("") : `<span class="scrm-muted">${TH("scrobbler.routeModal.noRatingDest")}</span>`}</div>
     </section>
   `;
 }
 
 function anilistMappingHint(animeGlobalOn) {
   return animeGlobalOn
-    ? `<div class="scrm-journey scrm-journey-compact"><span class="material-symbols-rounded scrm-journey-icon">animation</span><div><strong>AniList uses Anime ID Mapping</strong><p>Only watched stops update AniList progress. Titles the anime mapping cannot place are skipped.</p></div></div>`
-    : `<div class="scrm-journey scrm-journey-compact"><span class="material-symbols-rounded scrm-journey-icon">warning</span><div><strong>AniList needs Anime ID Mapping</strong><p>Enable global Anime ID Mapping first. Without it nothing is sent to AniList.</p></div></div>`;
+    ? `<div class="scrm-journey scrm-journey-compact"><span class="material-symbols-rounded scrm-journey-icon">animation</span><div><strong>${TH("scrobbler.routeModal.anilistUses")}</strong><p>${TH("scrobbler.routeModal.anilistUsesHint")}</p></div></div>`
+    : `<div class="scrm-journey scrm-journey-compact"><span class="material-symbols-rounded scrm-journey-icon">warning</span><div><strong>${TH("scrobbler.routeModal.anilistNeeds")}</strong><p>${TH("scrobbler.routeModal.anilistNeedsHint")}</p></div></div>`;
 }
 
 function optionsPanel() {
   const sink = selectedSinkKey();
   const animeGlobalOn = globalAnimeMappingEnabled();
   const animeMapping = animeMappingSinks.has(sink)
-    ? `<label class="scrm-toggle-row ${animeGlobalOn ? "" : "is-disabled"}"><span class="scrm-toggle-copy"><span class="material-symbols-rounded">animation</span><span><strong>Anime ID Mapping</strong><small>${animeGlobalOn ? "Use local anime mappings for this webhook before sending scrobbles." : "Enable global Anime ID Mapping first."}</small></span></span><span class="scrm-switch"><input type="checkbox" id="scw-anime-mapping" ${webhookAnimeMappingEnabled(sink) ? "checked" : ""} ${animeGlobalOn ? "" : "disabled"}><span class="scrm-switch-track"></span></span></label>`
+    ? `<label class="scrm-toggle-row ${animeGlobalOn ? "" : "is-disabled"}"><span class="scrm-toggle-copy"><span class="material-symbols-rounded">animation</span><span><strong>${TH("scrobbler.routeModal.animeMapping")}</strong><small>${animeGlobalOn ? T("scrobbler.webhookModal.animeHint") : T("scrobbler.routeModal.enableAnimeFirst")}</small></span></span><span class="scrm-switch"><input type="checkbox" id="scw-anime-mapping" ${webhookAnimeMappingEnabled(sink) ? "checked" : ""} ${animeGlobalOn ? "" : "disabled"}><span class="scrm-switch-track"></span></span></label>`
     : "";
   const anilistHint = sink === "anilist" ? anilistMappingHint(animeGlobalOn) : "";
   return `
@@ -606,17 +608,17 @@ function optionsPanel() {
       ${anilistHint}
       <div class="scrm-journey scrm-journey-compact">
         <span class="material-symbols-rounded scrm-journey-icon">tune</span>
-        <div><strong>Instance webhook options</strong><p>These values remain inherited unless you enable this override for the instance.</p></div>
+        <div><strong>${TH("scrobbler.webhookModal.options")}</strong><p>${TH("scrobbler.webhookModal.optionsHint")}</p></div>
       </div>
-      <label class="scrm-check"><input type="checkbox" id="scw-override-options" ${["pause_debounce_seconds", "suppress_start_at"].some(explicitHas) ? "checked" : ""}> <span>Override instance options</span></label>
+      <label class="scrm-check"><input type="checkbox" id="scw-override-options" ${["pause_debounce_seconds", "suppress_start_at"].some(explicitHas) ? "checked" : ""}> <span>${TH("scrobbler.webhookModal.override")}</span></label>
       <div class="scrm-fields two">
-        ${field("Pause debounce", `<input class="input" id="scw-pause" type="number" min="0" max="3600" value="${esc(settings().pause_debounce_seconds ?? "")}" placeholder="Inherited">`)}
-        ${field("Suppress start", `<input class="input" id="scw-suppress" type="number" min="0" max="3600" value="${esc(settings().suppress_start_at ?? "")}" placeholder="Inherited">`)}
+        ${field(T("scrobbler.webhookModal.pause"), `<input class="input" id="scw-pause" type="number" min="0" max="3600" value="${esc(settings().pause_debounce_seconds ?? "")}" placeholder="${TH("scrobbler.webhookModal.inherited")}">`)}
+        ${field(T("scrobbler.webhookModal.suppress"), `<input class="input" id="scw-suppress" type="number" min="0" max="3600" value="${esc(settings().suppress_start_at ?? "")}" placeholder="${TH("scrobbler.webhookModal.inherited")}">`)}
       </div>
       ${animeMapping}
-      ${sink === "simkl" ? `<label class="scrm-toggle-row"><span class="scrm-toggle-copy"><span class="material-symbols-rounded">replay</span><span><strong>Track rewatches</strong><small>Allow repeat watches for this destination. Requires SIMKL Pro or VIP. SIMKL applies a 48-hour gap per movie or episode. Your watched threshold still applies, with a minimum of 80%.</small></span></span><span class="scrm-switch"><input type="checkbox" id="scw-simkl-rewatches" ${settings().simkl_rewatches === true ? "checked" : ""}><span class="scrm-switch-track"></span></span></label>` : ""}
-      ${sink === "crosswatch" ? `<label class="scrm-toggle-row"><span class="scrm-toggle-copy"><span class="material-symbols-rounded">replay</span><span><strong>Track rewatches</strong><small>Save every completed watch as its own play. When off, a new watch replaces the latest play of that title.</small></span></span><span class="scrm-switch"><input type="checkbox" id="scw-cw-rewatches" ${settings().crosswatch_rewatches === true ? "checked" : ""}><span class="scrm-switch-track"></span></span></label>
-      <div class="scrm-fields two">${field("Rewatch window (h)", `<input class="input" id="scw-cw-rewatch-window" type="number" min="1" max="168" value="${esc(settings().crosswatch_rewatch_window_hours ?? "")}" placeholder="12">`)}</div>` : ""}
+      ${sink === "simkl" ? `<label class="scrm-toggle-row"><span class="scrm-toggle-copy"><span class="material-symbols-rounded">replay</span><span><strong>${TH("scrobbler.routeModal.trackRewatches")}</strong><small>${TH("scrobbler.webhookModal.simklHint")}</small></span></span><span class="scrm-switch"><input type="checkbox" id="scw-simkl-rewatches" ${settings().simkl_rewatches === true ? "checked" : ""}><span class="scrm-switch-track"></span></span></label>` : ""}
+      ${sink === "crosswatch" ? `<label class="scrm-toggle-row"><span class="scrm-toggle-copy"><span class="material-symbols-rounded">replay</span><span><strong>${TH("scrobbler.routeModal.trackRewatches")}</strong><small>${TH("scrobbler.routeModal.cwRewatchHint")}</small></span></span><span class="scrm-switch"><input type="checkbox" id="scw-cw-rewatches" ${settings().crosswatch_rewatches === true ? "checked" : ""}><span class="scrm-switch-track"></span></span></label>
+      <div class="scrm-fields two">${field(T("scrobbler.routeModal.rewatchWindow"), `<input class="input" id="scw-cw-rewatch-window" type="number" min="1" max="168" value="${esc(settings().crosswatch_rewatch_window_hours ?? "")}" placeholder="12">`)}</div>` : ""}
     </section>
   `;
 }
@@ -642,10 +644,10 @@ function librariesPanel() {
     <section class="scrm-panel ${activeTab === "libraries" ? "active" : ""}" data-panel="libraries">
       <div class="scrm-journey scrm-journey-compact">
         <span class="material-symbols-rounded scrm-journey-icon">video_library</span>
-        <div><strong>${esc(label(sink))} libraries</strong><p>Only update items in the selected libraries. Leave empty to use the Whitelist libraries of ${esc(label(sink))} connection.</p></div>
+        <div><strong>${TH("scrobbler.routeModal.libraries", {provider: label(sink)})}</strong><p>${TH("scrobbler.routeModal.librariesHint", {provider: label(sink)})}</p></div>
       </div>
       <div id="scw-destination-libraries"></div>
-      <label class="scrm-toggle-row"><span class="scrm-toggle-copy"><span class="material-symbols-rounded">library_add_check</span><span><strong>Update all copies</strong><small>When the same title exists more than once, for example in a regular and a 4K library, update every copy instead of skipping.</small></span></span><span class="scrm-switch"><input type="checkbox" id="scw-update-all-copies" ${dest.allCopies ? "checked" : ""}><span class="scrm-switch-track"></span></span></label>
+      <label class="scrm-toggle-row"><span class="scrm-toggle-copy"><span class="material-symbols-rounded">library_add_check</span><span><strong>${TH("scrobbler.routeModal.allCopies")}</strong><small>${TH("scrobbler.routeModal.allCopiesHint")}</small></span></span><span class="scrm-switch"><input type="checkbox" id="scw-update-all-copies" ${dest.allCopies ? "checked" : ""}><span class="scrm-switch-track"></span></span></label>
     </section>
   `;
 }
@@ -667,8 +669,8 @@ function mountDestinationTable() {
   const dest = destinationFor(sink);
   window.cwWhitelistTable.mount({
     host,
-    features: [{ key: "scr", label: "Scrobble", icon: "sensors", title: "Scrobbles from this webhook only update the selected libraries." }],
-    note: "Empty = use the connection History and Progress libraries.",
+    features: [{ key: "scr", label: T("scrobbler.routeModal.scrobble"), icon: "sensors", title: T("scrobbler.webhookModal.libScopeHint") }],
+    note: T("scrobbler.routeModal.libEmpty"),
     getLibs: () => destinationLibraries.get(dest.key) || [],
     isOn: (_feature, id) => dest.libraries.has(String(id)),
     selectedIds: () => [...dest.libraries],
@@ -737,17 +739,17 @@ function render(errs = []) {
     <div ${modalAttrs(provider)}>
       <div class="cx-head scrm-head">
         <span class="scrm-head-logo">${providerIcon(provider)}</span>
-        <div class="scrm-head-copy"><strong>${esc(modalTitle())}</strong><span>${esc(label(provider))} ${esc(profileLabel(provider, current.provider_instance))} webhook endpoint</span></div>
-        <button type="button" class="scrm-close" data-close aria-label="Close"><span class="material-symbols-rounded">close</span></button>
+        <div class="scrm-head-copy"><strong>${esc(modalTitle())}</strong><span>${TH("scrobbler.webhookModal.endpointFor", {provider: label(provider), profile: profileLabel(provider, current.provider_instance)})}</span></div>
+        <button type="button" class="scrm-close" data-close aria-label="${TH("scrobbler.routeModal.close")}"><span class="material-symbols-rounded">close</span></button>
       </div>
       <div class="scrm-body">
         <div class="scrm-panel-shell" data-scrm-provider="${esc(provider)}">
-          <nav class="cw-subtiles scrm-nav" aria-label="Webhook sections">
-            ${navButton("source", "webhook", "Source", "Instance, destinations, URL")}
-            ${navButton("filters", "filter_alt", "Filters", "Users and media")}
-            ${navButton("options", "tune", "Options", "Thresholds")}
-            ${mediaSinks.has(selectedSinkKey()) ? navButton("libraries", "video_library", "Libraries", "Destination scope") : ""}
-            ${provider === "plex" ? navButton("ratings", "star", "Ratings", "Plex ratings") : ""}
+          <nav class="cw-subtiles scrm-nav" aria-label="${TH("scrobbler.webhookModal.sections")}">
+            ${navButton("source", "webhook", T("scrobbler.routeModal.source"), T("scrobbler.webhookModal.nav.sourceHint"))}
+            ${navButton("filters", "filter_alt", T("scrobbler.routeModal.nav.filters"), T("scrobbler.routeModal.nav.filtersHint"))}
+            ${navButton("options", "tune", T("scrobbler.routeModal.nav.options"), T("scrobbler.webhookModal.nav.thresholds"))}
+            ${mediaSinks.has(selectedSinkKey()) ? navButton("libraries", "video_library", T("scrobbler.routeModal.nav.libraries"), T("scrobbler.routeModal.nav.librariesHint")) : ""}
+            ${provider === "plex" ? navButton("ratings", "star", T("scrobbler.routeModal.nav.ratings"), T("scrobbler.webhookModal.plexRatings")) : ""}
           </nav>
           <div class="scrm-content">
             ${sourcePanel(current)}
@@ -757,12 +759,12 @@ function render(errs = []) {
             ${ratingsPanel(provider, ratingsTargets)}
           </div>
           <div class="cw-connection-modal-footer scrm-footer">
-            ${props.mode === "edit" ? `<button type="button" class="btn danger cw-connection-footer-delete cw-danger-confirm" data-delete-webhook><span class="material-symbols-rounded">delete</span><span>Delete webhook</span></button>` : `<span></span>`}
+            ${props.mode === "edit" ? `<button type="button" class="btn danger cw-connection-footer-delete cw-danger-confirm" data-delete-webhook><span class="material-symbols-rounded">delete</span><span>${TH("scrobbler.webhookModal.delete")}</span></button>` : `<span></span>`}
             ${errs.length
               ? `<span class="scrm-footer-error" role="alert" aria-live="polite"><span class="material-symbols-rounded">warning</span><span class="scrm-footer-error-text">${errs.map((x) => esc(x.message || x.code || x.field)).join(" ")}</span></span>`
-              : dup ? `<span class="scrm-footer-warn"><span class="material-symbols-rounded">warning</span>This media instance already has a webhook</span>` : `<span></span>`}
-            <button type="button" class="btn cw-connection-footer-cancel" data-close>Cancel</button>
-            <button type="button" class="btn primary cw-connection-footer-save" data-save ${dup ? "disabled" : ""}>${saving ? "Saving..." : "Save changes"}</button>
+              : dup ? `<span class="scrm-footer-warn"><span class="material-symbols-rounded">warning</span>${TH("scrobbler.webhookModal.exists")}</span>` : `<span></span>`}
+            <button type="button" class="btn cw-connection-footer-cancel" data-close>${TH("scrobbler.routeModal.cancel")}</button>
+            <button type="button" class="btn primary cw-connection-footer-save" data-save ${dup ? "disabled" : ""}>${saving ? T("scrobbler.routeModal.saving") : T("scrobbler.routeModal.saveChanges")}</button>
           </div>
         </div>
       </div>
@@ -871,7 +873,7 @@ let flashTimer = 0;
 function flashSave(ok) {
   const btn = root?.querySelector(".cw-connection-footer-save");
   if (!btn) return;
-  const label = btn.textContent || "Save changes";
+  const label = btn.textContent || T("scrobbler.routeModal.saveChanges");
   const grad = ok ? "#00e084,#2ea859" : "#ff5a6a,#d1342f";
   const bd = ok ? "rgba(0,224,132,.6)" : "rgba(255,112,124,.6)";
   btn.classList.remove("is-saved", "is-failed");
@@ -897,7 +899,7 @@ function clearDanger() {
   const del = root?.querySelector("[data-delete-webhook]");
   if (del) {
     del.classList.remove("is-confirming");
-    del.innerHTML = `<span class="material-symbols-rounded">delete</span><span>Delete webhook</span>`;
+    del.innerHTML = `<span class="material-symbols-rounded">delete</span><span>${TH("scrobbler.webhookModal.delete")}</span>`;
   }
   const regen = root?.querySelector("[data-regenerate]");
   if (regen) {
@@ -911,7 +913,7 @@ function armDanger(kind, btn) {
   destructive = kind;
   if (!btn) return;
   btn.classList.add("is-confirming");
-  if (kind === "delete") btn.innerHTML = `<span class="material-symbols-rounded">warning</span><span>Confirm delete</span>`;
+  if (kind === "delete") btn.innerHTML = `<span class="material-symbols-rounded">warning</span><span>${TH("scrobbler.routeModal.confirmDelete")}</span>`;
   else btn.innerHTML = `<span class="material-symbols-rounded">check</span>`;
   dangerTimer = setTimeout(clearDanger, 4200);
 }

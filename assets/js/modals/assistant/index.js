@@ -2,30 +2,32 @@
 /* CrossWatch - Ask CrossWatch assistant modal */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 
+const T = (key, vars) => (globalThis.window?.CW?.I18n || globalThis.window?.__cwI18n)?.t?.(key, vars) ?? key;
+const TH = (key, vars) => (globalThis.window?.CW?.I18n || globalThis.window?.__cwI18n)?.html?.(key, vars) ?? key;
 const REQUEST_TIMEOUT_MS = 600_000;
 const POLL_MS = 1500;
 const POLL_MISSES = 3;
 const MAX_QUESTION = 1000;
 const SUGGESTIONS = [
-  "Is everything healthy?",
-  "Why did my last sync fail?",
-  "Is scrobbling working right now?",
-  "Are my sync pairs set up sensibly?",
+  T("assistant.modal.q.healthy"),
+  T("assistant.modal.q.lastSync"),
+  T("assistant.modal.q.scrobbling"),
+  T("assistant.modal.q.pairs"),
 ];
 const WIKI_SUGGESTIONS = [
-  "How do I add a Trakt pair?",
-  "How do I get notified when a sync fails?",
-  "What does unresolved mean?",
-  "How do captures work?",
+  T("assistant.modal.q.traktPair"),
+  T("assistant.modal.q.notified"),
+  T("assistant.modal.q.unresolved"),
+  T("assistant.modal.q.captures"),
 ];
-const WIKI_NOTE = "Answers come from the CrossWatch wiki and can be wrong.";
-const AI_NOTE = "Answers come from the AI model you chose and can be wrong. Proposed actions run only when you click Run.";
+const WIKI_NOTE = T("assistant.modal.wikiNote");
+const AI_NOTE = T("assistant.modal.aiNote");
 const SCOPES = [
-  ["all", "All of CrossWatch"],
-  ["sync", "Syncing"],
-  ["scrobble", "Scrobbling"],
-  ["connections", "Connections"],
-  ["settings", "Settings"],
+  ["all", T("assistant.modal.scope.all")],
+  ["sync", T("assistant.modal.scope.sync")],
+  ["scrobble", T("assistant.modal.scope.scrobble")],
+  ["connections", T("assistant.modal.scope.connections")],
+  ["settings", T("assistant.modal.scope.settings")],
 ];
 const TOOL_LABELS = {
   compare_captures: "capture changes",
@@ -64,37 +66,37 @@ function goSettings(pane) {
 }
 
 export const ACTIONS = {
-  open_anime_overrides: { label: "Anime ID custom mappings", icon: "animation", run: () => window.openAnimeOverridesModal?.() },
+  open_anime_overrides: { label: T("assistant.modal.act.anime"), icon: "animation", run: () => window.openAnimeOverridesModal?.() },
   open_mappings: {
-    label: "Mappings & blocks",
+    label: T("assistant.modal.act.mappings"),
     icon: "link",
     run: async () => {
       try {
         const mappings = await import(`/assets/js/editor/saved-mappings.js?v=${encodeURIComponent(window.APP_VERSION || "1")}`);
         mappings.open(document.activeElement);
-      } catch { toast("Could not open mappings and blocks"); }
+      } catch { toast(T("assistant.modal.act.mappingsFailed")); }
     },
   },
   run_sync: {
-    label: "Run sync",
+    label: T("assistant.modal.act.runSync"),
     icon: "sync",
     run: async () => {
-      if (window.syncBar?.isRunning?.()) return toast("A sync is already running");
-      if (!(await (window.CW?.MobileUI?.ask || window.confirm)("Start a sync of all pairs now?"))) return;
+      if (window.syncBar?.isRunning?.()) return toast(T("assistant.modal.act.alreadyRunning"));
+      if (!(await (window.CW?.MobileUI?.ask || window.confirm)(T("assistant.modal.act.confirmSync")))) return;
       window.showTab?.("main");
       window.runSync?.();
     },
   },
-  open_logs: { label: "Open logs", icon: "receipt_long", run: () => window.openLogs?.({ channel: "sync", latest: true }) },
-  open_events: { label: "Open events", icon: "event_note", run: () => window.openEvents?.() },
-  open_analyzer: { label: "Open analyzer", icon: "troubleshoot", run: () => window.openAnalyzer?.() },
-  open_connections: { label: "Open connections", icon: "hub", run: () => goSettings("providers") },
-  open_pairs: { label: "Open sync pairs", icon: "sync_alt", run: () => goSettings("pairs") },
-  open_scrobbler: { label: "Open scrobbler", icon: "sensors", run: () => goSettings("scrobbler") },
-  open_scheduling: { label: "Open scheduling", icon: "schedule", run: () => goSettings("scheduling") },
-  open_backups: { label: "Open Backup & Restore", icon: "backup", run: () => window.showTab?.("backups") },
-  open_tracker: { label: "Open Tracker", icon: "fact_check", run: () => window.showTab?.("tracker") },
-  open_playlists: { label: "Open Playlists", icon: "playlist_play", run: () => window.showTab?.("playlists") },
+  open_logs: { label: T("assistant.modal.act.logs"), icon: "receipt_long", run: () => window.openLogs?.({ channel: "sync", latest: true }) },
+  open_events: { label: T("assistant.modal.act.events"), icon: "event_note", run: () => window.openEvents?.() },
+  open_analyzer: { label: T("assistant.modal.act.analyzer"), icon: "troubleshoot", run: () => window.openAnalyzer?.() },
+  open_connections: { label: T("assistant.modal.act.connections"), icon: "hub", run: () => goSettings("providers") },
+  open_pairs: { label: T("assistant.modal.act.pairs"), icon: "sync_alt", run: () => goSettings("pairs") },
+  open_scrobbler: { label: T("assistant.modal.act.scrobbler"), icon: "sensors", run: () => goSettings("scrobbler") },
+  open_scheduling: { label: T("assistant.modal.act.scheduling"), icon: "schedule", run: () => goSettings("scheduling") },
+  open_backups: { label: T("assistant.modal.act.backups"), icon: "backup", run: () => window.showTab?.("backups") },
+  open_tracker: { label: T("assistant.modal.act.tracker"), icon: "fact_check", run: () => window.showTab?.("tracker") },
+  open_playlists: { label: T("assistant.modal.act.playlists"), icon: "playlist_play", run: () => window.showTab?.("playlists") },
 };
 
 const history = [];
@@ -126,11 +128,11 @@ export function proposalCards(proposals, states = []) {
     if (!proposal || !Object.hasOwn(PROPOSALS, proposal.action)) return "";
     const state = states[index] || proposal;
     const status = ["running", "done", "failed", "dismissed"].includes(state.status) ? state.status : "ready";
-    const message = state.message || ({ ready: "Run this action?", running: "Running…", done: "Done", failed: "Action failed", dismissed: "Dismissed" })[status];
+    const message = state.message || ({ ready: T("assistant.modal.st.ready"), running: T("assistant.modal.st.running"), done: T("assistant.modal.st.done"), failed: T("assistant.modal.st.failed"), dismissed: T("assistant.modal.st.dismissed") })[status];
     return `<div class="as-proposal" data-as-proposal="${index}" data-state="${status}">
       <div class="as-proposal-title"><span class="material-symbols-rounded" aria-hidden="true">${PROPOSALS[proposal.action].icon}</span><strong>${esc(proposal.title)}</strong></div>
       <div class="as-proposal-status" role="status">${esc(message)}</div>
-      <div class="as-proposal-buttons"><button class="as-action" type="button" data-as-proposal-run${status !== "ready" ? " disabled" : ""}>Run</button><button class="as-action" type="button" data-as-proposal-dismiss${status !== "ready" ? " disabled" : ""}>Dismiss</button></div>
+      <div class="as-proposal-buttons"><button class="as-action" type="button" data-as-proposal-run${status !== "ready" ? " disabled" : ""}>${TH("assistant.modal.run")}</button><button class="as-action" type="button" data-as-proposal-dismiss${status !== "ready" ? " disabled" : ""}>${TH("assistant.modal.dismiss")}</button></div>
     </div>`;
   }).join("");
 }
@@ -144,7 +146,7 @@ function proposalState(proposal, status, message) {
 async function actionRequest(path, body, deadline) {
   const ctrl = new AbortController();
   const remaining = deadline - Date.now();
-  if (remaining <= 0) throw new Error("The action timed out");
+  if (remaining <= 0) throw new Error(T("assistant.modal.timedOut"));
   const timer = window.setTimeout(() => ctrl.abort(), remaining);
   const options = { credentials: "same-origin", cache: "no-store", signal: ctrl.signal };
   if (body !== undefined) {
@@ -155,11 +157,11 @@ async function actionRequest(path, body, deadline) {
   try {
     const res = await fetch(path, options);
     const data = await res.json().catch(() => null);
-    if (!res.ok || !data || data.ok === false) throw new Error(String(data?.error || data?.message || "The action failed"));
+    if (!res.ok || !data || data.ok === false) throw new Error(String(data?.error || data?.message || T("assistant.modal.actionFailed")));
     return data;
   } catch (err) {
-    if (ctrl.signal.aborted) throw new Error("The action timed out");
-    if (err instanceof TypeError) throw new Error("Could not reach CrossWatch");
+    if (ctrl.signal.aborted) throw new Error(T("assistant.modal.timedOut"));
+    if (err instanceof TypeError) throw new Error(T("assistant.modal.unreachable"));
     throw err;
   } finally {
     window.clearTimeout(timer);
@@ -168,66 +170,66 @@ async function actionRequest(path, body, deadline) {
 
 export async function runProposal(proposal) {
   if (!proposal || !Object.hasOwn(PROPOSALS, proposal.action) || (proposal.status && proposal.status !== "ready")) return;
-  proposalState(proposal, "running", "Running…");
+  proposalState(proposal, "running", T("assistant.modal.st.running"));
   const params = proposal.params || {};
   const deadline = Date.now() + 600_000;
   try {
     let message;
     if (proposal.action === "run_pair") {
-      if (window.syncBar?.isRunning?.()) throw new Error("A sync is already running");
-      if (!params.pair_id || typeof window.runSync !== "function") throw new Error("Sync is unavailable");
+      if (window.syncBar?.isRunning?.()) throw new Error(T("assistant.modal.act.alreadyRunning"));
+      if (!params.pair_id || typeof window.runSync !== "function") throw new Error(T("assistant.modal.syncUnavailable"));
       window.showTab?.("main");
       const payload = await window.runSync({ pair_id: params.pair_id, startOnly: true });
-      if (payload?.ok !== true) throw new Error(payload?.error || payload?.message || "Sync did not start");
-      if (payload.skipped) throw new Error(`Sync skipped: ${payload.skipped}`);
-      message = "Sync started";
+      if (payload?.ok !== true) throw new Error(payload?.error || payload?.message || T("assistant.modal.syncNotStarted"));
+      if (payload.skipped) throw new Error(T("assistant.modal.syncSkipped", {reason: payload.skipped}));
+      message = T("assistant.modal.syncStarted");
     } else if (proposal.action === "create_capture") {
-      const data = await actionRequest("/api/snapshots/create", { provider: params.provider, instance: params.instance, feature: params.feature, label: "Ask CrossWatch", background: true }, deadline);
+      const data = await actionRequest("/api/snapshots/create", { provider: params.provider, instance: params.instance, feature: params.feature, label: T("assistant.ask.on"), background: true }, deadline);
       const id = data.progress_id || data.job?.progress_id;
-      if (!id) throw new Error("Capture progress is unavailable");
-      proposalState(proposal, "running", "Capturing… 0%");
+      if (!id) throw new Error(T("assistant.modal.captureUnavailable"));
+      proposalState(proposal, "running", T("assistant.modal.capturing"));
       while (true) {
-        if (Date.now() >= deadline) throw new Error("The capture timed out");
+        if (Date.now() >= deadline) throw new Error(T("assistant.modal.captureTimeout"));
         await new Promise(resolve => window.setTimeout(resolve, Math.min(1500, deadline - Date.now())));
         const data = await actionRequest(`/api/snapshots/capture-progress/${encodeURIComponent(id)}`, undefined, deadline);
         const progress = data.progress || {};
         if (progress.done) {
-          if (progress.ok === false || progress.error) throw new Error(String(progress.error || progress.message || "Capture failed"));
-          message = "Capture saved";
+          if (progress.ok === false || progress.error) throw new Error(String(progress.error || progress.message || T("assistant.modal.captureFailed")));
+          message = T("assistant.modal.captureSaved");
           break;
         }
         const percent = Math.max(0, Math.min(100, Number(progress.percent) || 0));
-        proposalState(proposal, "running", `Capturing… ${Math.round(percent)}%`);
+        proposalState(proposal, "running", T("assistant.modal.capturingPercent", {percent: `${Math.round(percent)}%`}));
       }
     } else if (proposal.action === "create_backup") {
       const data = await actionRequest("/api/backups/create", { managed: true }, deadline);
       const id = data.job?.id;
-      if (!id) throw new Error("Backup progress is unavailable");
-      proposalState(proposal, "running", "Backup queued…");
+      if (!id) throw new Error(T("assistant.modal.backupUnavailable"));
+      proposalState(proposal, "running", T("assistant.modal.backupQueued"));
       while (true) {
-        if (Date.now() >= deadline) throw new Error("The backup is still running. Check Backup & Restore");
+        if (Date.now() >= deadline) throw new Error(T("assistant.modal.backupRunning"));
         await new Promise(resolve => window.setTimeout(resolve, Math.min(2000, deadline - Date.now())));
         const status = await actionRequest("/api/backups/status", undefined, deadline);
         const job = (status.jobs || []).find(row => row?.id === id);
-        if (!job) throw new Error("The backup job is no longer listed. Check Backup & Restore");
+        if (!job) throw new Error(T("assistant.modal.backupGone"));
         if (job.stage === "complete") {
-          message = job.warning ? `Backup saved. ${job.warning}` : "Backup saved";
+          message = job.warning ? T("assistant.modal.backupSavedWarning", {warning: job.warning}) : T("assistant.modal.backupSaved");
           break;
         }
-        if (job.stage === "failed") throw new Error(String(job.error || "Backup failed"));
-        proposalState(proposal, "running", `Backup ${String(job.stage || "running")}…`);
+        if (job.stage === "failed") throw new Error(String(job.error || T("assistant.modal.backupFailed")));
+        proposalState(proposal, "running", T("assistant.modal.backupStage", {stage: String(job.stage || "running")}));
       }
     } else if (proposal.action === "refresh_anime_mapping") {
       const data = await actionRequest("/api/anime-mapping/update", { force: false }, deadline);
-      message = data.updated ? (data.identity_updated && !data.mappings_updated ? "Anime identity data updated" : "Anime mapping updated")
-        : data.rebuilt ? "Anime mapping index rebuilt" : "Anime mapping already up to date";
+      message = data.updated ? (data.identity_updated && !data.mappings_updated ? T("assistant.modal.animeIdentity") : T("assistant.modal.animeUpdated"))
+        : data.rebuilt ? T("assistant.modal.animeRebuilt") : T("assistant.modal.animeCurrent");
     } else {
       const data = await actionRequest("/api/status?fresh=1", undefined, deadline);
-      message = Object.entries(data.providers || {}).map(([name, info]) => `${name}: ${info?.connected ? "connected" : `not connected${info?.reason ? ` (${info.reason})` : ""}`}`).join("\n") || "No connections configured";
+      message = Object.entries(data.providers || {}).map(([name, info]) => `${name}: ${info?.connected ? T("assistant.modal.connectedLower") : `${T("assistant.modal.notConnected")}${info?.reason ? ` (${info.reason})` : ""}`}`).join("\n") || T("assistant.modal.noConnections");
     }
     proposalState(proposal, "done", message);
   } catch (err) {
-    proposalState(proposal, "failed", String(err?.message || "The action failed"));
+    proposalState(proposal, "failed", String(err?.message || T("assistant.modal.actionFailed")));
   }
 }
 
@@ -300,7 +302,7 @@ export function followUps(items) {
     if (question && !list.includes(question) && list.length < 3) list.push(question);
   }
   if (!list.length) return "";
-  return `<div class="as-follow"><span>Ask next</span>${list
+  return `<div class="as-follow"><span>${TH("assistant.modal.askNext")}</span>${list
     .map((question) => `<button class="as-chip" type="button" data-as-ask="${esc(question)}"><span>${esc(question)}</span><span class="material-symbols-rounded" aria-hidden="true">north_east</span></button>`)
     .join("")}</div>`;
 }
@@ -349,7 +351,7 @@ export function lookedAt(tools) {
     const label = TOOL_LABELS[tool];
     if (label && !names.includes(label)) names.push(label);
   }
-  return names.length ? `Looked at: ${names.join(", ")}` : "";
+  return names.length ? T("assistant.modal.lookedAt", {names: names.join(", ")}) : "";
 }
 
 const WIKI_PAGE_RE = /^https:\/\/wiki\.crosswatch\.app\/[\w./-]*$/;
@@ -377,14 +379,14 @@ export function actionButtons(actions) {
 
 function when(at) {
   const age = Math.max(0, Date.now() - Number(at || 0)) / 1000;
-  if (age < 60) return "Just now";
-  if (age < 3600) return `${Math.floor(age / 60)} min ago`;
-  return new Date(Number(at)).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+  if (age < 60) return T("assistant.modal.justNow");
+  if (age < 3600) return T("playlists.ago.minutes", {count: Math.floor(age / 60)});
+  return new Date(Number(at)).toLocaleTimeString((globalThis.window?.CW?.I18n || globalThis.window?.__cwI18n)?.locale, { hour: "2-digit", minute: "2-digit" });
 }
 
 function failure(status) {
   if (status === 504 || status === 524) {
-    return `The connection to CrossWatch was cut off (HTTP ${status}). A reverse proxy in front of CrossWatch did not get an answer in time. Try again in a moment.`;
+    return T("assistant.modal.proxyCut", {status: String(status)});
   }
   return `HTTP ${status}`;
 }
@@ -408,7 +410,7 @@ async function api(path, body) {
     }
     return data;
   } catch (err) {
-    if (err?.name === "AbortError") throw new Error("That took too long. Try a narrower question.");
+    if (err?.name === "AbortError") throw new Error(T("assistant.modal.tooLong"));
     throw err;
   } finally {
     window.clearTimeout(timeout);
@@ -431,7 +433,7 @@ async function chat(payload) {
     misses = 0;
     if (!data.pending) return data;
   }
-  throw new Error("That took too long. Try a narrower question.");
+  throw new Error(T("assistant.modal.tooLong"));
 }
 
 function injectCss() {
@@ -473,14 +475,14 @@ function emptyHtml() {
   if (!view.ready) {
     return `
       <div class="as-empty">
-        <strong>The assistant is not set up yet</strong>
-        <p>Choose an AI provider and model under Settings, UI and Security, Security.</p>
-        <button class="as-action" type="button" id="as-setup"><span class="material-symbols-rounded" aria-hidden="true">settings</span><span>Open settings</span></button>
+        <strong>${TH("assistant.modal.notSetUp")}</strong>
+        <p>${TH("assistant.modal.notSetUpHint")}</p>
+        <button class="as-action" type="button" id="as-setup"><span class="material-symbols-rounded" aria-hidden="true">settings</span><span>${TH("assistant.modal.openSettings")}</span></button>
       </div>`;
   }
   return `
     <div class="as-try">
-      <span>Try asking</span>
+      <span>${TH("assistant.modal.tryAsking")}</span>
       ${(view.mode === "wiki" ? WIKI_SUGGESTIONS : SUGGESTIONS).map((text) => `<button class="as-chip" type="button" data-as-ask="${esc(text)}"><span>${esc(text)}</span><span class="material-symbols-rounded" aria-hidden="true">north_east</span></button>`).join("")}
     </div>`;
 }
@@ -504,7 +506,7 @@ function renderLog() {
     log.innerHTML = emptyHtml();
     return;
   }
-  const waiting = view.mode === "wiki" ? "Searching the CrossWatch wiki, this can take a few seconds" : "Looking at your CrossWatch";
+  const waiting = view.mode === "wiki" ? T("assistant.modal.searchingWiki") : T("assistant.modal.looking");
   const wait = busy ? botCard(`<div class="as-meta"><strong>CrossWatch</strong><span>${waiting}</span></div><div class="as-dots" aria-hidden="true"><i></i><i></i><i></i></div>`, " as-wait") : "";
   log.innerHTML = history.map(messageHtml).join("") + wait;
   const scroller = $("#as-scroll", root);
@@ -540,9 +542,9 @@ async function ask(question) {
     const messages = history.filter((item) => !item.error).map(({ role, content }) => ({ role, content }));
     const data = await chat({ messages, scope: view.scope, context: view.context });
     const proposals = (Array.isArray(data.proposals) ? data.proposals : []).filter(p => p && Object.hasOwn(PROPOSALS, p.action)).slice(0, 3).map(p => ({ action: p.action, title: p.title, params: p.params, status: "ready" }));
-    history.push({ role: "assistant", content: data.reply || "The model gave an empty answer.", tools: data.tools || [], actions: data.actions || [], sources: data.sources || [], followups: data.followups || [], evidence: data.evidence || [], proposals, at: Date.now() });
+    history.push({ role: "assistant", content: data.reply || T("assistant.modal.empty"), tools: data.tools || [], actions: data.actions || [], sources: data.sources || [], followups: data.followups || [], evidence: data.evidence || [], proposals, at: Date.now() });
   } catch (err) {
-    history.push({ role: "assistant", content: err?.message || "Something went wrong.", error: true, at: Date.now() });
+    history.push({ role: "assistant", content: err?.message || T("assistant.modal.wrong"), error: true, at: Date.now() });
   }
   setBusy(false);
   if (view.root) $("#as-input", view.root)?.focus?.();
@@ -558,25 +560,25 @@ export default {
         <div class="cx-head as-head">
           <span class="as-mark material-symbols-rounded" aria-hidden="true">auto_awesome</span>
           <div class="as-titles">
-            <h2>Ask CrossWatch</h2>
-            <p id="as-sub">Questions about your syncs, scrobbling, connections or settings.</p>
+            <h2>${TH("assistant.modal.title")}</h2>
+            <p id="as-sub">${TH("assistant.modal.subtitle")}</p>
           </div>
-          <button class="as-icon" type="button" id="as-new" title="New chat" aria-label="New chat" hidden><span class="material-symbols-rounded" aria-hidden="true">edit_square</span></button>
-          <button class="as-icon" type="button" id="as-close" title="Close" aria-label="Close"><span class="material-symbols-rounded" aria-hidden="true">close</span></button>
+          <button class="as-icon" type="button" id="as-new" title="${TH("assistant.modal.newChat")}" aria-label="${TH("assistant.modal.newChat")}" hidden><span class="material-symbols-rounded" aria-hidden="true">edit_square</span></button>
+          <button class="as-icon" type="button" id="as-close" title="${TH("assistant.modal.close")}" aria-label="${TH("assistant.modal.close")}"><span class="material-symbols-rounded" aria-hidden="true">close</span></button>
         </div>
         <div class="as-scroll" id="as-scroll">
           <div class="as-notice" id="as-notice" hidden>
             <span class="material-symbols-rounded" aria-hidden="true">info</span>
-            <p><strong>Limited help.</strong> No AI provider is set up, so answers come from the CrossWatch wiki only and cannot look at your logs or settings.</p>
-            <button class="as-action" type="button" data-as-setup><span class="material-symbols-rounded" aria-hidden="true">settings</span><span>Set up AI provider</span></button>
+            <p><strong>${TH("assistant.modal.limited")}</strong> ${TH("assistant.modal.limitedHint")}</p>
+            <button class="as-action" type="button" data-as-setup><span class="material-symbols-rounded" aria-hidden="true">settings</span><span>${TH("assistant.modal.setupAi")}</span></button>
           </div>
           <div class="as-top" id="as-top">
             <form class="as-composer" id="as-form" autocomplete="off">
-              <textarea id="as-input" rows="3" maxlength="${MAX_QUESTION}" placeholder="Ask a question about CrossWatch" aria-label="Your question" disabled></textarea>
+              <textarea id="as-input" rows="3" maxlength="${MAX_QUESTION}" placeholder="${TH("assistant.modal.placeholder")}" aria-label="${TH("assistant.modal.yourQuestion")}" disabled></textarea>
               <div class="as-bar">
-                <label class="as-scope"><select id="as-scope" aria-label="What the question is about">${SCOPES.map(([value, label]) => `<option value="${value}"${value === view.scope ? " selected" : ""}>${label}</option>`).join("")}</select></label>
+                <label class="as-scope"><select id="as-scope" aria-label="${TH("assistant.modal.scopeLabel")}">${SCOPES.map(([value, label]) => `<option value="${value}"${value === view.scope ? " selected" : ""}>${label}</option>`).join("")}</select></label>
                 <span class="as-count" id="as-count">0/${MAX_QUESTION}</span>
-                <button class="as-send" type="submit" id="as-send" disabled><span class="material-symbols-rounded" aria-hidden="true">send</span><span>Send</span></button>
+                <button class="as-send" type="submit" id="as-send" disabled><span class="material-symbols-rounded" aria-hidden="true">send</span><span>${TH("assistant.modal.send")}</span></button>
               </div>
             </form>
             <small class="as-looked" id="as-context" hidden></small>
@@ -598,13 +600,13 @@ export default {
       view.mode = ["full", "wiki", "off"].includes(conf.mode) ? conf.mode : conf.ready ? "full" : "off";
       view.ready = view.mode !== "off";
       const wiki = view.mode === "wiki";
-      if (view.mode === "full") $("#as-sub", root).textContent = `Help and suggested actions, using ${conf.model}`;
-      if (wiki) $("#as-sub", root).textContent = "Answers from the CrossWatch wiki";
+      if (view.mode === "full") $("#as-sub", root).textContent = T("assistant.modal.usingModel", {model: conf.model});
+      if (wiki) $("#as-sub", root).textContent = T("assistant.modal.wikiAnswers");
       $("#as-notice", root).hidden = !wiki;
       $(".as-scope", root).hidden = wiki;
       $("#as-note", root).textContent = wiki ? WIKI_NOTE : AI_NOTE;
       const about = view.context.item_key ? "the selected item" : view.context.pair_id ? "the selected pair" : "";
-      $("#as-context", root).textContent = about ? `Asking about ${about}` : "";
+      $("#as-context", root).textContent = about ? T("assistant.modal.askingAbout", {about}) : "";
       $("#as-context", root).hidden = view.mode !== "full" || !about;
     } catch {}
     if (view.root !== root) return;
@@ -629,7 +631,7 @@ export default {
         const proposal = history[Number(group?.getAttribute("data-as-message"))]?.proposals?.[Number(card?.getAttribute("data-as-proposal"))];
         if (proposal && proposal.status === "ready") {
           if (run) void runProposal(proposal);
-          else proposalState(proposal, "dismissed", "Dismissed");
+          else proposalState(proposal, "dismissed", T("assistant.modal.st.dismissed"));
         }
         return;
       }

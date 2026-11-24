@@ -2,6 +2,8 @@
 /* CrossWatch - Shared airing episode watch status cards */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 (function () {
+  const T = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.t?.(key, vars) ?? key;
+  const TH = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.html?.(key, vars) ?? key;
   const esc = value => String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll('"', "&quot;");
   const icon = name => `<span class="material-symbols-rounded" aria-hidden="true">${name}</span>`;
   const pad = value => String(value).padStart(2, "0");
@@ -18,28 +20,28 @@
     const upcoming = episodes.filter(ep => ep.status === "upcoming").length;
     const runtime = ready && left.length && left.every(ep => Number.isFinite(ep.runtime) && ep.runtime > 0) ? left.reduce((sum, ep) => sum + ep.runtime, 0) : null;
     const art = image ? `<img src="${esc(image)}" alt="" loading="lazy" decoding="async">` : "";
-    const summary = ready ? left.length ? `${left.length} to catch up` : "All caught up" : "Status unavailable";
+    const summary = ready ? left.length ? T("library.airing.toCatchUp", {count: left.length}) : T("library.airing.caughtUp") : T("library.airing.statusUnavailable");
     return `<article class="trk-calendar-release cw-airing-card" data-airing-key="${esc(row.key)}" data-airing-episodes="${esc(JSON.stringify(episodes))}" data-airing-season="${esc(row.season)}" data-airing-episode="${esc(row.episode)}">
-      <div class="cw-airing-turn"><button type="button" class="cw-airing-face cw-airing-front" data-airing-flip aria-expanded="false" aria-label="${esc(`Show watch status: ${ariaLabel}`)}">${art}<span class="trk-calendar-date">${dateHtml}<span class="trk-calendar-label">${esc(label)}</span></span><span class="cw-airing-hint">${icon("flip")}</span><span class="trk-calendar-copy"><strong>${esc(title)}</strong><span>${esc([`S${pad(row.season)} · E${pad(row.episode)}`, row.episode_title].filter(Boolean).join(" · "))}</span></span></button>
-      <div class="cw-airing-face cw-airing-back" aria-hidden="true" inert>${art}<button type="button" class="cw-airing-return" data-airing-return aria-label="Back to artwork">${icon("undo")}</button><strong class="cw-airing-title">${esc(title)}</strong>
-      <div class="cw-airing-summary"><div class="cw-airing-ring" role="img" aria-label="${ready ? `${watched} of ${aired} aired episodes watched` : "Watch count unavailable"}"><svg viewBox="0 0 68 68" aria-hidden="true"><circle class="cw-airing-track" cx="34" cy="34" r="28"/><circle class="cw-airing-value" cx="34" cy="34" r="28" style="--airing-offset:${ready && aired ? 175.93 * (1 - watched / aired) : 175.93}"/></svg><strong>${ready ? `${watched}<span>/${aired}</span>` : "–"}</strong></div><div class="cw-airing-catchup"><strong>${esc(summary)}</strong><span>${runtime ? `${icon("schedule")}${esc(duration(runtime))} to catch up` : ready ? `${upcoming} upcoming` : "Episode details below"}</span></div></div>
-      <div class="cw-airing-season"><span>SEASON ${esc(row.season)}</span><span>${ready && runtime ? `${upcoming} upcoming` : ""}</span></div>
-      <div class="cw-airing-episodes" role="group" aria-label="Season ${esc(row.season)} episodes"></div><button type="button" class="cw-airing-next" ${openAttributes} aria-label="${esc(`Open ${title}`)}"><span class="cw-airing-next-state">UPCOMING</span><strong class="cw-airing-next-copy">Episode ${esc(row.episode)}</strong>${icon("arrow_forward")}</button></div></div></article>`;
+      <div class="cw-airing-turn"><button type="button" class="cw-airing-face cw-airing-front" data-airing-flip aria-expanded="false" aria-label="${TH("library.airing.showStatus", {label: ariaLabel})}">${art}<span class="trk-calendar-date">${dateHtml}<span class="trk-calendar-label">${esc(label)}</span></span><span class="cw-airing-hint">${icon("flip")}</span><span class="trk-calendar-copy"><strong>${esc(title)}</strong><span>${esc([`S${pad(row.season)} · E${pad(row.episode)}`, row.episode_title].filter(Boolean).join(" · "))}</span></span></button>
+      <div class="cw-airing-face cw-airing-back" aria-hidden="true" inert>${art}<button type="button" class="cw-airing-return" data-airing-return aria-label="${TH("library.airing.back")}">${icon("undo")}</button><strong class="cw-airing-title">${esc(title)}</strong>
+      <div class="cw-airing-summary"><div class="cw-airing-ring" role="img" aria-label="${ready ? TH("library.airing.watchedOf", {watched, aired}) : TH("library.airing.countUnavailable")}"><svg viewBox="0 0 68 68" aria-hidden="true"><circle class="cw-airing-track" cx="34" cy="34" r="28"/><circle class="cw-airing-value" cx="34" cy="34" r="28" style="--airing-offset:${ready && aired ? 175.93 * (1 - watched / aired) : 175.93}"/></svg><strong>${ready ? `${watched}<span>/${aired}</span>` : "–"}</strong></div><div class="cw-airing-catchup"><strong>${esc(summary)}</strong><span>${runtime ? `${icon("schedule")}${TH("library.airing.durationCatchUp", {duration: duration(runtime)})}` : ready ? TH("library.airing.upcoming", {count: upcoming}) : TH("library.airing.detailsBelow")}</span></div></div>
+      <div class="cw-airing-season"><span>${TH("library.airing.seasonCaps", {n: String(row.season)})}</span><span>${ready && runtime ? TH("library.airing.upcoming", {count: upcoming}) : ""}</span></div>
+      <div class="cw-airing-episodes" role="group" aria-label="${TH("library.airing.seasonEpisodes", {n: String(row.season)})}"></div><button type="button" class="cw-airing-next" ${openAttributes} aria-label="${TH("library.airing.open", {title})}"><span class="cw-airing-next-state">${TH("library.airing.upcomingCaps")}</span><strong class="cw-airing-next-copy">${TH("profile.media.episodeN", {n: String(row.episode)})}</strong>${icon("arrow_forward")}</button></div></div></article>`;
   }
 
   function paint(card) {
     const state = views.get(card);
     if (!state) return;
     const {episodes, selected, start, size} = state;
-    const step = (direction, disabled) => `<button type="button" data-airing-step="${direction}" aria-label="${direction < 0 ? "Previous episodes" : "Next episodes"}"${disabled ? " disabled" : ""}>${icon(direction < 0 ? "chevron_left" : "chevron_right")}</button>`;
+    const step = (direction, disabled) => `<button type="button" data-airing-step="${direction}" aria-label="${TH(direction < 0 ? "library.airing.prevEpisodes" : "library.airing.nextEpisodes")}"${disabled ? " disabled" : ""}>${icon(direction < 0 ? "chevron_left" : "chevron_right")}</button>`;
     card.querySelector(".cw-airing-episodes").innerHTML = (episodes.length > 8 ? step(-1, start === 0) : "") + episodes.slice(start, start + size).map(ep => `<button type="button" data-airing-select="${ep.episode}" data-state="${esc(ep.status)}" aria-label="Episode ${ep.episode}, ${esc(ep.status)}${ep.title ? `: ${esc(ep.title)}` : ""}" aria-pressed="${ep.episode === selected}">${icon(ep.status === "watched" ? "check" : ep.status === "upcoming" ? "schedule" : ep.status === "unknown" ? "help" : "play_arrow")}<span>${pad(ep.episode)}</span></button>`).join("");
     if (episodes.length > 8) card.querySelector(".cw-airing-episodes").insertAdjacentHTML("beforeend", step(1, start + size >= episodes.length));
     const ep = episodes.find(ep => ep.episode === selected);
     const status = ep?.status === "watched" ? "WATCHED" : ep?.status === "unwatched" ? (selected === episodes.find(row => row.status === "unwatched")?.episode ? "NEXT" : "UNWATCHED") : ep?.status === "unknown" ? "EPISODE" : "UPCOMING";
     card.querySelector(".cw-airing-next-state").textContent = status;
     const date = new Date(`${ep?.air_date}T12:00:00`);
-    const detail = ep?.status === "upcoming" && Number.isFinite(date.getTime()) ? date.toLocaleDateString(undefined, {weekday:"short", month:"short", day:"numeric"}) : ep?.runtime ? `${ep.runtime} min` : "";
-    card.querySelector(".cw-airing-next-copy").textContent = `Episode ${selected}${detail ? ` · ${detail}` : ""}`;
+    const detail = ep?.status === "upcoming" && Number.isFinite(date.getTime()) ? date.toLocaleDateString((window.CW?.I18n || window.__cwI18n)?.locale, {weekday:"short", month:"short", day:"numeric"}) : ep?.runtime ? T("library.airing.minutes", {n: ep.runtime}) : "";
+    card.querySelector(".cw-airing-next-copy").textContent = `${T("profile.media.episodeN", {n: String(selected)})}${detail ? ` · ${detail}` : ""}`;
   }
 
   function toggle(card, open, keyboard = false) {

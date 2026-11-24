@@ -1,6 +1,7 @@
 /* tests/overview-default-instances.browser.mjs */
 /* CrossWatch - Default instance overview selection and admin access tests */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
+import './i18n-browser-setup.mjs';
 import assert from "node:assert/strict";
 import test from "node:test";
 import {readFile} from "node:fs/promises";

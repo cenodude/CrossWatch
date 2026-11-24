@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {readFile} from "node:fs/promises";
 import vm from "node:vm";
 import * as notes from "../assets/js/modals/upgrade-warning/notes.js";
+import './i18n-vm-setup.mjs';
 
 const source = (await readFile(new URL("../assets/js/modals/upgrade-warning/index.js", import.meta.url), "utf8"))
   .replace(/const \{[\s\S]*?\} = await import\([^;]+\);/g, "")

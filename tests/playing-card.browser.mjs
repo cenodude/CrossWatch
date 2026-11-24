@@ -1,6 +1,7 @@
 /* tests/playing-card.browser.mjs */
 /* CrossWatch - Cinematic playing card themes, stream navigation and route selection */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
+import './i18n-browser-setup.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFile,mkdir} from 'node:fs/promises';

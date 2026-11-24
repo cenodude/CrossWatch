@@ -4,6 +4,8 @@
 
 // Details Log (live stream)
 (function(){
+  const T = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.t?.(key, vars) ?? key;
+  const TH = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.html?.(key, vars) ?? key;
 if (typeof window.esDet === "undefined") window.esDet = null;
 if (typeof window.esDetSummary === "undefined") window.esDetSummary = null;
 if (typeof window._detStaleIV === "undefined") window._detStaleIV = null;
@@ -397,7 +399,7 @@ function _cwUnresEsc(s) {
 }
 
 function _renderUnresolvedList(items) {
-  if (!items.length) return `<div class="cw-unres-empty">No unresolved items.</div>`;
+  if (!items.length) return `<div class="cw-unres-empty">${TH("logs.details.noUnresolved")}</div>`;
   const counts = new Map();
   for (const it of items) {
     const r = it.reason || "unresolved";
@@ -426,9 +428,9 @@ async function _showUnresolvedModal() {
     modal.innerHTML =
       `<div class="cw-unres-backdrop"></div>` +
       `<div class="cw-unres-card">` +
-      `<div class="cw-unres-h"><div class="cw-unres-title">Unresolved items</div>` +
-      `<button class="cw-unres-close" type="button" aria-label="Close">✕</button></div>` +
-      `<div class="cw-unres-body cw-scrollbars"><div class="cw-unres-loading">Loading…</div></div>` +
+      `<div class="cw-unres-h"><div class="cw-unres-title">${TH("logs.details.unresolved")}</div>` +
+      `<button class="cw-unres-close" type="button" aria-label="${TH("logs.details.close")}">✕</button></div>` +
+      `<div class="cw-unres-body cw-scrollbars"><div class="cw-unres-loading">${TH("logs.details.loading")}</div></div>` +
       `</div>`;
     document.body.appendChild(modal);
     const close = () => modal.classList.add("hidden");
@@ -437,16 +439,16 @@ async function _showUnresolvedModal() {
   }
   const body = modal.querySelector(".cw-unres-body");
   const titleEl = modal.querySelector(".cw-unres-title");
-  body.innerHTML = `<div class="cw-unres-loading">Loading…</div>`;
+  body.innerHTML = `<div class="cw-unres-loading">${TH("logs.details.loading")}</div>`;
   modal.classList.remove("hidden");
   try {
     const r = await fetch("/api/run/unresolved", { headers: { Accept: "application/json" } });
     const data = await r.json();
     const items = Array.isArray(data.items) ? data.items : [];
-    titleEl.textContent = `Unresolved items (${data.total ?? items.length})`;
+    titleEl.textContent = T("logs.details.unresolvedN", {count: data.total ?? items.length});
     body.innerHTML = _renderUnresolvedList(items);
   } catch (_) {
-    body.innerHTML = `<div class="cw-unres-error">Failed to load unresolved items.</div>`;
+    body.innerHTML = `<div class="cw-unres-error">${TH("logs.details.loadFailed")}</div>`;
   }
 }
 
@@ -471,7 +473,7 @@ function _unresolvedMoreRow() {
   const link = document.createElement("a");
   link.className = "cw-unres-link";
   link.href = "#";
-  link.textContent = "Show the full unresolved list";
+  link.textContent = T("logs.details.showFull");
   link.addEventListener("click", (e) => { e.preventDefault(); _showUnresolvedModal(); });
   msg.appendChild(link);
 
@@ -533,9 +535,9 @@ function _updateDetailsConsoleStatus() {
 
   live?.classList.toggle("is-live", connected && !stale);
   live?.classList.toggle("is-stale", stale);
-  if (liveLabel) liveLabel.textContent = stale ? "Reconnecting" : (connected ? "Live" : "Idle");
-  if (followState) followState.textContent = `Auto-scroll ${following ? "on" : "off"}`;
-  if (count) count.textContent = `${rows} ${rows === 1 ? "line" : "lines"}${dropped ? ` · ${dropped} omitted` : ""}`;
+  if (liveLabel) liveLabel.textContent = T(stale ? "logs.details.reconnecting" : (connected ? "logs.details.live" : "logs.details.idle"));
+  if (followState) followState.textContent = T(following ? "logs.details.autoOn" : "logs.details.autoOff");
+  if (count) count.textContent = `${T("logs.details.lines", {count: rows})}${dropped ? ` · ${T("logs.details.omitted", {n: dropped})}` : ""}`;
   follow?.classList.toggle("is-on", following);
   follow?.setAttribute("aria-pressed", String(following));
 }
@@ -653,21 +655,21 @@ function initDetailsTabs() {
 
   document.getElementById("det-more")?.addEventListener("click", event => {
     const entries = [
-      ["det-open-logs", "open_in_full", "Open full logs"],
-      ["det-copy", "content_copy", "Copy output"],
-      ["det-clear", "delete", "Clear output"],
-      ["det-ai", "auto_awesome", "Analyze with assistant"],
+      ["det-open-logs", "open_in_full", T("logs.details.openLogs")],
+      ["det-copy", "content_copy", T("logs.details.copy")],
+      ["det-clear", "delete", T("logs.details.clear")],
+      ["det-ai", "auto_awesome", T("logs.details.ai")],
     ].flatMap(([id, icon, label]) => {
       const button = document.getElementById(id);
       if (id === "det-ai" && document.documentElement.dataset.cwAssistant !== "on") return [];
       return button && !button.hidden && !button.disabled && !button.classList.contains("hidden")
         ? [{icon, label, run:() => button.click()}] : [];
     });
-    entries.push({icon:"close", label:"Close details", run:() => {
+    entries.push({icon:"close", label:T("logs.details.closeDetails"), run:() => {
       toggleDetails();
       document.getElementById("btn-details")?.focus();
     }});
-    window.CW?.CardActions?.open(event.currentTarget, entries, {title:"Log actions"});
+    window.CW?.CardActions?.open(event.currentTarget, entries, {title:T("logs.details.actions")});
   });
 
   const btnCopy = document.getElementById("det-copy");

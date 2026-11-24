@@ -3,6 +3,8 @@
 (function () {
   const NS = (window.CW ||= {});
   const Editor = (NS.Editor ||= {});
+  const T = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.t?.(key, vars) ?? key;
+  const TH = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.html?.(key, vars) ?? key;
 
   function pad2(n) {
     return String(n).padStart(2, "0");
@@ -130,7 +132,7 @@
     pop.appendChild(grid);
     const hint = document.createElement("div");
     hint.className = "cw-search-status";
-    hint.textContent = "Times are shown in your local time zone and saved in UTC.";
+    hint.textContent = T("editor.dt.hint");
     pop.appendChild(hint);
     return input;
   }

@@ -2,6 +2,8 @@
 // CrossWatch - Tracearr auth UI
 // Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 (function () {
+  const T = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.t?.(key, vars) ?? key;
+  const TH = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.html?.(key, vars) ?? key;
   if (window._tracearrPatched) return;
   window._tracearrPatched = true;
 
@@ -16,7 +18,7 @@
     sectionId: "sec-tracearr",
     selectId: "tracearr_instance",
     storageKey: "cw.ui.tracearr.auth.instance.v1",
-    title: "Select which Tracearr server this config applies to.",
+    title: T("connections.auth.gen.selectServer", {provider: "Tracearr"}),
   });
 
   function getTracearrInstance() {
@@ -38,16 +40,16 @@
   function friendlyError(code) {
     const key = String(code || "").trim();
     switch (key) {
-      case "server_url_required": return "Enter Tracearr server URL";
-      case "api_key_required": return "Enter your Tracearr API key";
-      case "invalid_api_key": return "Invalid Tracearr API key";
-      case "api_v2_unavailable": return "Tracearr 2.0 or later is required";
-      case "validation_timeout": return "Tracearr validation timed out";
-      case "validation_failed": return "Could not connect to Tracearr";
-      case "validation_bad_response": return "Tracearr validation returned an unexpected response";
+      case "server_url_required": return T("connections.validation.serverUrlRequired", {provider: "Tracearr"});
+      case "api_key_required": return T("connections.validation.apiKeyRequired", {provider: "Tracearr"});
+      case "invalid_api_key": return T("connections.validation.invalidApiKey", {provider: "Tracearr"});
+      case "api_v2_unavailable": return T("connections.validation.tracearrV2", {provider: "Tracearr"});
+      case "validation_timeout": return T("connections.validation.timeout", {provider: "Tracearr"});
+      case "validation_failed": return T("connections.validation.connectFailed", {provider: "Tracearr"});
+      case "validation_bad_response": return T("connections.validation.badResponse", {provider: "Tracearr"});
       default:
-        if (key.startsWith("validation_http_")) return "Tracearr validation failed";
-        return key || "Not connected";
+        if (key.startsWith("validation_http_")) return T("connections.validation.httpFailed", {provider: "Tracearr"});
+        return key || T("connections.auth.notConnected");
     }
   }
 
@@ -82,7 +84,7 @@
     sel.innerHTML = "";
     const all = document.createElement("option");
     all.value = "";
-    all.textContent = "All users";
+    all.textContent = T("connections.auth.allUsers");
     sel.appendChild(all);
     let found = !keep;
     (Array.isArray(users) ? users : []).forEach((u) => {
@@ -116,12 +118,12 @@
     try {
       const r = await fetchJSON(tracearrApi("/api/tracearr/status?verify=1"), { cache: "no-store" });
       const ok = !!(r.ok && r.data && r.data.connected);
-      setConn(ok, ok ? "Connected" : friendlyError(r.data && r.data.reason));
-      note(ok ? "Tracearr connected" : "Tracearr not connected");
+      setConn(ok, ok ? T("connections.auth.connected") : friendlyError(r.data && r.data.reason));
+      note(ok ? T("connections.auth.gen.connected", {provider: "Tracearr"}) : T("connections.auth.gen.notConnected", {provider: "Tracearr"}));
       return ok;
     } catch {
-      setConn(false, "Could not connect to Tracearr");
-      note("Tracearr validation failed");
+      setConn(false, T("connections.validation.connectFailed", {provider: "Tracearr"}));
+      note(T("connections.validation.httpFailed", {provider: "Tracearr"}));
       return false;
     }
   }
@@ -164,10 +166,10 @@
     const userEl = el("tracearr_user_id");
     const user_id = txt(userEl?.value || "");
 
-    if (!server) { note("Enter Tracearr server URL"); return; }
+    if (!server) { note(T("connections.validation.serverUrlRequired", {provider: "Tracearr"})); return; }
 
     if (!key && !(keyInput && keyInput.dataset.hasKey === "1")) {
-      note("Enter your Tracearr API key");
+      note(T("connections.validation.apiKeyRequired", {provider: "Tracearr"}));
       return;
     }
 
@@ -182,10 +184,10 @@
       if (key) maskKey(keyInput, true);
       syncHint();
       if (userEl) userEl.dataset.touched = "";
-      note("Tracearr saved");
+      note(T("connections.auth.gen.saved", {provider: "Tracearr"}));
       if (await refresh()) await loadUsers(user_id);
     } catch (e) {
-      const msg = e && e.message ? e.message : "Saving Tracearr failed";
+      const msg = e && e.message ? e.message : T("connections.validation.saveFailed", {provider: "Tracearr"});
       setConn(false, msg);
       note(msg);
     }
@@ -201,9 +203,9 @@
       syncHint();
       renderUsers([], "");
       setConn(false);
-      note("Tracearr disconnected");
+      note(T("connections.auth.gen.disconnected", {provider: "Tracearr"}));
     } catch (e) {
-      note("Tracearr disconnect failed" + (e && e.message ? ": " + e.message : ""));
+      note(T("connections.auth.gen.disconnectFailed", {provider: "Tracearr"}) + (e && e.message ? ": " + e.message : ""));
     }
   }
 

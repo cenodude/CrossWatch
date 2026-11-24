@@ -1,5 +1,7 @@
 // auth.simkl.js
 (function (w, d) {
+  const T = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.t?.(key, vars) ?? key;
+  const TH = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.html?.(key, vars) ?? key;
   const Shared = w.CW && w.CW.AuthShared;
   const $ = (s) => d.getElementById(s);
   const q = (sel, root = d) => root.querySelector(sel);
@@ -15,7 +17,7 @@
     selectId: "simkl_instance",
     storageKey: "cw.ui.simkl.auth.instance.v1",
     panelSelector: '#sec-simkl .cw-meta-provider-panel[data-provider="simkl"], .cw-meta-provider-panel[data-provider="simkl"]',
-    title: "Select which SIMKL account this config applies to.",
+    title: T("connections.auth.gen.selectAccount", {provider: "SIMKL"}),
   });
   const _str = Shared.txt;
   const _setVal = (id, v) => { const e = $(id); if (e && String(e.value || "") !== String(v || "")) e.value = String(v || ""); };
@@ -93,11 +95,11 @@
       const tok = _str(blk.access_token || (isDefault ? (cfg?.auth?.simkl?.access_token || "") : ""));
       const method = activeSimklMethod(blk);
       setSimklMethodUI(method);
-      try { setSimklSuccess(!!tok, tok ? (method === "pin" ? "Connected using PIN" : "Connected") : ""); } catch {}
+      try { setSimklSuccess(!!tok, tok ? (method === "pin" ? T("connections.auth.simkl.pin") : T("connections.auth.connected")) : ""); } catch {}
       if (tok) {
         const legacy = Number(blk.auth_version || 0) < 2 && !tok.startsWith("simkl_at_");
-        if (String(blk.auth_error || "") === "reconnect_required") setSimklBanner("warn", "SIMKL login expired - reconnect");
-        else if (legacy) setSimklBanner("warn", "Old SIMKL login - reconnect before end of March 2027");
+        if (String(blk.auth_error || "") === "reconnect_required") setSimklBanner("warn", T("connections.auth.gen.loginExpired", {provider: "SIMKL"}));
+        else if (legacy) setSimklBanner("warn", T("connections.auth.simkl.old"));
       }
       if (tok && !simklPinPoller?.isRunning()) { try { smqcStop(); } catch (_) {} }
       try { updateSimklButtonState(); } catch {}
@@ -113,7 +115,7 @@
 
   function setSimklSuccess(on, text) {
     simklConnected = !!on;
-    if (on) setSimklBanner("ok", text || "Connected");
+    if (on) setSimklBanner("ok", text || T("connections.auth.connected"));
     else setSimklBanner(null, "");
     try { Shared.setConnectLocked(["btn-connect-simkl-pin", "btn-simkl-pin-restart", "btn-connect-simkl"], simklConnected); } catch {}
     if (!simklConnected) { try { updateSimklButtonState(); } catch (_) {} }
@@ -138,7 +140,7 @@
   const updateSimklHint = updateSimklButtonState;
 
   async function copyRedirect() {
-    return Shared.copyText(computeRedirect(), $("btn-copy-simkl-redirect"), { successMessage: "Redirect URI copied" });
+    return Shared.copyText(computeRedirect(), $("btn-copy-simkl-redirect"), { successMessage: T("connections.auth.simkl.uriCopied") });
   }
 
   async function simklDeleteToken() {
@@ -157,12 +159,12 @@
         try { setSimklSuccess(false); } catch {}
         try { const ce = $("simkl_qc_code"); if (ce) ce.textContent = "------"; } catch {}
         try { const ci = $("simkl_pin_code"); if (ci) ci.value = ""; } catch {}
-        notify("SIMKL disconnected.");
+        notify(T("connections.auth.gen.disconnectedDot", {provider: "SIMKL"}));
       } else {
-        if (msg) { msg.classList.add("warn"); msg.textContent = "Could not remove token."; }
+        if (msg) { msg.classList.add("warn"); msg.textContent = T("connections.auth.removeTokenFailed"); }
       }
     } catch {
-      if (msg) { msg.classList.add("warn"); msg.textContent = "Error removing token."; }
+      if (msg) { msg.classList.add("warn"); msg.textContent = T("connections.auth.removeTokenError"); }
     } finally {
       if (btn) { btn.disabled = false; btn.classList.remove("busy"); }
     }
@@ -178,11 +180,11 @@
       url: () => simklApi("/api/simkl/pin/poll"),
       method: "POST",
       body: "{}",
-      onAuthorized: () => { smqcStop(); try { setSimklSuccess(true, "Connected using PIN"); } catch {} },
+      onAuthorized: () => { smqcStop(); try { setSimklSuccess(true, T("connections.auth.simkl.pin")); } catch {} },
       onExpired: () => smqcTimeout(),
       onTimeout: () => smqcTimeout(),
       onTerminal: (verdict) => {
-        const label = String((verdict && verdict.message) || "").replace(/_/g, " ") || "Authorization failed";
+        const label = String((verdict && verdict.message) || "").replace(/_/g, " ") || T("connections.auth.authFailed");
         const st = $("simkl_qc_status"); if (st) st.textContent = label;
         if (smqcTimer) { clearInterval(smqcTimer); smqcTimer = null; }
         smqcDeadline = 0;
@@ -225,7 +227,7 @@
     const el = $("simkl_qc_timer"); if (!el) return;
     const left = Math.max(0, Math.round((smqcDeadline - Date.now()) / 1000));
     const mm = Math.floor(left / 60), ss = String(left % 60).padStart(2, "0");
-    el.textContent = left > 0 ? ("Expires in " + mm + ":" + ss) : "";
+    el.textContent = left > 0 ? T("connections.auth.expiresIn", {time: mm + ":" + ss}) : "";
   }
   function smqcStop() {
     if (smqcTimer) { clearInterval(smqcTimer); smqcTimer = null; }
@@ -237,14 +239,14 @@
     if (smqcTimer) { clearInterval(smqcTimer); smqcTimer = null; }
     stopSimklPinPoll();
     smqcDeadline = 0;
-    const st = $("simkl_qc_status"); if (st) st.textContent = "Link code expired. Restart to try again.";
+    const st = $("simkl_qc_status"); if (st) st.textContent = T("connections.auth.codeExpiredRestart");
     const el = $("simkl_qc_timer"); if (el) el.textContent = "";
     smqcShowRestart();
   }
   function smqcShowCode(code, secondsLeft) {
     const codeInput = $("simkl_pin_code"); if (codeInput) codeInput.value = code || "";
     const codeEl = $("simkl_qc_code"); if (codeEl) codeEl.textContent = code || "------";
-    const st = $("simkl_qc_status"); if (st) st.textContent = "Waiting for authorization…";
+    const st = $("simkl_qc_status"); if (st) st.textContent = T("connections.auth.waitingAuth");
     smqcDeadline = Date.now() + (Math.max(30, Number(secondsLeft) || 900) * 1000);
     smqcSetState(true);
     smqcUpdateTimer();
@@ -256,10 +258,10 @@
     if (!code || code === "------") return;
     let ok = false;
     ok = (await window.cwCopyText?.(code)) === true;
-    if (!ok) { notify("Copy failed"); return; }
-    btn.classList.add("copied"); btn.innerHTML = SMK_ICON_CHECK; btn.title = "Copied!";
+    if (!ok) { notify(T("connections.auth.copyFailed")); return; }
+    btn.classList.add("copied"); btn.innerHTML = SMK_ICON_CHECK; btn.title = T("connections.auth.copiedBang");
     if (smqcCopyRevert) clearTimeout(smqcCopyRevert);
-    smqcCopyRevert = setTimeout(function () { btn.classList.remove("copied"); btn.innerHTML = SMK_ICON_COPY; btn.title = "Copy code"; }, 1400);
+    smqcCopyRevert = setTimeout(function () { btn.classList.remove("copied"); btn.innerHTML = SMK_ICON_COPY; btn.title = T("connections.auth.copyCode"); }, 1400);
   }
 
   async function startSimklPin() {
@@ -268,7 +270,7 @@
     const btn = $("btn-connect-simkl-pin");
     if (btn) { btn.disabled = true; btn.classList.add("busy"); }
 
-    const win = Shared.openWaitWindow("SIMKL", "Requesting a SIMKL code...", "SIMKL");
+    const win = Shared.openWaitWindow("SIMKL", T("connections.auth.gen.requestingCode", {provider: "SIMKL"}), "SIMKL");
 
     let data = null;
     try {
@@ -277,7 +279,7 @@
       if (!r.ok || !data || data.ok === false) throw new Error((data && data.error) || "pin_start_failed");
     } catch (e) {
       try { if (win && !win.closed) win.close(); } catch (_) {}
-      notify("Could not start SIMKL PIN: " + (e && e.message ? e.message : e));
+      notify(T("connections.auth.simkl.pinFailed", {error: String(e && e.message ? e.message : e)}));
       if (btn) { btn.disabled = false; btn.classList.remove("busy"); }
       return;
     }
@@ -288,14 +290,14 @@
 
     const helpEl = $("simkl_qc_help");
     if (helpEl) helpEl.textContent = win
-      ? "Opening simkl.com/pin — enter this code there and approve CrossWatch."
-      : "Open simkl.com/pin and enter this code to approve CrossWatch.";
+      ? T("connections.auth.simkl.opening")
+      : T("connections.auth.simkl.open");
 
     smqcShowCode(code, secs);
     startSimklPinPoll(Math.max(2, Number(data.interval || 5)));
 
     if (!Shared.showWaitCode(win, { key: "SIMKL", label: "SIMKL", code, url })) {
-      notify("Popup blocked - open simkl.com/pin and enter the code.");
+      notify(T("connections.auth.simkl.popup"));
     }
 
     if (btn) { btn.disabled = false; btn.classList.remove("busy"); }
@@ -317,12 +319,12 @@
     const cid = ($("simkl_client_id")?.value || "").trim();
     const sec = ($("simkl_client_secret")?.value || "").trim();
     if (!cid || !sec) {
-      notify("Fill in SIMKL Client ID + Client Secret first");
+      notify(T("connections.auth.simkl.fill"));
       updateSimklButtonState();
       return;
     }
 
-    const win = Shared.openWaitWindow("SIMKL", "Preparing the SIMKL approval page...", "SIMKL");
+    const win = Shared.openWaitWindow("SIMKL", T("connections.auth.gen.preparing", {provider: "SIMKL"}), "SIMKL");
 
     let authCompleted;
     try { authCompleted = await Shared.captureAuthCompletion(profile); }
@@ -340,7 +342,7 @@
     }).then((r) => r.json()).catch(() => null);
 
     if (!j?.ok || !j.authorize_url) {
-      const err = (j && (j.error || j.message)) ? String(j.error || j.message) : "SIMKL authorize failed";
+      const err = (j && (j.error || j.message)) ? String(j.error || j.message) : T("connections.auth.gen.authorizeFailed", {provider: "SIMKL"});
       notify(err);
       try { if (win && !win.closed) win.close(); } catch {}
       return;
@@ -349,7 +351,7 @@
     if (win && !win.closed) {
       try { win.location.href = j.authorize_url; win.focus(); } catch {}
     } else {
-      notify("Popup blocked - allow popups and try again");
+      notify(T("connections.auth.popupAllow"));
     }
 
     const cleanup = () => {
@@ -376,7 +378,7 @@
       let cfg = null;
       try {
         const r = await fetch("/api/config" + bust(), { cache: "no-store", credentials: "same-origin" });
-        if (r.status === 401) { notify("Session expired - please log in again"); cleanup(); return; }
+        if (r.status === 401) { notify(T("connections.auth.sessionExpired")); cleanup(); return; }
         cfg = await r.json();
       } catch {} finally { inFlight = false; }
 

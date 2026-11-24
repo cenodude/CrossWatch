@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 
 from ui_frontend import get_index_html
+from tests.i18n_source import english_source
 
 
 @pytest.mark.parametrize("admin,write", [(True, False), (False, True), (False, False)])
@@ -15,8 +16,8 @@ def test_maintenance_page_remains_admin_only(admin, write):
 
 def test_maintenance_uses_page_module_and_removes_modal_registration():
     root = Path(__file__).resolve().parents[1]
-    modals = (root / "assets/js/modals.js").read_text("utf-8")
-    router = (root / "assets/helpers/core.js").read_text("utf-8")
+    modals = english_source((root / "assets/js/modals.js").read_text("utf-8"))
+    router = english_source((root / "assets/helpers/core.js").read_text("utf-8"))
     assert "ModalRegistry.register('maintenance'" not in modals
     assert '"/assets/js/maintenance/index.js", "MaintenancePage"' in router
     assert 'byId("page-maintenance")?.classList.toggle("hidden", tab !== "maintenance")' in router

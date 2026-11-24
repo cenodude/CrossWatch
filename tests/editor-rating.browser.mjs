@@ -1,6 +1,7 @@
 /* tests/editor-rating.browser.mjs */
 /* CrossWatch - Editor star rating interaction and theme checks */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude */
+import './i18n-browser-setup.mjs';
 import test from "node:test";
 import assert from "node:assert/strict";
 import {readFile} from "node:fs/promises";

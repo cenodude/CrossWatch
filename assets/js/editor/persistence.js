@@ -3,6 +3,8 @@
 (function () {
   const NS = (window.CW ||= {});
   const Editor = (NS.Editor ||= {});
+  const T = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.t?.(key, vars) ?? key;
+  const TH = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.html?.(key, vars) ?? key;
 
   function stateOf(ctx) {
     return (ctx && ctx.state) || {};
@@ -109,7 +111,7 @@
 
     const text = state.playlistWarnings.join("\n");
     const confirmFn = typeof ctx.confirm === "function" ? ctx.confirm : window.confirm;
-    return confirmFn(`${text}\n\nRemove ${removals} item${removals === 1 ? "" : "s"} from this playlist endpoint?`);
+    return confirmFn(`${text}\n\n${T("editor.persist.removeItems", {count: removals})}`);
   }
 
   async function saveState(ctx = {}) {
@@ -118,16 +120,16 @@
 
     const missing = findRowsMissingKey(state);
     if (missing.length) {
-      ctx.setTag?.("error", "Missing key");
+      ctx.setTag?.("error", T("editor.persist.missingKey"));
       ctx.setStatus?.(
-        `Cannot save: ${missing.length} row${missing.length === 1 ? " has" : "s have"} data but no Key. Fill the Key or remove the row.`
+        T("editor.persist.missingKeys", {count: missing.length})
       );
-      if (window.cxToast) window.cxToast("Fill Key for all rows with data before saving");
+      if (window.cxToast) window.cxToast(T("editor.persist.fillKey"));
       return;
     }
 
     state.saving = true;
-    ctx.setTag?.("warn", "Saving");
+    ctx.setTag?.("warn", T("editor.persist.saving"));
     ctx.syncActionButtons?.();
 
     try {
@@ -135,8 +137,8 @@
 
       if (!await confirmPlaylistRemovals(ctx, items)) {
         state.saving = false;
-        ctx.setTag?.("warn", "Unsaved changes");
-        ctx.setStatus?.("Save cancelled");
+        ctx.setTag?.("warn", T("editor.persist.unsaved"));
+        ctx.setStatus?.(T("editor.persist.cancelled"));
         ctx.syncActionButtons?.();
         return;
       }
@@ -148,25 +150,25 @@
       });
 
       state.hasChanges = false;
-      ctx.setTag?.("warn", "Saved");
+      ctx.setTag?.("warn", T("editor.persist.savedTag"));
       if (state.source === "playlist") {
         const added = Number(res.added || 0);
         const removed = Number(res.removed || 0);
         const reordered = Number(res.reordered || 0);
         const unresolved = Number(res.unresolved_count || 0);
         const parts = [`+${added}`, `-${removed}`];
-        if (reordered) parts.push(`${reordered} reordered`);
-        if (unresolved) parts.push(`${unresolved} unresolved`);
-        ctx.setStatus?.(`Applied playlist changes: ${parts.join(", ")}`);
+        if (reordered) parts.push(T("editor.persist.reordered", {n: reordered}));
+        if (unresolved) parts.push(T("editor.persist.unresolved", {n: unresolved}));
+        ctx.setStatus?.(T("editor.persist.applied", {parts: parts.join(", ")}));
         await ctx.loadState?.();
       } else {
-        ctx.setStatus?.(`Saved ${res.count || Object.keys(items).length} items`);
+        ctx.setStatus?.(T("editor.persist.saved", {count: Number(res.count || Object.keys(items).length)}));
         await ctx.loadSnapshots?.();
         await ctx.loadState?.();
       }
     } catch (e) {
       console.error(e);
-      ctx.setTag?.("error", "Save failed");
+      ctx.setTag?.("error", T("editor.persist.failed"));
       ctx.setStatus?.(String(e));
     } finally {
       state.saving = false;

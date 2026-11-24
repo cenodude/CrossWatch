@@ -3,6 +3,7 @@
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 
 (() => {
+  const T = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.t?.(key, vars) ?? key;
   const $ = (id) => document.getElementById(id);
   const txt = (v) => String(v ?? "").trim();
   const meta = window.CW?.ProviderMeta || {};
@@ -11,7 +12,7 @@
   const providerLogo = (v) => (typeof meta.logoPath === "function" ? meta.logoPath(v) : `/assets/img/${up(v)}.svg`);
   const providerTone = (v) => (typeof meta.tone === "function" ? meta.tone(v)?.rgb : "255,255,255") || "255,255,255";
   const mask = (v) => v === "*****" || /^[•]+$/.test(v);
-  const pretty = (v) => (txt(v).toLowerCase() === "default" ? "Default" : txt(v));
+  const pretty = (v) => (txt(v).toLowerCase() === "default" ? T("common.labels.default") : txt(v));
   const AUTH_MAP = typeof meta.authProviders === "function"
     ? meta.authProviders().map((info) => [info.sectionId, info.key])
     : [];
@@ -33,9 +34,9 @@
     if (!providerInfoOnMobile() || !window.CW?.CardActions?.open) return openProviderConnection(key, instance);
     const entries = [];
     if (!isManagedUser() && (typeof meta.sectionId !== "function" || meta.sectionId(key))) {
-      entries.push({icon:"settings", label:"Connection settings", run:() => openProviderConnection(key, instance)});
+      entries.push({icon:"settings", label:T("dashboard.status.connectionSettings"), run:() => openProviderConnection(key, instance)});
     }
-    entries.push({icon:"close", label:"Close"});
+    entries.push({icon:"close", label:T("common.actions.close")});
     const sheet = window.CW.CardActions.open(pill, entries, {
       title:providerLabel(key),
       subtitle:pill.title.split("\n").filter(line => !line.startsWith("Provider:")).join("\n"),
@@ -165,7 +166,7 @@
     if (dot.dataset.on === state) return;
     dot.dataset.on = state;
     dot.classList.toggle("on", want);
-    dot.title = want ? "Configured" : "Not configured";
+    dot.title = want ? T("common.status.configured") : T("common.status.notConfigured");
     dot.setAttribute("aria-label", dot.title);
   }
 
@@ -209,7 +210,7 @@
     const chipHas = /\bset\b/.test(raw) && !/\bmissing\b|\bnot set\b|\bunset\b|\bempty\b|—/.test(raw);
     const on = uiHas || (!touched && (cfgHas || chipHas));
     dot.classList.toggle("on", on);
-    dot.title = on ? "Configured" : "Not configured";
+    dot.title = on ? T("common.status.configured") : T("common.status.notConfigured");
     dot.setAttribute("aria-label", dot.title);
     panel?.classList?.toggle("is-configured", on);
     return true;
@@ -273,18 +274,18 @@
     const ok = Number(sum?.ok);
     const probed = Number(sum?.probed);
     const total = Number(sum?.total);
-    const lines = [`Profiles: ${profileIds.map(pretty).join(", ")}`];
+    const lines = [T("dashboard.status.profiles", { list: profileIds.map(pretty).join(", ") })];
     if (Number.isFinite(total) && total > 1) {
       lines.push(Number.isFinite(probed) && probed > 0 && probed < total
-        ? `Checked instances: ${ok}/${probed}, ${total} total`
+        ? T("dashboard.status.checkedInstances", { ok, probed, total })
         : Number.isFinite(ok)
-        ? `Connected instances: ${ok}/${total}`
-        : `Instance count: ${total}`);
+        ? T("dashboard.status.connectedInstances", { ok, total })
+        : T("dashboard.status.instanceCount", { total }));
     }
     const used = Array.isArray(sum?.used) ? sum.used : [];
     if (used.length) {
       const labels = used.slice(0, 4).map(pretty);
-      lines.push(`Used: ${labels.join(", ")}${used.length > 4 ? "..." : ""}`);
+      lines.push(T("dashboard.status.used", { list: `${labels.join(", ")}${used.length > 4 ? "..." : ""}` }));
     }
     return lines.join("\n");
   }
@@ -294,7 +295,7 @@
     if (hint) return hint;
     const usedBy = Array.isArray(data?.used_by) ? data.used_by : [];
     return usedBy.length
-      ? `Used by: ${usedBy.map((x) => (txt(x).toLowerCase() === "pair" ? "Sync" : "Watcher")).join(" and ")}`
+      ? T("dashboard.status.usedBy", { list: ((labels) => (window.CW?.I18n || window.__cwI18n)?.list?.(labels) ?? labels.join(", "))(usedBy.map((x) => (txt(x).toLowerCase() === "pair" ? T("dashboard.status.usageSync") : T("dashboard.status.usageWatcher")))) })
       : "";
   }
 
@@ -302,21 +303,21 @@
     if (up(key) === "TOFA" && data && typeof data === "object") {
       const profileName = txt(data.profile_name);
       const user = txt(data.username);
-      if (profileName && user) return `Tofa profile: ${profileName} (${user})`;
-      return profileName ? `Tofa profile: ${profileName}` : "";
+      if (profileName && user) return T("dashboard.status.providerProfileUser", { provider: "Tofa", name: profileName, user });
+      return profileName ? T("dashboard.status.providerProfile", { provider: "Tofa", name: profileName }) : "";
     }
     if (up(key) === "SILO" && data && typeof data === "object") {
       const profileName = txt(data.profile_name);
       const user = txt(data.username);
-      if (profileName && user) return `Silo profile: ${profileName} (${user})`;
-      return profileName ? `Silo profile: ${profileName}` : "";
+      if (profileName && user) return T("dashboard.status.providerProfileUser", { provider: "Silo", name: profileName, user });
+      return profileName ? T("dashboard.status.providerProfile", { provider: "Silo", name: profileName }) : "";
     }
     if (up(key) !== "NUVIO" || !data || typeof data !== "object") return "";
     const name = txt(data.nuvio_profile_name || data.profile_name);
     const id = txt(data.nuvio_profile_id || data.profile_id);
-    if (name && id) return `Nuvio profile: ${name} (#${id})`;
-    if (name) return `Nuvio profile: ${name}`;
-    if (id) return `Nuvio profile: #${id}`;
+    if (name && id) return T("dashboard.status.providerProfileUser", { provider: "Nuvio", name, user: `#${id}` });
+    if (name) return T("dashboard.status.providerProfile", { provider: "Nuvio", name });
+    if (id) return T("dashboard.status.providerProfile", { provider: "Nuvio", name: `#${id}` });
     return "";
   }
 
@@ -325,23 +326,23 @@
       case "PLEX":
         return {
           vip: !!(data?.plexpass || data?.subscription?.plan),
-          detail: data?.subscription?.plan ? `Plan: ${titleCase(data.subscription.plan)}` : (data?.plexpass ? "Plan: Plex Pass" : ""),
+          detail: data?.subscription?.plan ? T("dashboard.status.plan", { plan: titleCase(data.subscription.plan) }) : (data?.plexpass ? T("dashboard.status.plan", { plan: "Plex Pass" }) : ""),
         };
       case "TRAKT": {
         const username = txt(data?.username);
-        return { vip: !!data?.vip, detail: [username ? `Account: ${username}` : "", data?.vip ? "Plan: VIP" : "Plan: Free"].filter(Boolean).join("\n") };
+        return { vip: !!data?.vip, detail: [username ? T("dashboard.status.account", { name: username }) : "", data?.vip ? T("dashboard.status.plan", { plan: "VIP" }) : T("dashboard.status.plan", { plan: T("dashboard.status.planFree") })].filter(Boolean).join("\n") };
       }
       case "WETRAKR": {
         const plan = txt(data?.plan).toLowerCase();
         const vip = plan === "vip" || !!data?.vip;
         const username = txt(data?.username);
-        return { vip, detail: [username ? `Account: ${username}` : "", vip ? "Plan: VIP" : plan === "free" ? "Plan: Free" : "", ...(meta.dailyQuotaDetails?.(data) || [])].filter(Boolean).join("\n") };
+        return { vip, detail: [username ? T("dashboard.status.account", { name: username }) : "", vip ? T("dashboard.status.plan", { plan: "VIP" }) : plan === "free" ? T("dashboard.status.plan", { plan: T("dashboard.status.planFree") }) : "", ...(meta.dailyQuotaDetails?.(data) || [])].filter(Boolean).join("\n") };
       }
       case "SIMKL": {
         const plan = txt(data?.account_type || data?.plan_type || data?.account?.type).toLowerCase();
         const premium = plan === "pro" || plan === "vip";
         const label = plan ? (plan === "vip" ? "VIP" : titleCase(plan)) : "";
-        const lines = label ? [`Plan: ${label}`] : [];
+        const lines = label ? [T("dashboard.status.plan", { plan: label })] : [];
         lines.push(...(meta.dailyQuotaDetails?.(data) || []));
         return { vip: premium, detail: lines.join("\n") };
       }
@@ -349,15 +350,15 @@
         const plan = txt(data?.plan).toLowerCase();
         const vip = plan === "premium" || !!data?.vip;
         const username = txt(data?.username);
-        return { vip, detail: [username ? `Account: ${username}` : "", vip ? "Plan: Premium" : plan === "free" ? "Plan: Free" : ""].filter(Boolean).join("\n") };
+        return { vip, detail: [username ? T("dashboard.status.account", { name: username }) : "", vip ? T("dashboard.status.plan", { plan: "Premium" }) : plan === "free" ? T("dashboard.status.plan", { plan: T("dashboard.status.planFree") }) : ""].filter(Boolean).join("\n") };
       }
       case "EMBY":
-        return { vip: !!data?.premiere, detail: data?.premiere ? "Plan: Premiere" : "" };
+        return { vip: !!data?.premiere, detail: data?.premiere ? T("dashboard.status.plan", { plan: "Premiere" }) : "" };
       case "MDBLIST": {
         return { vip: !!data?.vip, detail: (meta.mdblistAccountDetails?.(data) || []).join("\n") };
       }
       case "CROSSWATCH":
-        return { vip: true, detail: ["Plan: VIP", txt(data?.vip_text) || "You've earned it"].join("\n") };
+        return { vip: true, detail: [T("dashboard.status.plan", { plan: "VIP" }), txt(data?.vip_text) || T("dashboard.status.earnedIt")].join("\n") };
       default:
         return { vip: false, detail: "" };
     }
@@ -393,7 +394,7 @@
     pill.classList.toggle("has-vip", !!vip);
     pill.role = "button";
     pill.tabIndex = 0;
-    pill.ariaLabel = `Open ${name} connection ${providerInfoOnMobile() ? "information" : "settings"}`;
+    pill.ariaLabel = T(providerInfoOnMobile() ? "dashboard.status.openConnectionInfo" : "dashboard.status.openConnectionSettings", { name });
     if (detail) pill.title = detail;
     else pill.removeAttribute("title");
     const logoSrc = providerLogo(provKey);
@@ -425,7 +426,7 @@
     pill.dataset.providerInstance = inst;
     pill.role = "button";
     pill.tabIndex = 0;
-    pill.ariaLabel = `Open ${name} connection ${providerInfoOnMobile() ? "information" : "settings"}`;
+    pill.ariaLabel = T(providerInfoOnMobile() ? "dashboard.status.openConnectionInfo" : "dashboard.status.openConnectionSettings", { name });
     if (detail) pill.title = detail;
     pill.innerHTML = `<div class="conn-brand">${
       vip ? `<span class="conn-slot">${CROWN}</span>` : ""
@@ -480,9 +481,9 @@
         const name = providerLabel(key) || titleCase(key);
         const meta = providerMeta(key, data);
         const detail = [
-          `Provider: ${name}`,
-          `Status: ${data?.connected ? "Connected" : "Not connected"}`,
-          instancesDetail(data) || "Instances: Not reported",
+          T("dashboard.status.provider", { name }),
+          T(data?.connected ? "dashboard.status.statusConnected" : "dashboard.status.statusNotConnected"),
+          instancesDetail(data) || T("dashboard.status.instancesNotReported"),
           providerProfileDetail(key, data),
           meta.detail,
           usageDetail(data),

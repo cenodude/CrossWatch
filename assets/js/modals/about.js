@@ -2,6 +2,10 @@
 /* CrossWatch - standalone about modal */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 
+const I18N = () => globalThis.window?.CW?.I18n || globalThis.window?.__cwI18n;
+const T = (key, vars) => I18N()?.t?.(key, vars) ?? key;
+const TH = (key, vars) => I18N()?.html?.(key, vars) ?? key;
+const TR = (key, vars) => I18N()?.rich?.(key, vars) ?? key;
 const UPDATE_ENDPOINT = "/api/update";
 const MODULES_ENDPOINT = "/api/modules/versions";
 const RELEASES_URL = "https://github.com/cenodude/CrossWatch/releases";
@@ -121,7 +125,7 @@ function _providerRows(group) {
   if (!rows.length) {
     return `
       <div class="r">
-        <b>No providers</b>
+        <b>${TH("about.noProviders")}</b>
         <span>-</span>
         <em>-</em>
       </div>
@@ -180,7 +184,7 @@ function _versionInfo(update = {}) {
 }
 
 function view(info, mods, logo) {
-  const latestChip = info.latest ? `Latest v${escapeHtml(info.latest)}` : "Latest unavailable";
+  const latestChip = info.latest ? TH("about.latest", {version: info.latest}) : TH("about.latestUnavailable");
   const publishedChip = info.publishedAt
     ? `<span class="chip subtle"><span class="material-symbols-rounded" aria-hidden="true">calendar_month</span>${escapeHtml(info.publishedAt.slice(0, 10))}</span>`
     : "";
@@ -188,16 +192,16 @@ function view(info, mods, logo) {
 
   return `
     <div class="about-backdrop">
-      <section class="about-panel" role="dialog" aria-modal="true" aria-label="About CrossWatch" tabindex="-1">
-        <button class="about-x" type="button" data-close aria-label="Close">
+      <section class="about-panel" role="dialog" aria-modal="true" aria-label="${TH("about.aboutLabel")}" tabindex="-1">
+        <button class="about-x" type="button" data-close aria-label="${TH("about.close")}">
           <span class="material-symbols-rounded" aria-hidden="true">close</span>
         </button>
         <header class="about-head">
           <div class="about-actions">
-            <span class="chip accent"><span class="material-symbols-rounded" aria-hidden="true">bolt</span>Engine v${escapeHtml(info.current || "-")}</span>
+            <span class="chip accent"><span class="material-symbols-rounded" aria-hidden="true">bolt</span>${TH("about.engine", {version: info.current || "-"})}</span>
             <span class="chip">${latestChip}</span>
             ${publishedChip}
-            <a class="about-link" href="${escapeHtml(info.htmlUrl)}" target="_blank" rel="noopener noreferrer">Releases ${externalIcon}</a>
+            <a class="about-link" href="${escapeHtml(info.htmlUrl)}" target="_blank" rel="noopener noreferrer">${TH("about.releases")} ${externalIcon}</a>
           </div>
         </header>
         <main class="about-body">
@@ -205,10 +209,10 @@ function view(info, mods, logo) {
             <section class="about-card update">
               <span class="material-symbols-rounded" aria-hidden="true">new_releases</span>
               <div>
-                <div class="h">Update available: v${escapeHtml(info.latest || info.current || "-")}</div>
-                <div class="p">You are on v${escapeHtml(info.current || "-")}. Open the latest release notes when you are ready to update.</div>
+                <div class="h">${TH("about.updateAvailable", {version: info.latest || info.current || "-"})}</div>
+                <div class="p">${TH("about.youAreOn", {version: info.current || "-"})}</div>
               </div>
-              <a class="about-link" href="${escapeHtml(info.htmlUrl)}" target="_blank" rel="noopener noreferrer">Open release ${externalIcon}</a>
+              <a class="about-link" href="${escapeHtml(info.htmlUrl)}" target="_blank" rel="noopener noreferrer">${TH("about.openRelease")} ${externalIcon}</a>
             </section>
           ` : ""}
           <section class="about-main">
@@ -216,46 +220,46 @@ function view(info, mods, logo) {
                 <div class="lede-brand">
                   <img class="lede-logo" src="${escapeHtml(logo)}" alt="" />
                   <div class="lede-wordmark cw-wordmark">CrossWatch<span class="brand-dot" aria-hidden="true">.</span></div>
-                  <p class="lede-motto">Your media. Your data.<br>On your terms.</p>
-                  <a class="coffee-link" href="${SUPPORT_URL}" target="_blank" rel="noopener noreferrer"><span class="material-symbols-rounded" aria-hidden="true">local_cafe</span>Buy me a coffee ${externalIcon}</a>
+                  <p class="lede-motto">${TR("about.motto")}</p>
+                  <a class="coffee-link" href="${SUPPORT_URL}" target="_blank" rel="noopener noreferrer"><span class="material-symbols-rounded" aria-hidden="true">local_cafe</span>${TH("about.coffee")} ${externalIcon}</a>
                 </div>
                 <div class="lede-copy">
-                  <div class="lede"><strong>CrossWatch (CW)</strong> is a synchronization engine that acts as a bridge to keep your <strong>AniList, BingeBase, CW local tracker, Emby, FlickList, Floppy, Jellyfin, Kitsu, Kodi, MDBList, Nuvio, Plex, PublicMetaDB, PunchPlay, Scrob, Silo, SIMKL, Stremio, Tautulli, TMDb, Tofa, Tracearr, Trakt and WeTrakr</strong> in sync.</div>
-                  <div class="lede"><strong>Please note:</strong> this software is still beta/experimental and may behave unpredictably. Make sure you have solid, tested backups before using it.</div>
+                  <div class="lede">${TR("about.lede")}</div>
+                  <div class="lede">${TR("about.beta")}</div>
                 </div>
               </section>
-              ${_fold("Synchronization Providers", _providerRows(mods.groups?.SYNC), "sync")}
+              ${_fold(T("about.syncProviders"), _providerRows(mods.groups?.SYNC), "sync")}
               <details class="about-fold disclaimer">
-                <summary><span class="material-symbols-rounded about-fold-icon" aria-hidden="true">info</span><span>Disclaimer &amp; credits</span><span class="material-symbols-rounded about-fold-chevron" aria-hidden="true">expand_more</span></summary>
+                <summary><span class="material-symbols-rounded about-fold-icon" aria-hidden="true">info</span><span>${TH("about.disclaimerCredits")}</span><span class="material-symbols-rounded about-fold-chevron" aria-hidden="true">expand_more</span></summary>
                 <div class="discBody">
-                  <div>CrossWatch is an independent community project. It is not affiliated with, endorsed by, or sponsored by Plex, Jellyfin, Emby, Silo, Tofa, SIMKL, Floppy, FlickList, Trakt, AniList, TMDb, MDBList, Movie Paradise, PublicMetaDB, PunchPlay, BingeBase, Scrob, Tautulli, Tracearr, Kodi, Nuvio, Stremio, CW local tracker, or their owners.</div>
-                  <div>CrossWatch uses the AniBridge mappings dataset and the animeApi dataset for anime identifier and episode translation, with the CW Anime DB on top to fix verified mistakes.</div>
+                  <div>${TH("about.independent")}</div>
+                  <div>${TH("about.anibridge")}</div>
                   <ul>
-                    <li>Names, logos, trademarks, and brands belong to their respective owners and are used for identification only.</li>
-                    <li>Third-party APIs and services have their own terms, rate limits, and account policies. Use CrossWatch responsibly and within those rules.</li>
-                    <li>CrossWatch is provided as-is, without warranties. Keep backups of any state, tracker, cache, or configuration data you edit.</li>
+                    <li>${TH("about.names")}</li>
+                    <li>${TH("about.thirdParty")}</li>
+                    <li>${TH("about.asIs")}</li>
                   </ul>
                 </div>
               </details>
           </section>
           <section class="help-section">
-            <div class="help-label"><span>Need help?</span></div>
+            <div class="help-label"><span>${TH("about.needHelp")}</span></div>
             <div class="help-grid">
               <a class="helpLink" href="${WIKI_URL}" target="_blank" rel="noopener noreferrer">
                 <span class="helpIcon" aria-hidden="true"><span class="material-symbols-rounded">menu_book</span></span>
                 <span class="helpCopy">
-                  <span class="helpEyebrow">Documentation</span>
-                  <span class="helpTitle">Open the CrossWatch Wiki</span>
-                  <span class="helpSub">Setup guides, upgrade notes, and troubleshooting in one place.</span>
+                  <span class="helpEyebrow">${TH("about.docs")}</span>
+                  <span class="helpTitle">${TH("about.wiki")}</span>
+                  <span class="helpSub">${TH("about.wikiSub")}</span>
                 </span>
                 <span class="material-symbols-rounded helpArrow" aria-hidden="true">chevron_right</span>
               </a>
               <a class="helpLink support-card" href="${COMMUNITY_URL}" target="_blank" rel="noopener noreferrer">
                 <span class="helpIcon" aria-hidden="true"><span class="material-symbols-rounded">chat_bubble</span></span>
                 <span class="helpCopy">
-                  <span class="helpEyebrow">Community Support</span>
-                  <span class="helpTitle">Ask questions & get help</span>
-                  <span class="helpSub">Join the discussions and get help from the community.</span>
+                  <span class="helpEyebrow">${TH("about.community")}</span>
+                  <span class="helpTitle">${TH("about.askQuestions")}</span>
+                  <span class="helpSub">${TH("about.communitySub")}</span>
                 </span>
                 <span class="material-symbols-rounded helpArrow" aria-hidden="true">chevron_right</span>
               </a>
@@ -263,8 +267,8 @@ function view(info, mods, logo) {
                 <span class="helpIcon" aria-hidden="true"><svg viewBox="0 0 24 24" focusable="false"><path d="M20.317 4.37a19.79 19.79 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.865-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.74 19.74 0 0 0 3.677 4.37a.07.07 0 0 0-.032.028C.533 9.046-.32 13.58.099 18.058a.082.082 0 0 0 .031.056 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028c.462-.63.874-1.295 1.226-1.994a.076.076 0 0 0-.041-.106 13.1 13.1 0 0 1-1.872-.892.077.077 0 0 1-.008-.128c.126-.094.252-.192.372-.292a.074.074 0 0 1 .078-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 0 1 .078.009c.12.1.246.199.373.293a.077.077 0 0 1-.006.128 12.3 12.3 0 0 1-1.873.891.077.077 0 0 0-.041.107c.36.698.772 1.363 1.225 1.993a.076.076 0 0 0 .084.029 19.84 19.84 0 0 0 6.002-3.03.077.077 0 0 0 .032-.055c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.029zM8.02 15.331c-1.183 0-2.157-1.086-2.157-2.419 0-1.333.956-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.332-.956 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.086-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.332-.946 2.418-2.157 2.418z"/></svg></span>
                 <span class="helpCopy">
                   <span class="helpEyebrow">Discord</span>
-                  <span class="helpTitle">Join the community chat</span>
-                  <span class="helpSub">Talk with other users and follow new releases.</span>
+                  <span class="helpTitle">${TH("about.discordChat")}</span>
+                  <span class="helpSub">${TH("about.discordSub")}</span>
                 </span>
                 <span class="material-symbols-rounded helpArrow" aria-hidden="true">chevron_right</span>
               </a>

@@ -1,10 +1,12 @@
 /* tests/overview-dialogs.browser.mjs */
 /* CrossWatch - Activity and provider preferences across themes and viewports */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
+import './i18n-browser-setup.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFile, mkdir} from 'node:fs/promises';
 import {chromium,webkit} from 'playwright';
+import {englishFrontendSource} from './i18n-test-helper.mjs';
 
 async function openPlayback(page) {
   if(page.viewportSize().width<=760)await page.getByRole('button',{name:'Filters and display options',exact:true}).click();
@@ -19,7 +21,7 @@ async function fixture(t,theme='',width=1100,empty=false) {
   const errors=[],writes=[];
   page.on('pageerror',e=>errors.push(e.message));
   t.after(()=>assert.deepEqual(errors,[]));
-  const source=await readFile(new URL('../ui_frontend.py',import.meta.url),'utf8');
+  const source=englishFrontendSource();
   const playback=source.slice(source.indexOf('def _profile_playback_panel()')).match(/return """([\s\S]*?)"""/)[1];
   const instances=empty?{}:{CROSSWATCH:[{id:'default',label:'Default'},{id:'CW-P01',label:'CW-P01',friendly_label:'Family tracker'},{id:'CW-P02',label:'CW-P02'}],SIMKL:[{id:'default',label:'Default'},{id:'SIMKL-P01',display_label:'Anime account',label:'SIMKL-P01'}],PLEX:[{id:'default',label:'Living room'}]};
   const tz=-new Date().getTimezoneOffset()*60, today=Math.floor((Date.now()/1000+tz)/86400);

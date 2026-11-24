@@ -10,6 +10,7 @@ import secrets
 from fastapi import APIRouter, Body, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 
+from cw_platform import i18n
 from cw_platform.config_base import load_config
 from services import authOidc
 
@@ -283,20 +284,19 @@ def _prune_pending_2fa() -> None:
         _PENDING_2FA.pop(key, None)
 
 
-def _totp_prompt_html(error: str = "") -> str:
-    import html as html_lib
-
-    note = f'<p class="err">{html_lib.escape(error)}</p>' if error else ""
-    return f"""<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Two-factor verification | CrossWatch</title>
+def _totp_prompt_html(error_key: str = "", language: str = i18n.DEFAULT_LANGUAGE) -> str:
+    lang = i18n.clean_language(language)
+    note = f'<p class="err">{i18n.h(lang, error_key)}</p>' if error_key else ""
+    return f"""<!doctype html><html lang="{lang}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{i18n.h(lang, "auth.twoFactor.title")} | CrossWatch</title>
 <style>body{{font-family:Segoe UI,Arial,sans-serif;background:#08111d;color:#eef5ff;display:grid;place-items:center;min-height:100vh;margin:0}}
 .box{{width:min(360px,92vw);text-align:center}}h1{{font-size:20px;margin:0 0 6px}}p{{opacity:.78;margin:0 0 18px;font-size:14px}}
 p.err{{color:#ff8c99;opacity:1}}input{{width:100%;padding:12px 14px;font-size:18px;letter-spacing:.24em;text-align:center;border-radius:8px;
 border:1px solid rgba(165,126,255,.3);background:rgba(8,17,30,.94);color:#eef5ff;box-sizing:border-box}}
 button{{width:100%;margin-top:12px;padding:12px 14px;font-size:15px;border:0;border-radius:8px;background:#8c6dff;color:#fff;cursor:pointer}}
 button:disabled{{opacity:.6;cursor:default}}</style></head><body><div class="box">
-<h1>Two-factor verification</h1><p>Enter the code from your authenticator app, or a recovery code.</p>{note}
+<h1>{i18n.h(lang, "auth.twoFactor.title")}</h1><p>{i18n.h(lang, "auth.twoFactor.intro")}</p>{note}
 <form id="f" autocomplete="off"><input id="c" name="code" inputmode="text" autocomplete="one-time-code" placeholder="123456" autofocus>
-<button id="b" type="submit">Verify</button></form></div>
+<button id="b" type="submit">{i18n.h(lang, "auth.login.verify")}</button></form></div>
 <script>
 document.getElementById('f').addEventListener('submit',async(e)=>{{
   e.preventDefault();
@@ -329,7 +329,7 @@ def _totp_pending_response(request: Request, cfg: dict[str, Any], res: dict[str,
         "flow_nonce_hash": authOidc._sha256_hex(flow_nonce),
         "expires_at": app_auth._now() + PENDING_2FA_TTL_SEC,
     }
-    resp = HTMLResponse(_totp_prompt_html(), headers={"Cache-Control": "no-store"})
+    resp = HTMLResponse(_totp_prompt_html(language=i18n.cookie_language(request)), headers={"Cache-Control": "no-store"})
     _set_flow_cookie(resp, flow_nonce, request)
     _set_2fa_cookie(resp, token, request)
     return resp
@@ -414,36 +414,36 @@ def api_oidc_start(request: Request, remember_me: bool = Query(False), next: str
         return resp
     except Exception as exc:
         _log(f"OIDC sign-in could not start: {exc}", level="ERROR")
-        return JSONResponse({"ok": False, "error": "OIDC sign-in could not start. Check the OIDC configuration."}, status_code=502, headers={"Cache-Control": "no-store"})
+        return JSONResponse({"ok": False, "error": "OIDC sign-in could not start. Check the OIDC configuration.", "code": "oidc_start_failed"}, status_code=502, headers={"Cache-Control": "no-store"})
 
 
 @router.get("/callback")
 def api_oidc_callback(request: Request, state: str = Query(""), code: str = Query(""), error: str = Query("")) -> Response:
     if error:
-        resp = HTMLResponse("OIDC sign-in was cancelled or failed.", status_code=400, headers={"Cache-Control": "no-store"})
+        resp = HTMLResponse(i18n.h(i18n.cookie_language(request), "auth.oidc.cancelled"), status_code=400, headers={"Cache-Control": "no-store"})
         _del_flow_cookie(resp, request)
         return resp
     cfg = load_config()
     if not _flow_nonce_matches(request, authOidc.flow_nonce_hash(state)):
         authOidc.drop_flow(state)
-        resp = HTMLResponse("OIDC sign-in expired. Start again.", status_code=400, headers={"Cache-Control": "no-store"})
+        resp = HTMLResponse(i18n.h(i18n.cookie_language(request), "auth.oidc.expired"), status_code=400, headers={"Cache-Control": "no-store"})
         _del_flow_cookie(resp, request)
         return resp
     try:
         res = authOidc.check_callback(cfg, state=state, code=code)
     except Exception as exc:
         _log(f"OIDC callback failed: {exc}", level="ERROR")
-        resp = HTMLResponse("OIDC sign-in failed. Check the OIDC configuration.", status_code=502, headers={"Cache-Control": "no-store"})
+        resp = HTMLResponse(i18n.h(i18n.cookie_language(request), "auth.oidc.failedConfig"), status_code=502, headers={"Cache-Control": "no-store"})
         _del_flow_cookie(resp, request)
         return resp
     if not res.get("ok"):
-        resp = HTMLResponse("OIDC sign-in failed. Start again.", status_code=int(res.get("status_code") or 400), headers={"Cache-Control": "no-store"})
+        resp = HTMLResponse(i18n.h(i18n.cookie_language(request), "auth.oidc.failed"), status_code=int(res.get("status_code") or 400), headers={"Cache-Control": "no-store"})
         _del_flow_cookie(resp, request)
         return resp
     if res.get("intent") == "link":
         authOidc.complete_link(state, res)
         resp = HTMLResponse(
-            """<!doctype html><html lang="en"><head><meta charset="utf-8"><title>OIDC link complete</title></head><body style="font-family:Segoe UI,Arial,sans-serif;background:#08111d;color:#eef5ff;display:grid;place-items:center;min-height:100vh;margin:0"><div style="text-align:center"><div style="font-size:28px;margin-bottom:8px">Done</div><div style="opacity:.8">You can close this window.</div></div><script>try{window.close()}catch(e){}</script></body></html>""",
+            i18n.done_page(i18n.request_language(request, app_auth.current_user(cfg, request.cookies.get(app_auth.COOKIE_NAME))), "auth.popup.oidcComplete"),
             headers={"Cache-Control": "no-store"},
         )
         _del_flow_cookie(resp, request)
@@ -451,7 +451,7 @@ def api_oidc_callback(request: Request, state: str = Query(""), code: str = Quer
     identity = _identity_dict(res.get("identity"))
     user = _resolve_oidc_user(cfg, identity)
     if user is None and not _can_provision(cfg, identity):
-        resp = HTMLResponse("This OIDC account is not linked for CrossWatch sign-in.", status_code=403, headers={"Cache-Control": "no-store"})
+        resp = HTMLResponse(i18n.h(i18n.cookie_language(request), "auth.oidc.notLinked"), status_code=403, headers={"Cache-Control": "no-store"})
         _del_flow_cookie(resp, request)
         return resp
     pending_2fa = _totp_pending_response(request, cfg, res, identity, user) if user is not None else None
@@ -476,7 +476,7 @@ def api_oidc_callback(request: Request, state: str = Query(""), code: str = Quer
         cfg, result = app_auth._update_config(_mutate)
         login_user, token, exp, bound, created, matched = result
     except KeyError:
-        resp = HTMLResponse("This OIDC account is not linked for CrossWatch sign-in.", status_code=403, headers={"Cache-Control": "no-store"})
+        resp = HTMLResponse(i18n.h(i18n.cookie_language(request), "auth.oidc.notLinked"), status_code=403, headers={"Cache-Control": "no-store"})
         _del_flow_cookie(resp, request)
         return resp
     if created:
@@ -502,7 +502,7 @@ def api_oidc_2fa_retry(request: Request) -> Response:
         _del_flow_cookie(resp, request)
         _del_2fa_cookie(resp, request)
         return resp
-    return HTMLResponse(_totp_prompt_html("Invalid verification code"), headers={"Cache-Control": "no-store"})
+    return HTMLResponse(_totp_prompt_html("auth.errors.invalid_verification_code", i18n.cookie_language(request)), headers={"Cache-Control": "no-store"})
 
 
 @router.post("/2fa")

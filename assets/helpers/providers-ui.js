@@ -2,6 +2,8 @@
 /* Extracted provider/auth/metadata UI from core.js */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 (function(){
+  const T = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.t?.(key, vars) ?? key;
+  const TH = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.html?.(key, vars) ?? key;
   const authSetupPending = () => window.cwIsAuthSetupPending?.() === true;
   const apiText = async (url) => {
     if (authSetupPending()) throw new Error("auth setup pending");
@@ -46,17 +48,17 @@
   }
 
   const AUTH_GROUPS = Object.freeze([
-    { id: "sec-auth-media", title: "Media servers", keys: ["PLEX", "JELLYFIN", "EMBY", "SILO", "TOFA"] },
-    { id: "sec-auth-trackers", title: "Trackers", keys: ["CROSSWATCH", "TRAKT", "SIMKL", "TMDB", "MDBLIST", "PUBLICMETADB", "ANILIST", "MYANIMELIST", "KITSU", "WETRAKR", "PUNCHPLAY", "BINGEBASE", "FLICKLIST", "MOVIEPARADISE", "FLOPPY", "SCROB"] },
-    { id: "sec-auth-clients", title: "Media clients", keys: ["NUVIO", "KODI", "STREMIO"] },
-    { id: "sec-auth-others", title: "Others", keys: ["TAUTULLI", "TRACEARR"] },
+    { id: "sec-auth-media", title: T("connections.groups.mediaServers"), keys: ["PLEX", "JELLYFIN", "EMBY", "SILO", "TOFA"] },
+    { id: "sec-auth-trackers", title: T("connections.groups.trackers"), keys: ["CROSSWATCH", "TRAKT", "SIMKL", "TMDB", "MDBLIST", "PUBLICMETADB", "ANILIST", "MYANIMELIST", "KITSU", "WETRAKR", "PUNCHPLAY", "BINGEBASE", "FLICKLIST", "MOVIEPARADISE", "FLOPPY", "SCROB"] },
+    { id: "sec-auth-clients", title: T("connections.groups.mediaClients"), keys: ["NUVIO", "KODI", "STREMIO"] },
+    { id: "sec-auth-others", title: T("connections.groups.others"), keys: ["TAUTULLI", "TRACEARR"] },
   ]);
   const AUTH_GROUP_BY_KEY = Object.freeze(Object.fromEntries(AUTH_GROUPS.flatMap((group) => group.keys.map((key) => [key, group.id]))));
-  const META_GROUP = Object.freeze({ id: "sec-auth-metadata", title: "Metadata", keys: ["TMDB_METADATA", "FANART_METADATA", "ANIME_MAPPING"] });
+  const META_GROUP = Object.freeze({ id: "sec-auth-metadata", title: T("connections.groups.metadata"), keys: ["TMDB_METADATA", "FANART_METADATA", "ANIME_MAPPING"] });
   const META_ITEMS = Object.freeze({
-    TMDB_METADATA: { key: "TMDB_METADATA", label: "TMDb Metadata", logoKey: "TMDB", sectionId: "sec-meta-tmdb", provider: "tmdb" },
-    FANART_METADATA: { key: "FANART_METADATA", label: "Fanart.tv Artwork", icon: "photo_library", sectionId: "sec-meta-fanart", provider: "fanart" },
-    ANIME_MAPPING: { key: "ANIME_MAPPING", label: "Anime ID Mapping", icon: "shield", sectionId: "sec-meta-anime-mapping", provider: "anime-mapping" },
+    TMDB_METADATA: { key: "TMDB_METADATA", label: T("connections.metaItems.tmdb"), logoKey: "TMDB", sectionId: "sec-meta-tmdb", provider: "tmdb" },
+    FANART_METADATA: { key: "FANART_METADATA", label: T("connections.metaItems.fanart"), icon: "photo_library", sectionId: "sec-meta-fanart", provider: "fanart" },
+    ANIME_MAPPING: { key: "ANIME_MAPPING", label: T("connections.metaItems.anime"), icon: "shield", sectionId: "sec-meta-anime-mapping", provider: "anime-mapping" },
   });
 
   function providerMeta() {
@@ -254,21 +256,21 @@
       const names = failed.map((id) => profileFriendlyName(cfg, String(key || "").toLowerCase(), id));
       const shown = names.slice(0, 2).join(", ");
       const overflow = names.length > 2 ? ` +${names.length - 2}` : "";
-      return { text: `Check connection: ${shown}${overflow}`, ok: false, failed: true };
+      return { text: T("connections.status.checkNamed", { names: `${shown}${overflow}` }), ok: false, failed: true };
     }
     if (String(key || "").toUpperCase() === "NUVIO" && configured) {
-      return { text: "Connected", ok: true };
+      return { text: T("common.status.connected"), ok: true };
     }
     if (String(key || "").toUpperCase() === "STREMIO" && data?.connected !== true && stremioAddonIds(cfg).some((id) => stremioAddonOnly(cfg, "stremio", id))) {
-      return { text: "Scrobble add-on", ok: true };
+      return { text: T("connections.status.scrobbleAddon"), ok: true };
     }
     if (String(key || "").toUpperCase() === "KODI" && data?.connected !== true && kodiAddonIds(cfg).some((id) => kodiAddonOnly(cfg, "kodi", id))) {
       return { text: "Kodi add-on", ok: true };
     }
     if (data && typeof data.connected === "boolean") {
-      return data.connected ? { text: "Connected", ok: true } : { text: "Check connection", ok: false, failed: true };
+      return data.connected ? { text: T("common.status.connected"), ok: true } : { text: T("connections.status.check"), ok: false, failed: true };
     }
-    return configured ? { text: "Configured", ok: true } : { text: "Not configured", ok: false };
+    return configured ? { text: T("common.status.configured"), ok: true } : { text: T("common.status.notConfigured"), ok: false };
   }
 
   function authProviderLogo(key) {
@@ -326,7 +328,7 @@
 
   function profileDisplayName(id) {
     const raw = String(id || "").trim();
-    if (!raw || raw.toLowerCase() === "default") return "Default";
+    if (!raw || raw.toLowerCase() === "default") return T("common.labels.default");
     const generated = raw.match(/^[A-Z0-9]+-P0*([1-9]\d*)$/i);
     return generated ? `P${String(generated[1]).padStart(2, "0")}` : raw;
   }
@@ -360,7 +362,7 @@
     const instances = block?.instances;
     const source = isDefault ? block : (instances && typeof instances === "object" ? instances[raw] : null);
     const label = source && typeof source === "object" ? String(source.label || "").trim() : "";
-    return label || (isDefault ? "Default" : profileDisplayName(raw));
+    return label || (isDefault ? T("common.labels.default") : profileDisplayName(raw));
   }
 
   const PROFILE_NAME_LIMIT = 2;
@@ -376,7 +378,7 @@
     });
     const onlyDefault = names.length === 1 && String(names[0].id).toLowerCase() === "default";
     if (!names.length || onlyDefault) return base;
-    const title = `${card.status.text} - ${names.map((item) => `${item.name}: ${item.state === "ok" ? "Connected" : "Check connection"}`).join(", ")}`;
+    const title = `${card.status.text} - ${names.map((item) => `${item.name}: ${item.state === "ok" ? T("common.status.connected") : T("connections.status.check")}`).join(", ")}`;
     const okCount = names.filter((item) => item.state === "ok").length;
     if (okCount < names.length) {
       if (!okCount) return { ...base, title };
@@ -407,8 +409,8 @@
   function metadataStatusFor(key, cfg = getCachedConfig()) {
     const info = metadataProviderInfo(key);
     const on = metadataConfigured(key, cfg);
-    if (info?.key === "ANIME_MAPPING" || info?.key === "FANART_METADATA") return on ? { text: "Enabled", ok: true } : { text: "Not enabled", ok: false };
-    return on ? { text: "Connected", ok: true } : { text: "Not configured", ok: false };
+    if (info?.key === "ANIME_MAPPING" || info?.key === "FANART_METADATA") return on ? { text: T("common.status.enabled"), ok: true } : { text: T("connections.status.notEnabled"), ok: false };
+    return on ? { text: T("common.status.connected"), ok: true } : { text: T("common.status.notConfigured"), ok: false };
   }
 
   function ensureAuthShell(slot) {
@@ -444,11 +446,11 @@
         <div class="cw-auth-dialog-head">
           <span class="cw-auth-dialog-logo" aria-hidden="true"></span>
           <div class="cw-auth-dialog-copy">
-            <div class="cw-auth-dialog-kicker" id="cw-auth-dialog-kicker">Connections</div>
-            <h3 id="cw-auth-dialog-title">Add connection</h3>
+            <div class="cw-auth-dialog-kicker" id="cw-auth-dialog-kicker">${TH("navigation.settingsMenu.connections")}</div>
+            <h3 id="cw-auth-dialog-title">${TH("connections.dialog.addConnection")}</h3>
             <div class="cw-auth-dialog-subtitle" id="cw-auth-dialog-subtitle"></div>
           </div>
-          <button type="button" class="cw-auth-icon-btn material-symbols-rounded" data-cw-auth-close aria-label="Close">close</button>
+          <button type="button" class="cw-auth-icon-btn material-symbols-rounded" data-cw-auth-close aria-label="${TH("common.actions.close")}">close</button>
         </div>
         <div class="cw-auth-provider-picker cw-page-provider-picker" id="cw-auth-provider-picker"></div>
         <form class="cw-auth-provider-form hidden" id="cw-auth-provider-form" autocomplete="off" onsubmit="return false"></form>
@@ -495,13 +497,13 @@
     const groups = mode === "metadata" ? [META_GROUP] : AUTH_GROUPS;
     const category = groups.some(group => group.id === overlay.dataset.cwPickerCategory) ? overlay.dataset.cwPickerCategory : "all";
     const search = overlay.dataset.cwPickerSearch || "";
-    const tabs = [{id:"all", title:mode === "metadata" ? "All metadata" : "All providers"}, ...groups];
+    const tabs = [{id:"all", title:mode === "metadata" ? T("connections.picker.allMetadata") : T("connections.picker.allProviders")}, ...groups];
     if (picker.dataset.mode !== mode || !picker.querySelector(".cw-auth-picker-results")) {
       picker.dataset.mode = mode;
       setPickerHtml(picker, `
         <div class="cw-auth-picker-tools">
-          <label class="cw-auth-picker-search"><span class="material-symbols-rounded" aria-hidden="true">search</span><input type="search" data-cw-picker-search aria-label="Search providers" placeholder="Search providers..." autocomplete="off"></label>
-          <div class="cw-auth-picker-tabs" role="tablist" aria-label="Provider categories">${tabs.map(tab => `<button type="button" role="tab" id="cw-picker-tab-${tab.id}" data-cw-picker-category="${tab.id}" aria-controls="cw-auth-picker-results">${escHtml(tab.title)}</button>`).join("")}</div>
+          <label class="cw-auth-picker-search"><span class="material-symbols-rounded" aria-hidden="true">search</span><input type="search" data-cw-picker-search aria-label="${TH("connections.picker.search")}" placeholder="${TH("connections.picker.searchPlaceholder")}" autocomplete="off"></label>
+          <div class="cw-auth-picker-tabs" role="tablist" aria-label="${TH("connections.picker.categories")}">${tabs.map(tab => `<button type="button" role="tab" id="cw-picker-tab-${tab.id}" data-cw-picker-category="${tab.id}" aria-controls="cw-auth-picker-results">${escHtml(tab.title)}</button>`).join("")}</div>
         </div>
         <div id="cw-auth-picker-results" class="cw-auth-picker-results" role="tabpanel" tabindex="0"></div>
         <span class="sr-only" data-cw-picker-count role="status"></span>`);
@@ -526,7 +528,7 @@
           total++;
           const status = mode === "metadata" ? metadataStatusFor(info.key, cfg) : authStatusFor(info.key, configured.has(info.key), cfg);
           const failedNames = status.text.startsWith("Check connection: ") ? status.text.slice(18) : "";
-          const label = failedNames ? "Check connection" : status.text;
+          const label = failedNames ? T("connections.status.check") : status.text;
           const attr = mode === "metadata" ? "data-cw-meta-pick" : "data-cw-auth-pick";
           return `<button type="button" class="cw-auth-picker-row" ${attr}="${escHtml(info.key)}">
             <span class="cw-auth-picker-logo" aria-hidden="true">${mode === "metadata" ? metadataProviderLogo(info) : authProviderLogo(info.key)}</span>
@@ -538,7 +540,7 @@
     }).join("");
     const results = picker.querySelector(".cw-auth-picker-results");
     results.setAttribute("aria-labelledby", `cw-picker-tab-${category}`);
-    setPickerHtml(results, rows || '<div class="cw-auth-picker-empty">No providers found. Try another search or category.</div>');
+    setPickerHtml(results, rows || '<div class="cw-auth-picker-empty">' + TH("connections.picker.empty") + '</div>');
     const count = picker.querySelector("[data-cw-picker-count]");
     const countText = `${total} provider${total === 1 ? "" : "s"} found`;
     if (count.textContent !== countText) count.textContent = countText;
@@ -590,12 +592,12 @@
         <button type="button" class="cw-auth-service-card cw-auth-add-card" data-cw-meta-open="FANART_METADATA">
           <span class="cw-auth-add-mark"><span class="material-symbols-rounded" aria-hidden="true">auto_awesome</span></span>
           <span class="cw-auth-service-copy">
-            <strong>Try fanart.tv</strong>
-            <small>Better logos and backgrounds. Optional, no key needed.</small>
+            <strong>${TH("connections.fanartNudge.title")}</strong>
+            <small>${TH("connections.fanartNudge.copy")}</small>
           </span>
           <span class="material-symbols-rounded cw-auth-chevron" aria-hidden="true">arrow_forward</span>
         </button>
-        <button type="button" class="cw-auth-nudge-dismiss" data-cw-fanart-nudge-dismiss title="Hide this suggestion" aria-label="Hide this suggestion"><span class="material-symbols-rounded" aria-hidden="true">close</span></button>
+        <button type="button" class="cw-auth-nudge-dismiss" data-cw-fanart-nudge-dismiss title="${TH("connections.fanartNudge.hide")}" aria-label="${TH("connections.fanartNudge.hide")}"><span class="material-symbols-rounded" aria-hidden="true">close</span></button>
       </div>`;
   }
 
@@ -617,11 +619,11 @@
     const { shell } = ensureAuthShell(slot);
     const configured = configuredProviderKeys(cfg);
     const sectionCopy = {
-      "sec-auth-media": "Manage your media server connections.",
-      "sec-auth-trackers": "Manage tracker connections.",
-      "sec-auth-clients": "Manage media client connections.",
-      "sec-auth-metadata": "Manage metadata providers and mappings.",
-      "sec-auth-others": "Manage monitoring connections.",
+      "sec-auth-media": T("connections.groupHints.media"),
+      "sec-auth-trackers": T("connections.groupHints.trackers"),
+      "sec-auth-clients": T("connections.groupHints.clients"),
+      "sec-auth-metadata": T("connections.groupHints.metadata"),
+      "sec-auth-others": T("connections.groupHints.others"),
     };
     const summaryIcon = {
       "sec-auth-media": "dns",
@@ -657,7 +659,7 @@
     const userProfileCount = userProfilesRaw && typeof userProfilesRaw === "object" ? Object.keys(userProfilesRaw).length : 0;
     const summarySections = [
       ...sections.filter((section) => section.id !== "sec-auth-others"),
-      { id: "sec-user-profiles", title: "Profiles", okCount: userProfileCount, total: userProfileCount || 0 },
+      { id: "sec-user-profiles", title: T("connections.groups.profiles"), okCount: userProfileCount, total: userProfileCount || 0 },
     ];
     const summaryCards = summarySections.map((section) => `<div class="cw-auth-summary-card ${section.okCount ? "" : "is-empty"}" data-cw-auth-summary="${section.id}">
       <span class="cw-auth-summary-icon material-symbols-rounded" aria-hidden="true">${summaryIcon[section.id] || "hub"}</span>
@@ -669,7 +671,7 @@
       const detail = summary.detail ? `<span class="cw-auth-profile-summary"> · ${escHtml(summary.detail)}</span>` : "";
       const meta = card.type === "provider" && typeof providerMeta().get === "function" ? providerMeta().get(card.key) : null;
       const scrobbleOnly = meta?.scrobbleOnly === true
-        ? '<span class="cw-auth-scrobble-only-badge material-symbols-rounded" title="Scrobble only (Watcher or Webhook)" aria-label="Scrobble only (Watcher or Webhook)">sync</span>'
+        ? `<span class="cw-auth-scrobble-only-badge material-symbols-rounded" title="${TH("connections.scrobbleOnly")}" aria-label="${TH("connections.scrobbleOnly")}">sync</span>`
         : "";
       return `<button type="button" class="cw-auth-service-card" ${attr}>
         ${scrobbleOnly}
@@ -683,8 +685,8 @@
     };
     const renderAddCard = (section) => {
       const mode = section.id === META_GROUP.id ? "metadata" : "provider";
-      const label = section.id === META_GROUP.id ? "Add metadata" : section.id === "sec-auth-media" ? "Add media server" : section.id === "sec-auth-clients" ? "Add media client" : section.id === "sec-auth-others" ? "Add provider" : "Add tracker";
-      const copy = section.id === META_GROUP.id ? "Connect another metadata source." : "Connect another service.";
+      const label = TH(section.id === META_GROUP.id ? "settings.providers.addMetadata" : section.id === "sec-auth-media" ? "connections.add.mediaServer" : section.id === "sec-auth-clients" ? "connections.add.mediaClient" : section.id === "sec-auth-others" ? "settings.providers.addProvider" : "connections.add.tracker");
+      const copy = TH(section.id === META_GROUP.id ? "connections.add.anotherMetadata" : "connections.add.anotherService");
       return `<button type="button" class="cw-auth-service-card cw-auth-add-card" data-cw-auth-empty-add="${mode}" data-cw-auth-category="${section.id}">
         <span class="cw-auth-add-mark"><span class="material-symbols-rounded" aria-hidden="true">add</span></span>
         <span class="cw-auth-service-copy">
@@ -696,8 +698,8 @@
     };
     const userProfileSection = `<section class="cw-auth-service-section cw-user-profile-section" data-cw-auth-group="sec-user-profiles">
         <div class="cw-auth-service-head">
-          <h4>Profiles</h4>
-          <p>Manage people and provider instances linked to Managed User accounts.</p>
+          <h4>${TH("connections.groups.profiles")}</h4>
+          <p>${TH("connections.profilesCopy")}</p>
           <span class="material-symbols-rounded cw-auth-section-chevron" aria-hidden="true">expand_more</span>
         </div>
         <div id="cw-user-profile-manager" class="cw-user-profile-manager" aria-live="polite"></div>
@@ -752,7 +754,7 @@
       form?.classList.remove("hidden");
       const info = authProviderInfo(key);
       if (title) title.textContent = info.label;
-      if (kicker) kicker.textContent = "Connection settings";
+      if (kicker) kicker.textContent = T("dashboard.status.connectionSettings");
       requestAnimationFrame(() => overlay.querySelector("[data-cw-auth-close]")?.focus?.());
       return;
     }
@@ -763,11 +765,11 @@
     renderAuthPicker(overlay, getCachedConfig(), pickerMode);
     picker?.classList.remove("hidden");
     form?.classList.add("hidden");
-    if (title) title.textContent = pickerMode === "metadata" ? "Add metadata" : "Add provider";
-    if (kicker) kicker.textContent = pickerMode === "metadata" ? "Metadata" : "Providers";
+    if (title) title.textContent = pickerMode === "metadata" ? T("settings.providers.addMetadata") : T("settings.providers.addProvider");
+    if (kicker) kicker.textContent = pickerMode === "metadata" ? T("connections.groups.metadata") : T("settings.sync.providers");
     const subtitle = overlay.querySelector("#cw-auth-dialog-subtitle");
     const logo = overlay.querySelector(".cw-auth-dialog-logo");
-    if (subtitle) subtitle.textContent = "Choose a service to connect.";
+    if (subtitle) subtitle.textContent = T("connections.dialog.chooseService");
     logo?.classList.add("hidden");
     picker.querySelector(".cw-auth-picker-results").scrollTop = 0;
     requestAnimationFrame(() => {
@@ -780,263 +782,263 @@
   const CONNECTION_MODAL_INFO = Object.freeze({
     PLEX: {
       provider: "plex", logo: "PLEX", size: "wide", help: window.CW.HelpLinks.url("plex"), deleteSelector: "#btn-delete-plex",
-      tabs: { auth: ["lock", "Authentication", "Connect your Plex account using a secure link code"], settings: ["tune", "Settings", "Configure server and sync preferences"], whitelist: ["verified_user", "Whitelisting", "Choose libraries and content to sync"], users: ["group", "Identities", "Optional: who can be synced"] },
-      copy: { auth: ["Plex Authentication", "Connect your Plex account to CrossWatch using a secure link code."], settings: ["Plex Settings", "Configure your server URL, selected profile and sync preferences."], whitelist: ["Plex Whitelisting", "Choose which libraries CrossWatch can use for history, ratings, progress, collections and scrobbling."] },
-      journey: ["Link Plex, then tune the server", "Click Connect Plex to get a link code. CrossWatch shows the code, then opens plex.tv/link so you can enter it and approve access. Next, validate the server URL and optionally whitelist libraries.", "229,160,13", "229,160,13", "PLEX"],
-      steps: [["1", "Get link code", "Generate a code in CrossWatch"], ["2", "Approve on Plex", "Open plex.tv/link and approve the connection"], ["3", "Validate server", "Confirm your server URL and complete setup"]],
+      tabs: { auth: ["lock", T("connections.modal.shared.authentication"), T("connections.modal.plex.connectYourPlexAccountUsingA")], settings: ["tune", T("connections.modal.shared.settings"), T("connections.modal.plex.configureServerAndSyncPreferences")], whitelist: ["verified_user", T("connections.modal.shared.whitelisting"), T("connections.modal.shared.chooseLibrariesAndContentToSync")], users: ["group", T("connections.modal.shared.identities"), T("connections.modal.shared.optionalWhoCanBeSynced")] },
+      copy: { auth: [T("connections.modal.plex.plexAuthentication"), T("connections.modal.plex.connectYourPlexAccountToCrosswatch")], settings: [T("connections.modal.plex.plexSettings"), T("connections.modal.plex.configureYourServerUrlSelectedProfile")], whitelist: [T("connections.modal.plex.plexWhitelisting"), T("connections.modal.shared.chooseWhichLibrariesCrosswatchCanUse")] },
+      journey: [T("connections.modal.plex.linkPlexThenTuneTheServer"), T("connections.modal.plex.clickConnectPlexToGetA"), "229,160,13", "229,160,13", "PLEX"],
+      steps: [["1", T("connections.modal.plex.getLinkCode"), T("connections.modal.plex.generateACodeInCrosswatch")], ["2", T("connections.modal.plex.approveOnPlex"), T("connections.modal.plex.openPlexTvLinkAndApprove")], ["3", T("connections.modal.shared.validateServer"), T("connections.modal.plex.confirmYourServerUrlAndComplete")]],
       order: ["#plex_qc_state", ".cw-subpanel[data-sub=auth]>.inline"]
     },
     JELLYFIN: {
       provider: "jellyfin", logo: "JELLYFIN", size: "wide", help: window.CW.HelpLinks.url("jellyfin"), deleteSelector: ".cw-jfy-delete",
-      tabs: { auth: ["lock", "Authentication", "Connect with Quick Connect or password"], settings: ["tune", "Settings", "Configure server and user details"], whitelist: ["verified_user", "Whitelisting", "Choose libraries and content to sync"], users: ["group", "Identities", "Optional: who can be synced"] },
-      copy: { auth: ["Jellyfin Authentication", "Connect your Jellyfin server to CrossWatch."], settings: ["Jellyfin Settings", "Configure server URL, user details and sync preferences."], whitelist: ["Jellyfin Whitelisting", "Choose which libraries CrossWatch can use for sync."] },
-      journey: ["Connect to Jellyfin", "Enter your Jellyfin server URL, then connect with Quick Connect (recommended) or your username and password. CrossWatch will move you to Settings next so you can validate the server, pick the user, and optionally whitelist libraries.", "0,164,220", "0,124,220", "JELLYFIN"],
-      steps: [["1", "Enter server", "Add your Jellyfin server URL"], ["2", "Authorize", "Use Quick Connect or password"], ["3", "Validate", "Confirm the account and server"]],
+      tabs: { auth: ["lock", T("connections.modal.shared.authentication"), T("connections.modal.jellyfin.connectWithQuickConnectOrPassword")], settings: ["tune", T("connections.modal.shared.settings"), T("connections.modal.shared.configureServerAndUserDetails")], whitelist: ["verified_user", T("connections.modal.shared.whitelisting"), T("connections.modal.shared.chooseLibrariesAndContentToSync")], users: ["group", T("connections.modal.shared.identities"), T("connections.modal.shared.optionalWhoCanBeSynced")] },
+      copy: { auth: [T("connections.modal.jellyfin.jellyfinAuthentication"), T("connections.modal.jellyfin.connectYourJellyfinServerToCrosswatch")], settings: [T("connections.modal.jellyfin.jellyfinSettings"), T("connections.modal.shared.configureServerUrlUserDetailsAnd")], whitelist: [T("connections.modal.jellyfin.jellyfinWhitelisting"), T("connections.modal.shared.chooseWhichLibrariesCrosswatchCanUse2")] },
+      journey: [T("connections.modal.jellyfin.connectToJellyfin"), T("connections.modal.jellyfin.enterYourJellyfinServerUrlThen"), "0,164,220", "0,124,220", "JELLYFIN"],
+      steps: [["1", T("connections.modal.shared.enterServer"), T("connections.modal.jellyfin.addYourJellyfinServerUrl")], ["2", T("connections.modal.jellyfin.authorize"), T("connections.modal.jellyfin.useQuickConnectOrPassword")], ["3", T("connections.modal.shared.validate"), T("connections.modal.shared.confirmTheAccountAndServer")]],
       order: [".grid2", ".jfy-methods", ".jfy-pane[data-method=quick]", ".jfy-pane[data-method=password]", ".jfy-actions-row"]
     },
     EMBY: {
       provider: "emby", logo: "EMBY", size: "wide", help: window.CW.HelpLinks.url("emby"), deleteSelector: "#btn-emby-delete",
-      tabs: { auth: ["lock", "Authentication", "Connect with your Emby credentials"], settings: ["tune", "Settings", "Configure server and user details"], whitelist: ["verified_user", "Whitelisting", "Choose libraries and content to sync"], users: ["group", "Identities", "Optional: who can be synced"] },
-      copy: { auth: ["Emby Authentication", "Connect your Emby server to CrossWatch."], settings: ["Emby Settings", "Configure server URL, user details and sync preferences."], whitelist: ["Emby Whitelisting", "Choose which libraries CrossWatch can use for sync."] },
-      journey: ["Connect to Emby", "Enter your Emby server URL, username and password, then sign in. CrossWatch will move you to Settings next so you can validate the server, pick the user, and optionally whitelist libraries.", "82,181,75", "82,181,75", "EMBY"],
-      steps: [["1", "Enter server", "Add your Emby server URL"], ["2", "Sign in", "Authorize with user credentials"], ["3", "Validate", "Confirm the account and server"]],
+      tabs: { auth: ["lock", T("connections.modal.shared.authentication"), T("connections.modal.emby.connectWithYourEmbyCredentials")], settings: ["tune", T("connections.modal.shared.settings"), T("connections.modal.shared.configureServerAndUserDetails")], whitelist: ["verified_user", T("connections.modal.shared.whitelisting"), T("connections.modal.shared.chooseLibrariesAndContentToSync")], users: ["group", T("connections.modal.shared.identities"), T("connections.modal.shared.optionalWhoCanBeSynced")] },
+      copy: { auth: [T("connections.modal.emby.embyAuthentication"), T("connections.modal.emby.connectYourEmbyServerToCrosswatch")], settings: [T("connections.modal.emby.embySettings"), T("connections.modal.shared.configureServerUrlUserDetailsAnd")], whitelist: [T("connections.modal.emby.embyWhitelisting"), T("connections.modal.shared.chooseWhichLibrariesCrosswatchCanUse2")] },
+      journey: [T("connections.modal.emby.connectToEmby"), T("connections.modal.emby.enterYourEmbyServerUrlUsername"), "82,181,75", "82,181,75", "EMBY"],
+      steps: [["1", T("connections.modal.shared.enterServer"), T("connections.modal.emby.addYourEmbyServerUrl")], ["2", T("connections.modal.shared.signIn"), T("connections.modal.emby.authorizeWithUserCredentials")], ["3", T("connections.modal.shared.validate"), T("connections.modal.shared.confirmTheAccountAndServer")]],
       order: [".grid2", ".inline"]
     },
     SILO: {
       provider: "silo", logo: "SILO", help: window.CW.HelpLinks.url("silo"), deleteSelector: "#silo_disconnect",
-      tabs: { auth: ["lock", "Authentication", "Connect with a device code"], whitelist: ["verified_user", "Whitelisting", "Choose libraries and content to sync"], users: ["group", "Identities", "Optional: which household profiles can be synced"] },
-      copy: { auth: ["Silo Authentication", "Sign in to your Silo server and select a household profile."], whitelist: ["Silo Whitelisting", "Choose which libraries CrossWatch can use for history, ratings, progress, collections and scrobbling."], users: ["Silo Users", "Tick other household profiles to sync them as users of this connection."] },
-      journey: ["Connect to Silo", "Enter your Silo server URL, approve the code on its activate page, then choose a household profile.", "20,135,254", "245,11,79", "SILO"],
-      steps: [["1", "Enter server", "Add your Silo server URL"], ["2", "Approve code", "Approve the code while signed in to Silo"], ["3", "Select profile", "Choose the household profile for this instance"]],
+      tabs: { auth: ["lock", T("connections.modal.shared.authentication"), T("connections.modal.shared.connectWithADeviceCode")], whitelist: ["verified_user", T("connections.modal.shared.whitelisting"), T("connections.modal.shared.chooseLibrariesAndContentToSync")], users: ["group", T("connections.modal.shared.identities"), T("connections.modal.shared.optionalWhichHouseholdProfilesCanBe")] },
+      copy: { auth: [T("connections.modal.silo.siloAuthentication"), T("connections.modal.silo.signInToYourSiloServer")], whitelist: [T("connections.modal.silo.siloWhitelisting"), T("connections.modal.shared.chooseWhichLibrariesCrosswatchCanUse")], users: [T("connections.modal.silo.siloUsers"), T("connections.modal.shared.tickOtherHouseholdProfilesToSync")] },
+      journey: [T("connections.modal.silo.connectToSilo"), T("connections.modal.silo.enterYourSiloServerUrlApprove"), "20,135,254", "245,11,79", "SILO"],
+      steps: [["1", T("connections.modal.shared.enterServer"), T("connections.modal.silo.addYourSiloServerUrl")], ["2", T("connections.modal.shared.approveCode"), T("connections.modal.silo.approveTheCodeWhileSignedIn")], ["3", T("connections.modal.shared.selectProfile"), T("connections.modal.shared.chooseTheHouseholdProfileForThis")]],
       order: [".silo-server-row", ".silo-actions", "#silo_login_state", "#silo_profile_state"],
       code: ["#silo_login_state"],
       actions: [{ row: ".silo-actions", status: "#silo_msg", buttons: "#silo_connect, #silo_cancel" }]
     },
     TOFA: {
       provider: "tofa", logo: "TOFA", help: window.CW.HelpLinks.url("tofa"), deleteSelector: "#tofa_disconnect",
-      tabs: { auth: ["lock", "Authentication", "Connect with a device code"], whitelist: ["verified_user", "Whitelisting", "Choose libraries and content to sync"], users: ["group", "Identities", "Optional: which household profiles can be synced"] },
-      copy: { auth: ["Tofa Authentication", "Sign in with your Tofa account and select a household profile."], whitelist: ["Tofa Whitelisting", "Choose which libraries CrossWatch can use for history, progress, collections and scrobbling."], users: ["Tofa Users", "Tick other household profiles to sync them as users of this connection."] },
-      journey: ["Connect to Tofa", "Enter your Tofa server URL, approve the code with your Tofa account, then choose a household profile.", "8,214,184", "0,152,148", "TOFA"],
-      steps: [["1", "Enter server", "Add your Tofa server URL"], ["2", "Approve code", "Approve the code with your Tofa account"], ["3", "Select profile", "Choose the household profile for this instance"]],
+      tabs: { auth: ["lock", T("connections.modal.shared.authentication"), T("connections.modal.shared.connectWithADeviceCode")], whitelist: ["verified_user", T("connections.modal.shared.whitelisting"), T("connections.modal.shared.chooseLibrariesAndContentToSync")], users: ["group", T("connections.modal.shared.identities"), T("connections.modal.shared.optionalWhichHouseholdProfilesCanBe")] },
+      copy: { auth: [T("connections.modal.tofa.tofaAuthentication"), T("connections.modal.tofa.signInWithYourTofaAccount")], whitelist: [T("connections.modal.tofa.tofaWhitelisting"), T("connections.modal.tofa.chooseWhichLibrariesCrosswatchCanUse")], users: [T("connections.modal.tofa.tofaUsers"), T("connections.modal.shared.tickOtherHouseholdProfilesToSync")] },
+      journey: [T("connections.modal.tofa.connectToTofa"), T("connections.modal.tofa.enterYourTofaServerUrlApprove"), "8,214,184", "0,152,148", "TOFA"],
+      steps: [["1", T("connections.modal.shared.enterServer"), T("connections.modal.tofa.addYourTofaServerUrl")], ["2", T("connections.modal.shared.approveCode"), T("connections.modal.tofa.approveTheCodeWithYourTofa")], ["3", T("connections.modal.shared.selectProfile"), T("connections.modal.shared.chooseTheHouseholdProfileForThis")]],
       order: [".tofa-server-row", ".tofa-actions", "#tofa_login_state", "#tofa_profile_state"],
       code: ["#tofa_login_state"],
       actions: [{ row: ".tofa-actions", status: "#tofa_msg", buttons: "#tofa_connect, #tofa_cancel" }]
     },
     TRAKT: {
       provider: "trakt", logo: "TRAKT", help: window.CW.HelpLinks.url("trakt"), deleteSelector: "#btn-delete-trakt",
-      tabs: { auth: ["lock", "Authentication", "Connect your Trakt account"] },
-      copy: { auth: ["Trakt Authentication", "Connect Trakt with a PIN code or your own app credentials."] },
-      journey: ["Connect to Trakt", "Connect with a PIN code (recommended) - CrossWatch shows a short code you enter at auth.trakt.tv/activate, no keys needed. Connecting with your own Trakt app credentials remains available.", "225,20,60", "159,66,198", "TRAKT"],
-      steps: [["1", "Choose method", "Use PIN flow or your own Trakt app"], ["2", "Approve code", "Open auth.trakt.tv/activate and enter the code"], ["3", "Sync account", "CrossWatch stores the approved token"]],
+      tabs: { auth: ["lock", T("connections.modal.shared.authentication"), T("connections.modal.trakt.connectYourTraktAccount")] },
+      copy: { auth: [T("connections.modal.trakt.traktAuthentication"), T("connections.modal.trakt.connectTraktWithAPinCode")] },
+      journey: [T("connections.modal.trakt.connectToTrakt"), T("connections.modal.trakt.connectWithAPinCodeRecommended"), "225,20,60", "159,66,198", "TRAKT"],
+      steps: [["1", T("connections.modal.shared.chooseMethod"), T("connections.modal.trakt.usePinFlowOrYourOwn")], ["2", T("connections.modal.shared.approveCode"), T("connections.modal.trakt.openAuthTraktTvActivateAnd")], ["3", T("connections.modal.trakt.syncAccount"), T("connections.modal.shared.crosswatchStoresTheApprovedToken")]],
       order: [".trk-method-row", "#trakt_app_panel", "#trakt_pin_panel", ".cw-connection-method-action-row", ".inline"],
       code: ["#trakt_pin_panel"],
       actions: [{ row: ".trk-method-row", status: "#trakt_msg", buttons: "#btn-connect-trakt, #btn-trakt-cancel, #btn-trakt-restart", extract: ".trk-actions", order: "6" }]
     },
     SIMKL: {
       provider: "simkl", logo: "SIMKL", help: window.CW.HelpLinks.url("simkl"), deleteSelector: "#btn-delete-simkl, #btn-delete-simkl-oauth",
-      tabs: { auth: ["lock", "Authentication", "Connect with PIN or OAuth"] },
-      copy: { auth: ["SIMKL Authentication", "Connect SIMKL with a PIN code or your OAuth app credentials."] },
-      journey: ["Connect to SIMKL", "Connect with a PIN code (recommended) - CrossWatch shows a short code you enter at simkl.com/pin, no keys needed. OAuth with your own SIMKL app credentials remains available.", "218,225,232", "12,12,12", "SIMKL"],
-      steps: [["1", "Choose method", "Use PIN flow or your OAuth app"], ["2", "Approve SIMKL", "Enter the PIN code or authorize OAuth"], ["3", "Start syncing", "CrossWatch stores the approved access"]],
+      tabs: { auth: ["lock", T("connections.modal.shared.authentication"), T("connections.modal.simkl.connectWithPinOrOauth")] },
+      copy: { auth: [T("connections.modal.simkl.simklAuthentication"), T("connections.modal.simkl.connectSimklWithAPinCode")] },
+      journey: [T("connections.modal.simkl.connectToSimkl"), T("connections.modal.simkl.connectWithAPinCodeRecommended"), "218,225,232", "12,12,12", "SIMKL"],
+      steps: [["1", T("connections.modal.shared.chooseMethod"), T("connections.modal.simkl.usePinFlowOrYourOauth")], ["2", T("connections.modal.simkl.approveSimkl"), T("connections.modal.simkl.enterThePinCodeOrAuthorize")], ["3", T("connections.modal.simkl.startSyncing"), T("connections.modal.simkl.crosswatchStoresTheApprovedAccess")]],
       order: [".smk-method-row", "#simkl_oauth_panel", "#simkl_pin_panel", ".cw-connection-method-action-row", ".inline"],
       code: ["#simkl_pin_panel"],
       actions: [{ row: ".smk-method-row", status: "#simkl_msg", buttons: "#btn-connect-simkl-pin, #btn-simkl-pin-cancel, #btn-simkl-pin-restart, #btn-connect-simkl", extract: ".smk-actions", order: "6" }]
     },
     TMDB: {
       provider: "tmdb", logo: "TMDB", help: window.CW.HelpLinks.url("tmdb"), deleteSelector: "#tmdb_sync_disconnect",
-      tabs: { auth: ["lock", "Authentication", "Connect TMDb sync"] },
-      copy: { auth: ["TMDb Authentication", "Connect TMDb sync with a v3 API key."] },
-      journey: ["Connect to TMDb", "Add your TMDb v3 API key, then connect and approve the session in TMDb. CrossWatch stores the session ID for TMDb watchlist and ratings sync.", "0,179,229", "144,206,161", "TMDB"],
-      steps: [["1", "Add API key", "Enter your TMDb v3 key"], ["2", "Approve session", "Authorize CrossWatch on TMDb"], ["3", "Validate sync", "Confirm the session is ready"]],
+      tabs: { auth: ["lock", T("connections.modal.shared.authentication"), T("connections.modal.tmdb.connectTmdbSync")] },
+      copy: { auth: [T("connections.modal.tmdb.tmdbAuthentication"), T("connections.modal.tmdb.connectTmdbSyncWithAV3")] },
+      journey: [T("connections.modal.tmdb.connectToTmdb"), T("connections.modal.tmdb.addYourTmdbV3ApiKey"), "0,179,229", "144,206,161", "TMDB"],
+      steps: [["1", T("connections.modal.shared.addApiKey"), T("connections.modal.tmdb.enterYourTmdbV3Key")], ["2", T("connections.modal.tmdb.approveSession"), T("connections.modal.tmdb.authorizeCrosswatchOnTmdb")], ["3", T("connections.modal.tmdb.validateSync"), T("connections.modal.tmdb.confirmTheSessionIsReady")]],
       order: [".grid2"],
       actions: [{ row: ".inline", status: "#tmdb_sync_msg", buttons: "#tmdb_sync_connect", wrapParent: true, parentClass: "cw-tmdb-sync-action-wrap", order: "4" }]
     },
     MDBLIST: {
       provider: "mdblist", logo: "MDBLIST", help: window.CW.HelpLinks.url("mdblist"), deleteSelector: "#mdblist_disconnect_device, #mdblist_disconnect_api",
-      tabs: { auth: ["lock", "Authentication", "Connect with device code or API key"] },
-      copy: { auth: ["MDBList Authentication", "Connect MDBList with device code or API key."] },
-      journey: ["Connect to MDBList", "Connect with a Device Code (recommended) or paste a legacy API key. Device Code opens a browser window so you can approve CrossWatch without sharing a key.", "64,132,200", "64,132,200", "MDBLIST"],
-      steps: [["1", "Choose method", "Use Device Code or API key"], ["2", "Approve access", "Authorize the device code or save the key"], ["3", "Validate account", "CrossWatch confirms MDBList access"]],
+      tabs: { auth: ["lock", T("connections.modal.shared.authentication"), T("connections.modal.shared.connectWithDeviceCodeOrApi")] },
+      copy: { auth: [T("connections.modal.mdblist.mdblistAuthentication"), T("connections.modal.mdblist.connectMdblistWithDeviceCodeOr")] },
+      journey: [T("connections.modal.mdblist.connectToMdblist"), T("connections.modal.mdblist.connectWithADeviceCodeRecommended"), "64,132,200", "64,132,200", "MDBLIST"],
+      steps: [["1", T("connections.modal.shared.chooseMethod"), T("connections.modal.shared.useDeviceCodeOrApiKey")], ["2", T("connections.modal.shared.approveAccess"), T("connections.modal.shared.authorizeTheDeviceCodeOrSave")], ["3", T("connections.modal.shared.validateAccount"), T("connections.modal.mdblist.crosswatchConfirmsMdblistAccess")]],
       order: [".mdbl-method-row", "#mdblist_api_panel", "#mdblist_device_panel", ".cw-connection-method-action-row", ".inline"],
       code: ["#mdblist_device_panel"],
       actions: [{ row: ".mdbl-method-row", status: "#mdblist_msg", buttons: "#mdblist_device_start, #mdblist_device_cancel, #mdblist_device_restart, #mdblist_save", extract: ".mdbl-actions", order: "6" }]
     },
     SCROB: {
       provider: "scrob", logo: "SCROB", help: window.CW.HelpLinks.url("scrob"), deleteSelector: "#scrob_disconnect",
-      tabs: { auth: ["lock", "Authentication", "Connect your Scrob server"] },
-      copy: { auth: ["Scrob Authentication", "Connect your self hosted Scrob server."] },
-      journey: ["Connect to Scrob", "Copy the API key from Scrob > Connections > API Key, then enter the same URL you open Scrob with plus your Scrob username and password.", "111,54,204", "174,69,200", "SCROB"],
-      steps: [["1", "Enter server URL", "The address you open Scrob with"], ["2", "Paste the API key", "Scrob > Connections > API Key"], ["3", "Sign in", "Scrob only accepts writes from a signed in session"]],
+      tabs: { auth: ["lock", T("connections.modal.shared.authentication"), T("connections.modal.scrob.connectYourScrobServer")] },
+      copy: { auth: [T("connections.modal.scrob.scrobAuthentication"), T("connections.modal.scrob.connectYourSelfHostedScrobServer")] },
+      journey: [T("connections.modal.scrob.connectToScrob"), T("connections.modal.scrob.copyTheApiKeyFromScrob"), "111,54,204", "174,69,200", "SCROB"],
+      steps: [["1", T("connections.modal.scrob.enterServerUrl"), T("connections.modal.scrob.theAddressYouOpenScrobWith")], ["2", T("connections.modal.scrob.pasteTheApiKey"), T("connections.modal.scrob.scrobConnectionsApiKey")], ["3", T("connections.modal.shared.signIn"), T("connections.modal.scrob.scrobOnlyAcceptsWritesFromA")]],
       order: [".grid2", "#scrob_totp_row", "#scrob_reauth", ".verify", "#scrob_actions_row"],
       actions: [{ row: "#scrob_actions_row", status: "#scrob_msg", buttons: "#scrob_connect" }]
     },
     MYANIMELIST: {
       provider: "myanimelist", logo: "MYANIMELIST", help: window.CW.HelpLinks.url("myanimelist"), deleteSelector: "#myanimelist_disconnect",
-      tabs: { auth: ["lock", "Authentication", "Approve in your browser"] },
-      copy: { auth: ["MyAnimeList Authentication", "Connect your MyAnimeList account."] },
-      journey: ["Connect to MyAnimeList", "Approve CrossWatch in MyAnimeList. Your connection will appear here automatically.", "47,82,162", "47,82,162", "MYANIMELIST"],
-      steps: [["1", "Open MyAnimeList", "Sign in with your account"], ["2", "Approve access", "Allow CrossWatch to connect"], ["3", "Return to CrossWatch", "Your account is verified automatically"]],
+      tabs: { auth: ["lock", T("connections.modal.shared.authentication"), T("connections.modal.shared.approveInYourBrowser")] },
+      copy: { auth: [T("connections.modal.myanimelist.myanimelistAuthentication"), T("connections.modal.myanimelist.connectYourMyanimelistAccount")] },
+      journey: [T("connections.modal.myanimelist.connectToMyanimelist"), T("connections.modal.myanimelist.approveCrosswatchInMyanimelistYourConnection"), "47,82,162", "47,82,162", "MYANIMELIST"],
+      steps: [["1", T("connections.modal.myanimelist.openMyanimelist"), T("connections.modal.shared.signInWithYourAccount")], ["2", T("connections.modal.shared.approveAccess"), T("connections.modal.myanimelist.allowCrosswatchToConnect")], ["3", T("connections.modal.myanimelist.returnToCrosswatch"), T("connections.modal.myanimelist.yourAccountIsVerifiedAutomatically")]],
       order: ["#myanimelist_oauth_panel", ".mal-actions"],
       actions: [{ row: ".mal-actions", status: "#myanimelist_msg", buttons: "#myanimelist_oauth_start, #myanimelist_oauth_cancel" }]
     },
     WETRAKR: {
       provider: "wetrakr", logo: "WETRAKR", help: window.CW.HelpLinks.url("wetrakr"), deleteSelector: "#wetrakr_disconnect",
-      tabs: { auth: ["lock", "Authentication", "Approve in your browser"] },
-      copy: { auth: ["WeTrakr Authentication", "Connect your account and view your plan."] },
-      journey: ["Connect to WeTrakr", "Approve CrossWatch in WeTrakr, then paste the authorization code here.", "255,255,255", "255,255,255", "WETRAKR"],
-      steps: [["1", "Open WeTrakr", "Sign in with your account"], ["2", "Approve access", "Copy the code WeTrakr displays"], ["3", "Paste your code", "Complete the connection in CrossWatch"]],
+      tabs: { auth: ["lock", T("connections.modal.shared.authentication"), T("connections.modal.shared.approveInYourBrowser")] },
+      copy: { auth: [T("connections.modal.wetrakr.wetrakrAuthentication"), T("connections.modal.wetrakr.connectYourAccountAndViewYour")] },
+      journey: [T("connections.modal.wetrakr.connectToWetrakr"), T("connections.modal.wetrakr.approveCrosswatchInWetrakrThenPaste"), "255,255,255", "255,255,255", "WETRAKR"],
+      steps: [["1", T("connections.modal.wetrakr.openWetrakr"), T("connections.modal.shared.signInWithYourAccount")], ["2", T("connections.modal.shared.approveAccess"), T("connections.modal.wetrakr.copyTheCodeWetrakrDisplays")], ["3", T("connections.modal.wetrakr.pasteYourCode"), T("connections.modal.wetrakr.completeTheConnectionInCrosswatch")]],
       order: ["#wetrakr_oauth_panel", ".wt-actions", "#wetrakr_account"],
       actions: [{ row: ".wt-actions", status: "#wetrakr_msg", buttons: "#wetrakr_oauth_start, #wetrakr_oauth_finish, #wetrakr_oauth_cancel" }]
     },
     PUNCHPLAY: {
       provider: "punchplay", logo: "PUNCHPLAY", help: window.CW.HelpLinks.url("punchplay"), deleteSelector: "#punchplay_disconnect",
-      tabs: { auth: ["lock", "Authentication", "Connect with a device code"] },
-      copy: { auth: ["PunchPlay Authentication", "Connect PunchPlay with a device code."] },
-      journey: ["Connect to PunchPlay", "Click Connect PunchPlay and approve the code at punchplay.tv/link. No API keys are needed - CrossWatch ships its own PunchPlay app id.", "244,64,15", "0,132,216", "PUNCHPLAY"],
-      steps: [["1", "Start device login", "CrossWatch shows a short link code"], ["2", "Approve access", "Enter the code at punchplay.tv/link"], ["3", "Validate account", "CrossWatch confirms PunchPlay access"]],
+      tabs: { auth: ["lock", T("connections.modal.shared.authentication"), T("connections.modal.shared.connectWithADeviceCode")] },
+      copy: { auth: [T("connections.modal.punchplay.punchplayAuthentication"), T("connections.modal.punchplay.connectPunchplayWithADeviceCode")] },
+      journey: [T("connections.modal.punchplay.connectToPunchplay"), T("connections.modal.punchplay.clickConnectPunchplayAndApproveThe"), "244,64,15", "0,132,216", "PUNCHPLAY"],
+      steps: [["1", T("connections.modal.shared.startDeviceLogin"), T("connections.modal.shared.crosswatchShowsAShortLinkCode")], ["2", T("connections.modal.shared.approveAccess"), T("connections.modal.punchplay.enterTheCodeAtPunchplayTv")], ["3", T("connections.modal.shared.validateAccount"), T("connections.modal.punchplay.crosswatchConfirmsPunchplayAccess")]],
       order: ["#punchplay_device_panel", ".pp-actions"],
       code: ["#punchplay_device_panel"],
       actions: [{ row: ".pp-actions", status: "#punchplay_msg", buttons: "#punchplay_device_start, #punchplay_device_cancel, #punchplay_device_restart" }]
     },
     MOVIEPARADISE: {
       provider: "movieparadise", logo: "MOVIEPARADISE", help: window.CW.HelpLinks.url("movieparadise"), deleteSelector: "#movieparadise_disconnect",
-      tabs: { auth: ["lock", "Authentication", "Connect with a device code"] },
-      copy: { auth: ["Movie Paradise Authentication", "Connect Movie Paradise with a device code. CrossWatch ships its own Movie Paradise app id, so no keys are needed."] },
-      journey: ["Connect to Movie Paradise", "Click Connect Movie Paradise and approve the code at movieparadise.app/oauth/device. No API keys are needed - CrossWatch ships its own Movie Paradise app id.", "215,98,143", "139,63,161", "MOVIEPARADISE"],
-      steps: [["1", "Start device login", "CrossWatch shows a short link code"], ["2", "Approve access", "Enter the code at movieparadise.app/oauth/device"], ["3", "Validate account", "CrossWatch confirms Movie Paradise access"]],
+      tabs: { auth: ["lock", T("connections.modal.shared.authentication"), T("connections.modal.shared.connectWithADeviceCode")] },
+      copy: { auth: [T("connections.modal.movieparadise.movieParadiseAuthentication"), T("connections.modal.movieparadise.connectMovieParadiseWithADevice")] },
+      journey: [T("connections.modal.movieparadise.connectToMovieParadise"), T("connections.modal.movieparadise.clickConnectMovieParadiseAndApprove"), "215,98,143", "139,63,161", "MOVIEPARADISE"],
+      steps: [["1", T("connections.modal.shared.startDeviceLogin"), T("connections.modal.shared.crosswatchShowsAShortLinkCode")], ["2", T("connections.modal.shared.approveAccess"), T("connections.modal.movieparadise.enterTheCodeAtMovieparadiseApp")], ["3", T("connections.modal.shared.validateAccount"), T("connections.modal.movieparadise.crosswatchConfirmsMovieParadiseAccess")]],
       order: ["#movieparadise_device_panel", ".mp-actions"],
       code: ["#movieparadise_device_panel"],
       actions: [{ row: ".mp-actions", status: "#movieparadise_msg", buttons: "#movieparadise_device_start, #movieparadise_device_cancel, #movieparadise_device_restart" }]
     },
     BINGEBASE: {
       provider: "bingebase", logo: "BINGEBASE", help: window.CW.HelpLinks.url("bingebase"), deleteSelector: "#bingebase_disconnect", allowSaveWithoutConnection: true,
-      tabs: { auth: ["lock", "Authentication", "Connect with a device code"] },
-      copy: { auth: ["BingeBase Authentication", "Connect BingeBase with a device code and optional realtime webhook credentials."] },
-      journey: ["Connect to BingeBase", "Click Connect BingeBase and approve the code at bingebase.com/activate.\nBingeBase only provides scrobble.", "255,133,51", "248,241,232", "BINGEBASE"],
-      steps: [["1", "Start device login", "CrossWatch shows a short link code"], ["2", "Approve access", "Enter the code at bingebase.com/activate"], ["3", "Realtime", "Use the auto-filled Kodi webhook or paste an override"]],
+      tabs: { auth: ["lock", T("connections.modal.shared.authentication"), T("connections.modal.shared.connectWithADeviceCode")] },
+      copy: { auth: [T("connections.modal.bingebase.bingebaseAuthentication"), T("connections.modal.bingebase.connectBingebaseWithADeviceCode")] },
+      journey: [T("connections.modal.bingebase.connectToBingebase"), T("connections.modal.bingebase.clickConnectBingebaseAndApproveThe"), "255,133,51", "248,241,232", "BINGEBASE"],
+      steps: [["1", T("connections.modal.shared.startDeviceLogin"), T("connections.modal.shared.crosswatchShowsAShortLinkCode")], ["2", T("connections.modal.shared.approveAccess"), T("connections.modal.bingebase.enterTheCodeAtBingebaseCom")], ["3", T("connections.modal.bingebase.realtime"), T("connections.modal.bingebase.useTheAutoFilledKodiWebhook")]],
       order: ["#bingebase_realtime_panel", ".bb-actions", "#bingebase_device_panel"],
       code: ["#bingebase_device_panel"],
       actions: [{ row: ".bb-actions", status: "#bingebase_msg", buttons: "#bingebase_device_start, #bingebase_device_cancel, #bingebase_device_restart" }]
     },
     FLICKLIST: {
       provider: "flicklist", logo: "FLICKLIST", help: window.CW.HelpLinks.url("flicklist"), deleteSelector: "#flicklist_disconnect_device, #flicklist_disconnect_api",
-      tabs: { auth: ["lock", "Authentication", "Connect with device code or API key"] },
-      copy: { auth: ["FlickList Authentication", "Connect FlickList with Device Code using CrossWatch's built-in public app id. API key remains available as a fallback."] },
-      journey: ["Connect to FlickList", "Approve CrossWatch at flicklist.tv/link with the built-in public client id. Do not enter the client secret.", "8,80,184", "88,208,248", "FLICKLIST"],
-      steps: [["1", "Choose method", "Use Device Code or API key"], ["2", "Approve access", "Authorize the device code or save the key"], ["3", "Validate account", "CrossWatch confirms FlickList access"]],
+      tabs: { auth: ["lock", T("connections.modal.shared.authentication"), T("connections.modal.shared.connectWithDeviceCodeOrApi")] },
+      copy: { auth: [T("connections.modal.flicklist.flicklistAuthentication"), T("connections.modal.flicklist.connectFlicklistWithDeviceCodeUsing")] },
+      journey: [T("connections.modal.flicklist.connectToFlicklist"), T("connections.modal.flicklist.approveCrosswatchAtFlicklistTvLink"), "8,80,184", "88,208,248", "FLICKLIST"],
+      steps: [["1", T("connections.modal.shared.chooseMethod"), T("connections.modal.shared.useDeviceCodeOrApiKey")], ["2", T("connections.modal.shared.approveAccess"), T("connections.modal.shared.authorizeTheDeviceCodeOrSave")], ["3", T("connections.modal.shared.validateAccount"), T("connections.modal.flicklist.crosswatchConfirmsFlicklistAccess")]],
       order: [".fl-method-row", "#flicklist_api_panel", "#flicklist_device_panel", ".cw-connection-method-action-row", ".inline"],
       code: ["#flicklist_qc_state"],
       actions: [{ row: ".fl-method-row", status: "#flicklist_msg", buttons: "#flicklist_device_start, #flicklist_device_cancel, #flicklist_save", extract: ".fl-actions", order: "6" }]
     },
     PUBLICMETADB: {
       provider: "publicmetadb", logo: "PUBLICMETADB", help: window.CW.HelpLinks.url("publicmetadb"), deleteSelector: "#publicmetadb_disconnect",
-      tabs: { auth: ["lock", "Authentication", "Connect your PublicMetaDB API key"] },
-      copy: { auth: ["PublicMetaDB Authentication", "Connect PublicMetaDB with an API key."] },
-      journey: ["Connect to PublicMetaDB", "Paste your PublicMetaDB API key and click Connect PublicMetaDB. CrossWatch uses the key for metadata-backed matching and provider lookups.", "155,155,155", "155,155,155", "PUBLICMETADB"],
-      steps: [["1", "Create API key", "Generate a key in PublicMetaDB"], ["2", "Connect key", "Paste the key and connect"], ["3", "Validate access", "CrossWatch confirms the key works"]],
+      tabs: { auth: ["lock", T("connections.modal.shared.authentication"), T("connections.modal.publicmetadb.connectYourPublicmetadbApiKey")] },
+      copy: { auth: [T("connections.modal.publicmetadb.publicmetadbAuthentication"), T("connections.modal.publicmetadb.connectPublicmetadbWithAnApiKey")] },
+      journey: [T("connections.modal.publicmetadb.connectToPublicmetadb"), T("connections.modal.publicmetadb.pasteYourPublicmetadbApiKeyAnd"), "155,155,155", "155,155,155", "PUBLICMETADB"],
+      steps: [["1", T("connections.modal.publicmetadb.createApiKey"), T("connections.modal.publicmetadb.generateAKeyInPublicmetadb")], ["2", T("connections.modal.publicmetadb.connectKey"), T("connections.modal.publicmetadb.pasteTheKeyAndConnect")], ["3", T("connections.modal.shared.validateAccess"), T("connections.modal.publicmetadb.crosswatchConfirmsTheKeyWorks")]],
       order: [".grid2", "#publicmetadb_hint", ".publicmetadb-actions"],
       actions: [{ row: ".publicmetadb-actions", status: "#publicmetadb_msg", buttons: "#publicmetadb_save" }]
     },
     FLOPPY: {
       provider: "floppy", logo: "FLOPPY", help: window.CW.HelpLinks.url("floppy"), deleteSelector: "#floppy_disconnect",
-      tabs: { auth: ["lock", "Authentication", "Connect your Floppy server"] },
-      copy: { auth: ["Floppy Authentication", "Connect Floppy with server URL and API token."] },
-    journey: ["Connect to Floppy", "Create an API token in Floppy Settings > Integrations, then connect your self-hosted server.", "245,101,30", "4,181,220", "FLOPPY"],
-      steps: [["1", "Create token", "Generate a token in Floppy"], ["2", "Enter server", "Add your Floppy server URL"], ["3", "Validate access", "CrossWatch confirms the token works"]],
+      tabs: { auth: ["lock", T("connections.modal.shared.authentication"), T("connections.modal.floppy.connectYourFloppyServer")] },
+      copy: { auth: [T("connections.modal.floppy.floppyAuthentication"), T("connections.modal.floppy.connectFloppyWithServerUrlAnd")] },
+    journey: [T("connections.modal.floppy.connectToFloppy"), T("connections.modal.floppy.createAnApiTokenInFloppy"), "245,101,30", "4,181,220", "FLOPPY"],
+      steps: [["1", T("connections.modal.floppy.createToken"), T("connections.modal.floppy.generateATokenInFloppy")], ["2", T("connections.modal.shared.enterServer"), T("connections.modal.floppy.addYourFloppyServerUrl")], ["3", T("connections.modal.shared.validateAccess"), T("connections.modal.floppy.crosswatchConfirmsTheTokenWorks")]],
       order: [".grid2", ".verify", "#floppy_actions_row"],
       actions: [{ row: "#floppy_actions_row", status: "#floppy_msg", buttons: "#floppy_connect" }]
     },
     NUVIO: {
       provider: "nuvio", logo: "NUVIO", help: window.CW.HelpLinks.url("nuvio"), deleteSelector: "#nuvio_disconnect",
-      tabs: { auth: ["lock", "Authentication", "Connect with TV login"] },
-      copy: { auth: ["Nuvio Authentication", "Connect Nuvio with TV login and select a profile."] },
-      journey: ["Connect to Nuvio", "Use Nuvio TV login, approve the temporary code, then choose a profile. Nuvio API contracts may change.", "176,72,240", "64,208,232", "NUVIO"],
-      steps: [["1", "Start login", "Open the Nuvio approval URL"], ["2", "Approve code", "Approve the temporary TV login code"], ["3", "Select profile", "Choose the Nuvio profile for this instance"]],
+      tabs: { auth: ["lock", T("connections.modal.shared.authentication"), T("connections.modal.nuvio.connectWithTvLogin")] },
+      copy: { auth: [T("connections.modal.nuvio.nuvioAuthentication"), T("connections.modal.nuvio.connectNuvioWithTvLoginAnd")] },
+      journey: [T("connections.modal.nuvio.connectToNuvio"), T("connections.modal.nuvio.useNuvioTvLoginApproveThe"), "176,72,240", "64,208,232", "NUVIO"],
+      steps: [["1", T("connections.modal.nuvio.startLogin"), T("connections.modal.nuvio.openTheNuvioApprovalUrl")], ["2", T("connections.modal.shared.approveCode"), T("connections.modal.nuvio.approveTheTemporaryTvLoginCode")], ["3", T("connections.modal.shared.selectProfile"), T("connections.modal.nuvio.chooseTheNuvioProfileForThis")]],
       order: [".nuvio-server-row", ".nuvio-actions", "#nuvio_profile_state", "#nuvio_login_state"],
       code: ["#nuvio_login_state"],
       actions: [{ row: ".nuvio-actions", status: "#nuvio_msg", buttons: "#nuvio_connect" }]
     },
     KODI: {
       provider: "kodi", logo: "KODI", help: window.CW.HelpLinks.url("kodi"), deleteSelector: "#kodi_disconnect",
-      tabs: { auth: ["lock", "Authentication", "Connect with the add-on or JSON-RPC"], whitelist: ["verified_user", "Whitelisting", "Choose libraries and content to sync"] },
-      copy: { auth: ["Kodi Authentication", "Connect Kodi with the CrossWatch add-on, or over HTTP JSON-RPC."], whitelist: ["Kodi Whitelisting", "Choose which Kodi video sources CrossWatch can use for history, ratings, progress, collections and scrobbling."] },
-      journey: ["Connect to Kodi", "Enter your Kodi server URL and optional HTTP Basic Auth credentials. Make sure Kodi's web server and JSON RPC access are enabled before connecting.", "23,181,209", "20,150,200", "KODI"],
-      steps: [["1", "Enable JSON-RPC", "Allow control of Kodi via HTTP"], ["2", "Enter server", "Add the Kodi web server URL"], ["3", "Verify", "CrossWatch checks Kodi and JSON-RPC versions"]],
+      tabs: { auth: ["lock", T("connections.modal.shared.authentication"), T("connections.modal.kodi.connectOverHttpJsonRpc")], whitelist: ["verified_user", T("connections.modal.shared.whitelisting"), T("connections.modal.shared.chooseLibrariesAndContentToSync")] },
+      copy: { auth: [T("connections.modal.kodi.kodiAuthentication"), T("connections.modal.kodi.connectAKodiMediaClientOver")], whitelist: [T("connections.modal.kodi.kodiWhitelisting"), T("connections.modal.kodi.chooseWhichKodiVideoSourcesCrosswatch")] },
+      journey: [T("connections.modal.kodi.connectToKodi"), T("connections.modal.kodi.enterYourKodiServerUrlAnd"), "23,181,209", "20,150,200", "KODI"],
+      steps: [["1", T("connections.modal.kodi.enableJsonRpc"), T("connections.modal.kodi.allowControlOfKodiViaHttp")], ["2", T("connections.modal.shared.enterServer"), T("connections.modal.kodi.addTheKodiWebServerUrl")], ["3", T("connections.modal.kodi.verify"), T("connections.modal.kodi.crosswatchChecksKodiAndJsonRpc")]],
       order: [".kodi-method-row", "#kodi_addon_block", ".grid2", ".inline"],
       actions: [{ row: ".inline", status: "#kodi_msg", buttons: "#kodi_connect" }]
     },
     STREMIO: {
       provider: "stremio", logo: "STREMIO", help: window.CW.HelpLinks.url("stremio"), deleteSelector: "#stremio_disconnect",
-      tabs: { auth: ["lock", "Authentication", "Connect with Stremio account"], scrobble: ["podcasts", "Scrobbling", "Install the CrossWatch add-on"] },
-      copy: { auth: ["Stremio Authentication", "Connect with your Stremio account. CrossWatch stores only the returned auth key."], scrobble: ["Stremio Scrobbling", "Let Stremio report playback to CrossWatch through an add-on."] },
-      journey: ["Connect to Stremio", "Enter your Stremio email and password once. CrossWatch exchanges them for an auth key and does not retain the password.", "114,44,254", "22,182,255", "STREMIO"],
-      steps: [["1", "Enter account", "Use your Stremio email and password"], ["2", "Exchange key", "CrossWatch requests an auth key"], ["3", "Store key", "Only the auth key is saved"]],
+      tabs: { auth: ["lock", T("connections.modal.shared.authentication"), T("connections.modal.stremio.connectWithStremioAccount")], scrobble: ["podcasts", T("connections.modal.stremio.scrobbling"), T("connections.modal.stremio.installTheCrosswatchAddOn")] },
+      copy: { auth: [T("connections.modal.stremio.stremioAuthentication"), T("connections.modal.stremio.connectWithYourStremioAccountCrosswatch")], scrobble: [T("connections.modal.stremio.stremioScrobbling"), T("connections.modal.stremio.letStremioReportPlaybackToCrosswatch")] },
+      journey: [T("connections.modal.stremio.connectToStremio"), T("connections.modal.stremio.enterYourStremioEmailAndPassword"), "114,44,254", "22,182,255", "STREMIO"],
+      steps: [["1", T("connections.modal.stremio.enterAccount"), T("connections.modal.stremio.useYourStremioEmailAndPassword")], ["2", T("connections.modal.stremio.exchangeKey"), T("connections.modal.stremio.crosswatchRequestsAnAuthKey")], ["3", T("connections.modal.stremio.storeKey"), T("connections.modal.stremio.onlyTheAuthKeyIsSaved")]],
       order: [".grid2", ".inline"],
       actions: [{ row: ".inline", status: "#stremio_msg", buttons: "#stremio_connect" }]
     },
     KITSU: {
       provider: "kitsu", logo: "KITSU", help: window.CW.HelpLinks.url("kitsu"), deleteSelector: "#kitsu_disconnect",
-      tabs: { auth: ["lock", "Authentication", "Connect your Kitsu account"] },
-      copy: { auth: ["Kitsu Authentication", "Sync anime watchlist, ratings and watched episodes."] },
-      journey: ["Connect to Kitsu", "Sign in once, then save your connection. Only tokens are retained. Enable Anime ID Mapping for anime matching and episode numbering.", "253,117,92", "253,117,92", "KITSU"],
-      steps: [["1", "Sign in", "Use your Kitsu email or username and password"], ["2", "Save connection", "Store tokens for this account"], ["3", "Sync anime", "Use Anime ID Mapping and custom rules"]],
+      tabs: { auth: ["lock", T("connections.modal.shared.authentication"), T("connections.modal.kitsu.connectYourKitsuAccount")] },
+      copy: { auth: [T("connections.modal.kitsu.kitsuAuthentication"), T("connections.modal.kitsu.syncAnimeWatchlistRatingsAndWatched")] },
+      journey: [T("connections.modal.kitsu.connectToKitsu"), T("connections.modal.kitsu.signInOnceThenSaveYour"), "253,117,92", "253,117,92", "KITSU"],
+      steps: [["1", T("connections.modal.shared.signIn"), T("connections.modal.kitsu.useYourKitsuEmailOrUsername")], ["2", T("connections.modal.kitsu.saveConnection"), T("connections.modal.kitsu.storeTokensForThisAccount")], ["3", T("connections.modal.shared.syncAnime"), T("connections.modal.kitsu.useAnimeIdMappingAndCustom")]],
       order: [".grid2", ".inline"],
       actions: [{ row: ".inline", status: "#kitsu_msg", buttons: "#kitsu_connect" }]
     },
     ANILIST: {
       provider: "anilist", logo: "ANILIST", help: window.CW.HelpLinks.url("anilist"), deleteSelector: "#btn-delete-anilist",
-      tabs: { auth: ["lock", "Authentication", "Connect your AniList account"] },
-      copy: { auth: ["AniList Authentication", "Connect AniList with your API credentials."] },
-      journey: ["Connect to AniList", "Add your AniList Client ID and Secret, then click Connect AniList and approve the request in the browser window. Anime ID Mapping can improve AniList matching.", "2,169,255", "2,169,255", "ANILIST"],
-      steps: [["1", "Add API app", "Enter your AniList Client ID and Secret"], ["2", "Approve AniList", "Authorize CrossWatch in the browser"], ["3", "Sync anime", "CrossWatch stores the approved token"]],
+      tabs: { auth: ["lock", T("connections.modal.shared.authentication"), T("connections.modal.anilist.connectYourAnilistAccount")] },
+      copy: { auth: [T("connections.modal.anilist.anilistAuthentication"), T("connections.modal.anilist.connectAnilistWithYourApiCredentials")] },
+      journey: [T("connections.modal.anilist.connectToAnilist"), T("connections.modal.anilist.addYourAnilistClientIdAnd"), "2,169,255", "2,169,255", "ANILIST"],
+      steps: [["1", T("connections.modal.anilist.addApiApp"), T("connections.modal.anilist.enterYourAnilistClientIdAnd")], ["2", T("connections.modal.anilist.approveAnilist"), T("connections.modal.anilist.authorizeCrosswatchInTheBrowser")], ["3", T("connections.modal.shared.syncAnime"), T("connections.modal.shared.crosswatchStoresTheApprovedToken")]],
       order: [".grid2", "#anilist_hint", ".anilist-mapping-rec", ".inline"],
       actions: [{ row: ".inline", status: "#anilist_msg", buttons: "#btn-connect-anilist" }]
     },
     TAUTULLI: {
       provider: "tautulli", logo: "TAUTULLI", help: window.CW.HelpLinks.url("tautulli"), deleteSelector: "#tautulli_disconnect",
-      tabs: { auth: ["lock", "Authentication", "Connect your Tautulli server"] },
-      copy: { auth: ["Tautulli Authentication", "Connect Tautulli with server URL and API key."] },
-      journey: ["Connect to Tautulli", "Enter your Tautulli server URL and API key, optionally choose a user ID, then connect. CrossWatch can use Tautulli history for supported sync flows.", "190,190,190", "84,115,145", "TAUTULLI"],
-      steps: [["1", "Enter server", "Add your Tautulli URL and API key"], ["2", "Choose user", "Optionally limit to one user ID"], ["3", "Validate server", "CrossWatch confirms Tautulli access"]],
+      tabs: { auth: ["lock", T("connections.modal.shared.authentication"), T("connections.modal.tautulli.connectYourTautulliServer")] },
+      copy: { auth: [T("connections.modal.tautulli.tautulliAuthentication"), T("connections.modal.tautulli.connectTautulliWithServerUrlAnd")] },
+      journey: [T("connections.modal.tautulli.connectToTautulli"), T("connections.modal.tautulli.enterYourTautulliServerUrlAnd"), "190,190,190", "84,115,145", "TAUTULLI"],
+      steps: [["1", T("connections.modal.shared.enterServer"), T("connections.modal.tautulli.addYourTautulliUrlAndApi")], ["2", T("connections.modal.shared.chooseUser"), T("connections.modal.tautulli.optionallyLimitToOneUserId")], ["3", T("connections.modal.shared.validateServer"), T("connections.modal.tautulli.crosswatchConfirmsTautulliAccess")]],
       order: [".grid2", "#tautulli_hint", "#tautulli_actions_row"],
       actions: [{ row: "#tautulli_actions_row", status: "#tautulli_msg", buttons: "#tautulli_save" }]
     },
     TRACEARR: {
       provider: "tracearr", logo: "TRACEARR", help: window.CW.HelpLinks.url("tracearr"), deleteSelector: "#tracearr_disconnect",
-      tabs: { auth: ["lock", "Authentication", "Connect your Tracearr server"] },
-      copy: { auth: ["Tracearr Authentication", "Connect Tracearr with server URL and public API key."] },
-      journey: ["Connect to Tracearr", "Enter your Tracearr server URL and public API key, optionally choose a user, then connect. CrossWatch imports Tracearr watch history one way. Requires Tracearr 2.0 or later.", "24,209,231", "14,143,166", "TRACEARR"],
-      steps: [["1", "Enter server", "Add your Tracearr URL and API key"], ["2", "Choose user", "Optionally limit to one user"], ["3", "Validate server", "CrossWatch confirms Tracearr access"]],
+      tabs: { auth: ["lock", T("connections.modal.shared.authentication"), T("connections.modal.tracearr.connectYourTracearrServer")] },
+      copy: { auth: [T("connections.modal.tracearr.tracearrAuthentication"), T("connections.modal.tracearr.connectTracearrWithServerUrlAnd")] },
+      journey: [T("connections.modal.tracearr.connectToTracearr"), T("connections.modal.tracearr.enterYourTracearrServerUrlAnd"), "24,209,231", "14,143,166", "TRACEARR"],
+      steps: [["1", T("connections.modal.shared.enterServer"), T("connections.modal.tracearr.addYourTracearrUrlAndApi")], ["2", T("connections.modal.shared.chooseUser"), T("connections.modal.tracearr.optionallyLimitToOneUser")], ["3", T("connections.modal.shared.validateServer"), T("connections.modal.tracearr.crosswatchConfirmsTracearrAccess")]],
       order: ["#tracearr_hint", ".grid2", "#tracearr_actions_row"],
       actions: [{ row: "#tracearr_actions_row", status: "#tracearr_msg", buttons: "#tracearr_save" }]
     },
     CROSSWATCH: {
       provider: "crosswatch", logo: "CROSSWATCH", help: window.CW.HelpLinks.url("crosswatch"), deleteSelector: "#cw_crosswatch_disconnect",
-      tabs: { auth: ["lock", "Authentication", "Connect local tracker"], settings: ["database", "Settings", "Storage and restore"] },
-      copy: { auth: ["CrossWatch Authentication", "Connect this local tracker instance."], settings: ["CrossWatch Local Tracker", "Configure storage and restore snapshots for this tracker instance."] },
-      journey: ["Connect Local Tracker", "Enable the built-in CrossWatch tracker as a normal connection. Use instances when you want separate local watchlist, ratings, history, progress or collection data.", "124,92,255", "98,194,255", "CROSSWATCH"],
-      steps: [["1", "Choose instance", "Use Default or create CW-P instances"], ["2", "Connect locally", "Enable the selected instance as a connection"], ["3", "Sync locally", "Use the instance in normal sync pairs"]],
+      tabs: { auth: ["lock", T("connections.modal.shared.authentication"), T("connections.modal.crosswatch.connectLocalTracker")], settings: ["database", T("connections.modal.shared.settings"), T("connections.modal.crosswatch.storageAndRestore")] },
+      copy: { auth: [T("connections.modal.crosswatch.crosswatchAuthentication"), T("connections.modal.crosswatch.connectThisLocalTrackerInstance")], settings: [T("connections.modal.crosswatch.crosswatchLocalTracker"), T("connections.modal.crosswatch.configureStorageAndRestoreSnapshotsFor")] },
+      journey: [T("connections.modal.crosswatch.connectLocalTracker2"), T("connections.modal.crosswatch.enableTheBuiltInCrosswatchTracker"), "124,92,255", "98,194,255", "CROSSWATCH"],
+      steps: [["1", T("connections.modal.crosswatch.chooseInstance"), T("connections.modal.crosswatch.useDefaultOrCreateCwP")], ["2", T("connections.modal.crosswatch.connectLocally"), T("connections.modal.crosswatch.enableTheSelectedInstanceAsA")], ["3", T("connections.modal.crosswatch.syncLocally"), T("connections.modal.crosswatch.useTheInstanceInNormalSync")]],
       introSubs: ["auth"],
       order: [".cw-tracker-auth-card", ".cw-tracker-settings-stack"],
       actions: [{ row: ".cw-tracker-auth-actions", status: "#cw_tracker_auth_msg", buttons: "#cw_crosswatch_connect" }]
     },
     TMDB_METADATA: {
       provider: "tmdb", logo: "TMDB", help: window.CW.HelpLinks.url("tmdb-metadata"), deleteSelector: "#tmdb_delete",
-      tabs: { api: ["key", "API key", "Connect TMDb metadata"], advanced: ["tune", "Advanced", "Configure locale and cache behavior"] },
-      copy: { api: ["TMDb Metadata", "Metadata and images fetched from TMDb."], advanced: ["TMDb Metadata Settings", "Configure metadata locale, cache and advanced options."] },
-      journey: ["Connect TMDb Metadata", "Add a TMDb API key to enable metadata lookups, matching data and images. Advanced options let you tune locale and cache behavior when available.", "0,179,229", "144,206,161", "TMDB"],
-      steps: [["1", "Add API key", "Enter your TMDb API key"], ["2", "Connect TMDb", "Validate the key with CrossWatch"], ["3", "Use metadata", "Metadata lookups become available"]],
+      tabs: { api: ["key", T("connections.modal.shared.apiKey"), T("connections.modal.tmdb_metadata.connectTmdbMetadata")], advanced: ["tune", T("connections.modal.tmdb_metadata.advanced"), T("connections.modal.tmdb_metadata.configureLocaleAndCacheBehavior")] },
+      copy: { api: [T("connections.modal.tmdb_metadata.tmdbMetadata"), T("connections.modal.tmdb_metadata.metadataAndImagesFetchedFromTmdb")], advanced: [T("connections.modal.tmdb_metadata.tmdbMetadataSettings"), T("connections.modal.tmdb_metadata.configureMetadataLocaleCacheAndAdvanced")] },
+      journey: [T("connections.modal.tmdb_metadata.connectTmdbMetadata2"), T("connections.modal.tmdb_metadata.addATmdbApiKeyTo"), "0,179,229", "144,206,161", "TMDB"],
+      steps: [["1", T("connections.modal.shared.addApiKey"), T("connections.modal.tmdb_metadata.enterYourTmdbApiKey")], ["2", T("connections.modal.tmdb_metadata.connectTmdb"), T("connections.modal.tmdb_metadata.validateTheKeyWithCrosswatch")], ["3", T("connections.modal.tmdb_metadata.useMetadata"), T("connections.modal.tmdb_metadata.metadataLookupsBecomeAvailable")]],
       introSubs: ["api", "advanced"],
       order: [".auth-card"],
-      labels: { "#tmdb_check": "Connect TMDb" },
-      actions: [{ row: ".inline", status: "#tmdb_check_msg", buttons: "#tmdb_check", connectedSelector: "#tmdb_api_key", connectedText: "Connected" }]
+      labels: { "#tmdb_check": T("connections.modal.tmdb_metadata.connectTmdb") },
+      actions: [{ row: ".inline", status: "#tmdb_check_msg", buttons: "#tmdb_check", connectedSelector: "#tmdb_api_key", connectedText: T("connections.modal.tmdb_metadata.connected") }]
     },
     FANART_METADATA: {
       provider: "fanart", logo: "FANART", help: window.CW.HelpLinks.url("fanart-metadata"), deleteSelector: "#fanart_delete",
-      tabs: { api: ["key", "API key", "Connect fanart.tv"], settings: ["tune", "Settings", "Choose logos and backgrounds"] },
-      copy: { api: ["Fanart.tv Artwork", "Logos, backgrounds and disc art from fanart.tv."], settings: ["Fanart.tv Settings", "Choose where logos and backgrounds come from."] },
-      journey: ["Connect Fanart.tv", "Use fanart.tv logos, backgrounds and disc art, with TMDb as fallback. No key is needed because CrossWatch has its own project key. Requires TMDb Metadata.", "167,98,255", "255,120,190", "FANART"],
-      steps: [["1", "Add key", "Optional personal fanart.tv key"], ["2", "Connect fanart.tv", "Validate with CrossWatch"], ["3", "Pick art", "Choose logos and backgrounds"]],
+      tabs: { api: ["key", T("connections.modal.shared.apiKey"), T("connections.modal.fanart_metadata.connectFanartTv")], settings: ["tune", T("connections.modal.shared.settings"), T("connections.modal.fanart_metadata.chooseLogosAndBackgrounds")] },
+      copy: { api: [T("connections.modal.fanart_metadata.fanartTvArtwork"), T("connections.modal.fanart_metadata.logosBackgroundsAndDiscArtFrom")], settings: [T("connections.modal.fanart_metadata.fanartTvSettings"), T("connections.modal.fanart_metadata.chooseWhereLogosAndBackgroundsCome")] },
+      journey: [T("connections.modal.fanart_metadata.connectFanartTv2"), T("connections.modal.fanart_metadata.useFanartTvLogosBackgroundsAnd"), "167,98,255", "255,120,190", "FANART"],
+      steps: [["1", T("connections.modal.fanart_metadata.addKey"), T("connections.modal.fanart_metadata.optionalPersonalFanartTvKey")], ["2", T("connections.modal.fanart_metadata.connectFanartTv"), T("connections.modal.fanart_metadata.validateWithCrosswatch")], ["3", T("connections.modal.fanart_metadata.pickArt"), T("connections.modal.fanart_metadata.chooseLogosAndBackgrounds")]],
       introSubs: ["api", "settings"],
       order: [".auth-card"],
       actions: [{ row: ".inline", status: "#fanart_check_msg", buttons: "#fanart_check" }]
@@ -1044,10 +1046,10 @@
     ANIME_MAPPING: {
       provider: "anime-mapping", logo: "ANILIST", help: window.CW.HelpLinks.url("anime-mapping"), deleteSelector: "",
       hideNav: true,
-      tabs: { overview: ["hub", "Mapping", "Manage the local anime ID index"] },
-      copy: { overview: ["Anime ID Mapping", "Local anime ID index for AniList and SIMKL pairs."] },
-      journey: ["Enable Anime ID Mapping", "Use the local mapping datasets to translate anime identifiers and episode numbering between AniDB, MyAnimeList, AniList, Kitsu, SIMKL, TMDb and TVDb.", "2,169,255", "78,141,255", "ANILIST"],
-      steps: [["1", "Enable mapping", "Turn on the local anime index"], ["2", "Update datasets", "Download or refresh the mapping data"], ["3", "Improve matches", "Use mappings for AniList and SIMKL pairs"]],
+      tabs: { overview: ["hub", T("connections.modal.anime_mapping.mapping"), T("connections.modal.anime_mapping.manageTheLocalAnimeIdIndex")] },
+      copy: { overview: [T("connections.modal.anime_mapping.animeIdMapping"), T("connections.modal.anime_mapping.localAnimeIdIndexForAnilist")] },
+      journey: [T("connections.modal.anime_mapping.enableAnimeIdMapping"), T("connections.modal.anime_mapping.useTheLocalMappingDatasetsTo"), "2,169,255", "78,141,255", "ANILIST"],
+      steps: [["1", T("connections.modal.anime_mapping.enableMapping"), T("connections.modal.anime_mapping.turnOnTheLocalAnimeIndex")], ["2", T("connections.modal.anime_mapping.updateDatasets"), T("connections.modal.anime_mapping.downloadOrRefreshTheMappingData")], ["3", T("connections.modal.anime_mapping.improveMatches"), T("connections.modal.anime_mapping.useMappingsForAnilistAndSimkl")]],
       introSubs: ["overview"],
       order: [".anime-mapping-summary", ".anime-mapping-status-grid", ".anime-mapping-source", "#anime_mapping_error", ".anime-mapping-actions"]
     },
@@ -1085,14 +1087,14 @@
   function syncConnectionModalCopy(panel, info, overlay = null) {
     if (!panel) return;
     const active = activeModalSub(panel, info);
-    const data = info?.copy?.[active] || Object.values(info?.copy || {})[0] || ["Connection", "Configure this provider."];
+    const data = info?.copy?.[active] || Object.values(info?.copy || {})[0] || [T("connections.modal.fallbackTitle"), T("connections.modal.fallbackCopy")];
     const root = overlay || document.getElementById("cw-auth-connection-overlay");
     const dialogTitle = root?.querySelector("#cw-auth-dialog-title");
     const dialogCopy = root?.querySelector("#cw-auth-dialog-subtitle");
     const dialogKicker = root?.querySelector("#cw-auth-dialog-kicker");
     if (dialogTitle) dialogTitle.textContent = data[0];
     if (dialogCopy) dialogCopy.textContent = data[1];
-    if (dialogKicker) dialogKicker.textContent = META_ITEMS[info?.key] ? "Metadata" : "Connection settings";
+    if (dialogKicker) dialogKicker.textContent = META_ITEMS[info?.key] ? T("connections.groups.metadata") : T("dashboard.status.connectionSettings");
   }
 
   function connectionModalSupportsProfiles(info) {
@@ -1313,7 +1315,7 @@
     if (!panel) return;
     const node = panel.querySelector(".cw-connection-status-pill, #plex_msg, #jfy_msg, #emby_msg");
     if (!node) return;
-    node.textContent = "Disconnected";
+    node.textContent = T("connections.status.disconnected");
     node.classList.remove("hidden", "ok", "cw-connection-status-transient", "cw-connection-status-dismissing");
     node.classList.add("warn");
     node.removeAttribute("aria-hidden");
@@ -1347,7 +1349,7 @@
     save.disabled = !canSave;
     save.classList.toggle("is-disabled", !canSave);
     if (canSave) save.removeAttribute("title");
-    else save.title = "Connect this instance before saving.";
+    else save.title = T("connections.instances.connectFirst");
   }
 
   function syncConnectionSuccessState(panel, info, cfg = getCachedConfig()) {
@@ -1376,7 +1378,7 @@
     const capped = count >= limit;
     newBtn.disabled = capped;
     newBtn.setAttribute("aria-disabled", capped ? "true" : "false");
-    if (capped) newBtn.title = `Maximum ${limit} instances reached.`;
+    if (capped) newBtn.title = T("connections.instances.max", { count: limit });
     else newBtn.removeAttribute("title");
   }
 
@@ -1389,7 +1391,7 @@
     const newBtn = toolbar.querySelector(".cw-profile-new");
     const delBtn = toolbar.querySelector(".cw-profile-delete");
     if (select) {
-      select.setAttribute("aria-label", `${info?.copy?.auth?.[0] || info?.key || "Connection"} instance`);
+      select.setAttribute("aria-label", T("connections.instanceOf", {name: info?.copy?.auth?.[0] || info?.key || T("connections.connectionWord")}));
       Array.from(select.options || []).forEach((option) => {
         const fullName = connectionProfileFullName(option);
         option.dataset.cwProfileFullName = fullName;
@@ -1413,12 +1415,12 @@
     }
     if (newBtn && !newBtn.__cwConnectionProfileDecorated) {
       newBtn.__cwConnectionProfileDecorated = true;
-      newBtn.innerHTML = `<span class="material-symbols-rounded" aria-hidden="true">add</span><span>New instance</span>`;
+      newBtn.innerHTML = `<span class="material-symbols-rounded" aria-hidden="true">add</span><span>${TH("connections.instances.new")}</span>`;
     }
     refreshConnectionProfileCreateState(select, newBtn);
     if (delBtn && !delBtn.__cwConnectionProfileDecorated) {
       delBtn.__cwConnectionProfileDecorated = true;
-      delBtn.innerHTML = `<span class="material-symbols-rounded" aria-hidden="true">delete</span><span>Delete instance</span>`;
+      delBtn.innerHTML = `<span class="material-symbols-rounded" aria-hidden="true">delete</span><span>${TH("connections.instances.delete")}</span>`;
     }
   }
 
@@ -1436,8 +1438,8 @@
       card.innerHTML = `
         <div class="cw-connection-profile-head">
           <span class="material-symbols-rounded" aria-hidden="true">group</span>
-          <strong>Connection instances</strong>
-          <a class="material-symbols-rounded cw-connection-profile-help" href="${window.CW.HelpLinks.url("connection-instances")}" target="_blank" rel="noopener noreferrer" aria-label="Open connection instances guide" title="Open connection instances guide">help</a>
+          <strong>${TH("connections.instances.title")}</strong>
+          <a class="material-symbols-rounded cw-connection-profile-help" href="${window.CW.HelpLinks.url("connection-instances")}" target="_blank" rel="noopener noreferrer" aria-label="${TH("connections.instances.guide")}" title="${TH("connections.instances.guide")}">help</a>
         </div>
         <div class="cw-connection-profile-body">
           <div class="cw-connection-profile-slot"></div>
@@ -1612,11 +1614,11 @@
       host.__cwConnectionWhitelistHandle = window.cwWhitelistTable.mount({
         host,
         features: [
-          { key: "hist", label: "History" },
-          { key: "rate", label: "Ratings" },
-          { key: "prog", label: "Progress" },
-          { key: "coll", label: "Collections" },
-          { key: "scr", label: "Scrobble", title: "Libraries watchers and webhooks read from. Scrobble destinations use History and Progress, or the libraries set on the route." },
+          { key: "hist", label: T("profile.history.title") },
+          { key: "rate", label: T("profile.ratings.title") },
+          { key: "prog", label: T("profile.playback.title") },
+          { key: "coll", label: T("profile.collection.title") },
+          { key: "scr", label: T("connections.libraries.scrobble"), title: T("connections.libraries.scrobbleHelp") },
         ],
         getLibs: () => host.__cwConnectionWhitelistLibs || [],
         isOn: (feature, id) => sets[feature]?.has(String(id)),
@@ -1812,7 +1814,7 @@
       setConnectionStyle(node, "--cw-auth-c2", data[3] || data[2] || "0,224,132");
       const logo = window.CW?.ProviderMeta?.logoPath?.(data[4] || info.logo) || `/assets/img/${data[4] || info.logo}.svg`;
       setConnectionStyle(node, "--cw-auth-logo", `url("${logo}")`);
-      node.innerHTML = `<span class="material-symbols-rounded cw-auth-journey-icon" aria-hidden="true">${icon}</span><div class="cw-auth-journey-text"><div class="cw-auth-journey-title">${data[0]}</div><div class="cw-auth-journey-copy">${data[1]}</div></div><a class="cw-auth-journey-help" href="${info.help}" target="_blank" rel="noopener noreferrer" aria-label="Open ${data[0]} guide" title="Open guide"><span class="material-symbols-rounded" aria-hidden="true">help</span></a>`;
+      node.innerHTML = `<span class="material-symbols-rounded cw-auth-journey-icon" aria-hidden="true">${icon}</span><div class="cw-auth-journey-text"><div class="cw-auth-journey-title">${data[0]}</div><div class="cw-auth-journey-copy">${data[1]}</div></div><a class="cw-auth-journey-help" href="${info.help}" target="_blank" rel="noopener noreferrer" aria-label="${TH("connections.modal.openNamedGuide", { name: data[0] })}" title="${TH("connections.modal.openGuide")}"><span class="material-symbols-rounded" aria-hidden="true">help</span></a>`;
     });
   }
 
@@ -1883,7 +1885,7 @@
             const connectedEl = panel.querySelector(cfg.connectedSelector);
             const connected = !!String(connectedEl?.value || connectedEl?.textContent || "").trim();
             if (connected) {
-              status.textContent = cfg.connectedText || "Connected";
+              status.textContent = cfg.connectedText || T("common.status.connected");
               status.classList.remove("hidden");
               status.classList.add("ok");
             }
@@ -1910,7 +1912,7 @@
     if (!btn.__cwSaveLabel) btn.__cwSaveLabel = btn.textContent;
     btn.classList.toggle("is-saving", !!busy);
     if (busy) {
-      btn.textContent = "Saving...";
+      btn.textContent = T("common.status.saving");
       btn.setAttribute("aria-busy", "true");
     } else {
       btn.removeAttribute("aria-busy");
@@ -1926,7 +1928,7 @@
     btn.innerHTML = `<span class="material-symbols-rounded cw-save-result-icon">${ok ? "check" : "close"}</span>`;
     btn.classList.add(ok ? "is-saved" : "is-failed");
     btn.__cwSaveTimer = setTimeout(() => {
-      btn.textContent = btn.__cwSaveLabel || "Save changes";
+      btn.textContent = btn.__cwSaveLabel || T("connections.footer.saveChanges");
       btn.classList.remove("is-saved", "is-failed");
     }, 1600);
   }
@@ -1937,14 +1939,14 @@
     btn.__cwConnectionDeleteTimer = 0;
     btn.dataset.cwConfirmDelete = "";
     btn.classList.remove("is-confirming");
-    btn.innerHTML = `<span class="material-symbols-rounded" aria-hidden="true">delete</span><span>Delete connection</span>`;
+    btn.innerHTML = `<span class="material-symbols-rounded" aria-hidden="true">delete</span><span>${TH("connections.footer.deleteConnection")}</span>`;
   }
 
   function armConnectionDeleteConfirm(btn) {
     if (!btn) return;
     btn.dataset.cwConfirmDelete = "1";
     btn.classList.add("is-confirming");
-    btn.innerHTML = `<span class="material-symbols-rounded" aria-hidden="true">warning</span><span>Confirm delete</span>`;
+    btn.innerHTML = `<span class="material-symbols-rounded" aria-hidden="true">warning</span><span>${TH("connections.footer.confirmDelete")}</span>`;
     if (btn.__cwConnectionDeleteTimer) clearTimeout(btn.__cwConnectionDeleteTimer);
     btn.__cwConnectionDeleteTimer = setTimeout(() => resetConnectionDeleteConfirm(btn), 4200);
   }
@@ -2008,13 +2010,13 @@
     if (!panel.querySelector(":scope > .cw-connection-modal-footer")) {
       const footer = document.createElement("div");
       footer.className = "cw-connection-modal-footer";
-      footer.innerHTML = `<button type="button" class="btn danger cw-connection-footer-delete"><span class="material-symbols-rounded" aria-hidden="true">delete</span><span>Delete connection</span></button><span class="cw-connection-footer-warn hidden" role="alert" aria-live="polite"></span><button type="button" class="btn cw-connection-footer-cancel">Cancel</button><button type="button" class="btn primary cw-connection-footer-save">Save changes</button>`;
+      footer.innerHTML = `<button type="button" class="btn danger cw-connection-footer-delete"><span class="material-symbols-rounded" aria-hidden="true">delete</span><span>${TH("connections.footer.deleteConnection")}</span></button><span class="cw-connection-footer-warn hidden" role="alert" aria-live="polite"></span><button type="button" class="btn cw-connection-footer-cancel">${TH("common.actions.cancel")}</button><button type="button" class="btn primary cw-connection-footer-save">${TH("connections.footer.saveChanges")}</button>`;
       panel.appendChild(footer);
       footer.querySelector(".cw-connection-footer-delete")?.addEventListener("click", async (ev) => {
         const trigger = ev.currentTarget;
         if (connectionDeleteBlockedByProfiles(panel, info)) {
           resetConnectionDeleteConfirm(trigger);
-          try { window.CW.AuthShared.showConnectionWarning("Remove the additional instances before deleting the main connection."); } catch {}
+          try { window.CW.AuthShared.showConnectionWarning(T("connections.footer.removeInstancesFirst")); } catch {}
           return;
         }
         if (trigger?.dataset?.cwConfirmDelete !== "1") {
@@ -2069,7 +2071,7 @@
     if (!note) {
       note = document.createElement("p");
       note.className = "cw-connection-locked-note";
-      note.textContent = "Only the administrator can change this connection.";
+      note.textContent = T("connections.footer.adminOnly");
       const anchor = panel.querySelector(":scope > .cw-subpanels") || panel.querySelector(":scope > .auth-card");
       if (anchor) anchor.before(note);
       else panel.appendChild(note);
@@ -2213,7 +2215,7 @@
     const title = overlay.querySelector("#cw-auth-dialog-title");
     const kicker = overlay.querySelector("#cw-auth-dialog-kicker");
     if (title) title.textContent = info.label;
-    if (kicker) kicker.textContent = "Metadata";
+    if (kicker) kicker.textContent = T("connections.groups.metadata");
     if (info.key === "TMDB_METADATA") {
       try { window.cwMetaProviderSubSelect?.("tmdb", "api", { persist: false }); } catch {}
     }
@@ -2555,7 +2557,7 @@
         window.cx.providers = Array.isArray(visible) ? visible : [];
         document.dispatchEvent(new Event("cw:sync-data-changed"));
         if (!Array.isArray(visible) || !visible.length) {
-          div.innerHTML = '<div class="muted">No providers discovered.</div>';
+          div.innerHTML = '<div class="muted">' + TH("connections.discover.none") + '</div>';
           return [];
         }
 
@@ -2571,10 +2573,10 @@
                 <div style="padding:12px;display:flex;justify-content:space-between;align-items:center">
                   <div class="title" style="font-weight:700">${p.label || p.name || key}</div>
                   <div>
-                    ${chip("Watchlist", !!caps.watchlist)}
-                    ${chip("Ratings", !!caps.ratings)}
-                    ${chip("History", !!caps.history)}
-                    ${chip("Playlists", !!caps.playlists)}
+                    ${chip(T("common.media.watchlist"), !!caps.watchlist)}
+                    ${chip(T("profile.ratings.title"), !!caps.ratings)}
+                    ${chip(T("profile.history.title"), !!caps.history)}
+                    ${chip(T("navigation.tabs.playlists"), !!caps.playlists)}
                   </div>
                 </div>
               </div>`;
@@ -2582,7 +2584,7 @@
         }
         return visible;
       } catch (e) {
-        div.innerHTML = '<div class="muted">Failed to load providers.</div>';
+        div.innerHTML = '<div class="muted">' + TH("connections.discover.failed") + '</div>';
         console.warn("loadProviders error", e);
         return [];
       } finally {

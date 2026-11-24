@@ -2,7 +2,9 @@
 /* CrossWatch - per-title artwork picker for posters, logos, backgrounds and discs */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 (function () {
-  const KINDS = [["poster", "Posters"], ["logo", "Logos"], ["backdrop", "Backgrounds"], ["disc", "Discs"]];
+  const T = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.t?.(key, vars) ?? key;
+  const TH = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.html?.(key, vars) ?? key;
+  const KINDS = ["poster", "logo", "backdrop", "disc"].map(kind => [kind, T(`library.artwork.kinds.${kind}`)]);
   const DISC_TYPES = { bluray: "Blu-ray", dvd: "DVD", "3d": "3D" };
   const PAGE = 18;
   const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
@@ -10,7 +12,7 @@
   const state = { node: null, type: "", id: "", title: "", kind: "poster", source: "all", shown: PAGE, data: new Map(), busy: false, seq: 0, lastFocus: null };
 
   const sourceLabel = (source) => (source === "fanart" ? "fanart.tv" : "TMDb");
-  const langLabel = (lang) => (!lang || lang === "00" || lang === "xx" ? "No text" : lang.toUpperCase());
+  const langLabel = (lang) => (!lang || lang === "00" || lang === "xx" ? T("library.artwork.noText") : lang.toUpperCase());
 
   function endpoint(kind) {
     const base = `/api/artwork/${encodeURIComponent(state.type)}/${encodeURIComponent(state.id)}`;
@@ -31,8 +33,8 @@
   }
 
   function optionHtml(data, row, index) {
-    const meta = row.disc_type ? [DISC_TYPES[row.disc_type] || "Disc", sourceLabel(row.source)] : [sourceLabel(row.source), langLabel(row.lang)];
-    if (row.source === "fanart" && row.likes) meta.push(`${row.likes} likes`);
+    const meta = row.disc_type ? [DISC_TYPES[row.disc_type] || T("library.artwork.disc"), sourceLabel(row.source)] : [sourceLabel(row.source), langLabel(row.lang)];
+    if (row.source === "fanart" && row.likes) meta.push(T("library.artwork.likes", {count: Number(row.likes) || 0}));
     if (row.source === "tmdb" && row.width) meta.push(`${row.width}×${row.height}`);
     const active = isCurrent(data, row);
     return `<button type="button" class="cw-mm-art-opt${active ? " is-current" : ""}" data-art-pick="${index}" aria-pressed="${active ? "true" : "false"}" title="${esc(meta.join(" · "))}">
@@ -44,12 +46,12 @@
 
   function bodyHtml() {
     const data = current();
-    if (!data || data.loading) return `<p class="cw-mm-art-note">Loading artwork...</p>`;
+    if (!data || data.loading) return `<p class="cw-mm-art-note">${TH("library.artwork.loading")}</p>`;
     if (data.error) return `<p class="cw-mm-art-note is-error">${esc(data.error)}</p>`;
     const rows = filtered(data);
     const notes = (data.errors || []).map((text) => `<p class="cw-mm-art-note is-error">${esc(text)}</p>`).join("");
-    const missing = data.current?.missing ? `<p class="cw-mm-art-note is-error">The chosen image is no longer available, so automatic artwork is shown.</p>` : "";
-    if (!rows.length) return `${notes}${missing}<p class="cw-mm-art-note">No ${esc(KINDS.find(([kind]) => kind === state.kind)?.[1].toLowerCase() || "artwork")} found for this title.</p>`;
+    const missing = data.current?.missing ? `<p class="cw-mm-art-note is-error">${TH("library.artwork.missing")}</p>` : "";
+    if (!rows.length) return `${notes}${missing}<p class="cw-mm-art-note">${TH("library.artwork.noneFound", {kind: KINDS.find(([kind]) => kind === state.kind)?.[1].toLowerCase() || T("library.artwork.artwork")})}</p>`;
     const all = Array.isArray(data.options) ? data.options : [];
     const shown = rows.slice(0, state.shown);
     const grid = shown.map((row) => optionHtml(data, row, all.indexOf(row))).join("");
@@ -89,10 +91,10 @@
     try {
       const response = await fetch(endpoint(kind), { cache: "no-store", credentials: "same-origin" });
       const data = await response.json().catch(() => ({}));
-      if (!response.ok || !data?.ok) throw new Error(data?.error || "Artwork could not be loaded.");
+      if (!response.ok || !data?.ok) throw new Error(data?.error || T("library.artwork.loadFailed"));
       state.data.set(kind, data);
     } catch (error) {
-      state.data.set(kind, { error: error?.message || "Artwork could not be loaded." });
+      state.data.set(kind, { error: error?.message || T("library.artwork.loadFailed") });
     }
     if (seq === state.seq) render();
   }
@@ -118,11 +120,11 @@
         body: JSON.stringify({ kind: state.kind, source: row.source, ref: row.ref, lang: row.lang || "" }),
       });
       const result = await response.json().catch(() => ({}));
-      if (!response.ok || !result?.ok) throw new Error(result?.error || "Saving failed.");
+      if (!response.ok || !result?.ok) throw new Error(result?.error || T("library.artwork.saveFailed"));
       data.current = { source: row.source, ref: row.ref };
       applyRev(result.rev || "");
     } catch (error) {
-      data.errors = [error?.message || "Saving failed."];
+      data.errors = [error?.message || T("library.artwork.saveFailed")];
     } finally {
       state.busy = false;
       render();
@@ -137,11 +139,11 @@
     try {
       const response = await fetch(endpoint(state.kind), { method: "DELETE", cache: "no-store", credentials: "same-origin" });
       const result = await response.json().catch(() => ({}));
-      if (!response.ok || !result?.ok) throw new Error(result?.error || "Reset failed.");
+      if (!response.ok || !result?.ok) throw new Error(result?.error || T("library.artwork.resetFailed"));
       data.current = null;
       applyRev(result.rev || "");
     } catch (error) {
-      data.errors = [error?.message || "Reset failed."];
+      data.errors = [error?.message || T("library.artwork.resetFailed")];
     } finally {
       state.busy = false;
       render();
@@ -190,17 +192,17 @@
     node.className = "cw-mm-art";
     node.innerHTML = `<section class="cw-mm-art-panel" role="dialog" aria-modal="true" aria-labelledby="cw-mm-art-title" tabindex="-1">
         <header class="cw-mm-art-head">
-          <div><h3 id="cw-mm-art-title">Change artwork</h3><p>${esc(state.title)}</p></div>
-          <button type="button" class="cw-mm-art-close" data-art-close aria-label="Close">${icon("close")}</button>
+          <div><h3 id="cw-mm-art-title">${TH("library.artwork.change")}</h3><p>${esc(state.title)}</p></div>
+          <button type="button" class="cw-mm-art-close" data-art-close aria-label="${TH("library.artwork.close")}">${icon("close")}</button>
         </header>
         <div class="cw-mm-art-bar">
           <div class="cw-mm-art-kinds" role="tablist">${KINDS.map(([kind, label]) => `<button type="button" class="cw-mm-art-pill" role="tab" data-art-kind="${kind}"${kind === "disc" ? " hidden" : ""}>${label}</button>`).join("")}</div>
-          <div class="cw-mm-art-sources" hidden>${[["all", "All"], ["tmdb", "TMDb"], ["fanart", "fanart.tv"]].map(([source, label]) => `<button type="button" class="cw-mm-art-pill" data-art-source="${source}">${label}</button>`).join("")}</div>
+          <div class="cw-mm-art-sources" hidden>${[["all", T("library.artwork.all")], ["tmdb", "TMDb"], ["fanart", "fanart.tv"]].map(([source, label]) => `<button type="button" class="cw-mm-art-pill" data-art-source="${source}">${label}</button>`).join("")}</div>
         </div>
         <div class="cw-mm-art-body"></div>
         <footer class="cw-mm-art-foot">
-          <small>Your choice is used everywhere in CrossWatch and kept when the cache is cleared.</small>
-          <button type="button" class="cw-mm-btn" data-art-reset>${icon("restart_alt")}Use automatic</button>
+          <small>${TH("library.artwork.everywhere")}</small>
+          <button type="button" class="cw-mm-btn" data-art-reset>${icon("restart_alt")}${TH("library.artwork.useAuto")}</button>
         </footer>
       </section>`;
     node.addEventListener("click", onClick);

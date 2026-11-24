@@ -5,6 +5,7 @@ import json
 from typing import Any
 
 import pytest
+from tests.i18n_source import english_source
 
 
 class _Resp:
@@ -554,7 +555,7 @@ def test_global_and_route_rating_surfaces_include_flicklist() -> None:
     root = Path(__file__).resolve().parents[1]
     watch = (root / "providers" / "scrobble" / "plex" / "watch.py").read_text(encoding="utf-8")
     api = (root / "api" / "scrobblerManagementAPI.py").read_text(encoding="utf-8")
-    webhook_modal = (root / "assets" / "js" / "modals" / "scrobbler-webhook" / "index.js").read_text(encoding="utf-8")
+    webhook_modal = english_source((root / "assets" / "js" / "modals" / "scrobbler-webhook" / "index.js").read_text(encoding="utf-8"))
 
     assert 'enable_flicklist = "flicklist" in custom_targets' in watch
     assert 'enable_flicklist = bool(watch_cfg.get("plex_flicklist_ratings"))' in watch

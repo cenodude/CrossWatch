@@ -1,16 +1,19 @@
 /* assets/js/editor/episode-groups.js */
 /* CrossWatch - Pair-specific History episode group editor */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
+const I18N = () => globalThis.window?.CW?.I18n || globalThis.window?.__cwI18n;
+const T = (key, vars) => I18N()?.t?.(key, vars) ?? key;
+const TH = (key, vars) => I18N()?.html?.(key, vars) ?? key;
 const esc = value => String(value ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const coordinates = items => items.map(item => `S${String(item.season).padStart(2,"0")}E${String(item.episode).padStart(2,"0")}`).join(", ");
 const namespaces = ["tmdb", "tvdb", "imdb", "trakt", "simkl"];
 
 export function parseEpisodes(value, showIds, title) {
   const parts = value.trim().split(/[\s,;]+/).filter(Boolean);
-  if (!parts.length || parts.length > 20) throw new Error("Enter between 1 and 20 episodes per side.");
+  if (!parts.length || parts.length > 20) throw new Error(T("editor.groups.between"));
   return parts.map(part => {
     const match = /^S(\d{1,3})E(\d{1,5})$/i.exec(part);
-    if (!match || Number(match[2]) < 1) throw new Error("Use episode coordinates such as S04E23, S04E24.");
+    if (!match || Number(match[2]) < 1) throw new Error(T("editor.groups.coords"));
     return {type:"episode", title, show_ids:{...showIds}, season:Number(match[1]), episode:Number(match[2])};
   });
 }
@@ -25,16 +28,16 @@ export async function openEpisodeGroups(trigger, {pairId = "", groupId = "", ori
   const dialog = document.createElement("dialog");
   dialog.className = "eg-dialog cw-page-panel";
   dialog.setAttribute("aria-labelledby", "episode-groups-title");
-  dialog.innerHTML = `<div class="eg-head"><div><div class="eg-eyebrow">MAPPING</div><h2 id="episode-groups-title">Episode groups</h2><p>Match combined episodes with their separate parts.</p></div><button type="button" class="eg-close" data-close aria-label="Close episode groups"><span class="material-symbols-rounded" aria-hidden="true">close</span></button></div>
-    <div class="eg-body">${returnToMapping ? '<button type="button" class="eg-back" data-back><span class="material-symbols-rounded" aria-hidden="true">arrow_back</span>Back to mapping</button>' : ""}<div class="eg-toolbar"><label class="eg-field">History sync pair<select data-pair aria-label="History sync pair"></select></label><button type="button" data-align title="Compare how both providers have this show"><span class="material-symbols-rounded" aria-hidden="true">compare</span>Check matching</button><button type="button" data-new><span class="material-symbols-rounded" aria-hidden="true">add</span>New group</button></div>
-    <form id="episode-group-form" data-form><label class="eg-field">Group name<input data-name required maxlength="200" placeholder="e.g. Friends · Season 4 finale"></label>
-    <div class="eg-sides">${["source","target"].map(side => `<section class="eg-provider" data-side="${side}" aria-label="${side} episodes"><div class="eg-provider-head"><span class="eg-provider-logo" data-logo aria-hidden="true"></span><div><strong data-endpoint></strong><span class="eg-muted" data-instance></span></div></div><div class="eg-identity"><label class="eg-field">ID type<select data-namespace aria-label="${side} show ID type">${namespaces.map(ns=>`<option value="${ns}">${ns.toUpperCase()}</option>`).join("")}</select></label><label class="eg-field">Show ID<input data-show-id required maxlength="128" placeholder="e.g. 1668" aria-label="${side} show ID"></label></div><label class="eg-field">Episodes<input data-episodes required placeholder="${side === "source" ? "S04E23, S04E24" : "S04E23"}" aria-label="${side} episodes"></label></section>`).join('<span class="material-symbols-rounded eg-link" aria-hidden="true">compare_arrows</span>')}</div>
-    <p class="eg-hint">Use show IDs. Enter one episode on one side and two or more on the other.</p>
-    <label class="eg-scrobble"><input type="checkbox" data-scrobble><span><strong>Also use for completed scrobbles</strong><small>Apply this group to matching Watcher and webhook routes.</small></span></label>
-    <details class="eg-help"><summary>How groups work</summary><ul><li>All separate parts must be watched before the combined episode is marked watched. A watched combined episode expands into its parts, following the pair’s sync direction.</li><li>Completed scrobbles apply to matching provider instances and profile. All parts must complete after enabling this option; earlier watches are handled by History sync. Each destination episode is sent once.</li><li>Grouped start/pause updates stay local. Grouped rewatches are unsupported. Ordinary corrections apply only to sync.</li><li>Unwatched changes hold the group until its watched states are resolved on the providers. Later numbering shifts still use ordinary episode corrections.</li></ul></details></form>
+  dialog.innerHTML = `<div class="eg-head"><div><div class="eg-eyebrow">${TH("editor.groups.eyebrow")}</div><h2 id="episode-groups-title">${TH("editor.groups.title")}</h2><p>${TH("editor.groups.sub")}</p></div><button type="button" class="eg-close" data-close aria-label="${TH("editor.groups.close")}"><span class="material-symbols-rounded" aria-hidden="true">close</span></button></div>
+    <div class="eg-body">${returnToMapping ? '<button type="button" class="eg-back" data-back><span class="material-symbols-rounded" aria-hidden="true">arrow_back</span>' + TH("editor.groups.back") + '</button>' : ""}<div class="eg-toolbar"><label class="eg-field">${TH("editor.groups.pair")}<select data-pair aria-label="${TH("editor.groups.pair")}"></select></label><button type="button" data-align title="${TH("editor.groups.compareTitle")}"><span class="material-symbols-rounded" aria-hidden="true">compare</span>${TH("editor.groups.check")}</button><button type="button" data-new><span class="material-symbols-rounded" aria-hidden="true">add</span>${TH("editor.groups.new")}</button></div>
+    <form id="episode-group-form" data-form><label class="eg-field">${TH("editor.groups.name")}<input data-name required maxlength="200" placeholder="${TH("editor.groups.namePlaceholder")}"></label>
+    <div class="eg-sides">${["source","target"].map(side => `<section class="eg-provider" data-side="${side}" aria-label="${TH(`editor.groups.side.${side}.episodes`)}"><div class="eg-provider-head"><span class="eg-provider-logo" data-logo aria-hidden="true"></span><div><strong data-endpoint></strong><span class="eg-muted" data-instance></span></div></div><div class="eg-identity"><label class="eg-field">${TH("editor.groups.idType")}<select data-namespace aria-label="${TH(`editor.groups.side.${side}.idType`)}">${namespaces.map(ns=>`<option value="${ns}">${ns.toUpperCase()}</option>`).join("")}</select></label><label class="eg-field">${TH("editor.groups.showId")}<input data-show-id required maxlength="128" placeholder="${TH("editor.groups.showIdPlaceholder")}" aria-label="${TH(`editor.groups.side.${side}.showId`)}"></label></div><label class="eg-field">${TH("editor.groups.episodes")}<input data-episodes required placeholder="${side === "source" ? "S04E23, S04E24" : "S04E23"}" aria-label="${TH(`editor.groups.side.${side}.episodes`)}"></label></section>`).join('<span class="material-symbols-rounded eg-link" aria-hidden="true">compare_arrows</span>')}</div>
+    <p class="eg-hint">${TH("editor.groups.hint")}</p>
+    <label class="eg-scrobble"><input type="checkbox" data-scrobble><span><strong>${TH("editor.groups.alsoScrobble")}</strong><small>${TH("editor.groups.alsoScrobbleSub")}</small></span></label>
+    <details class="eg-help"><summary>${TH("editor.groups.how")}</summary><ul><li>${TH("editor.groups.help1")}</li><li>${TH("editor.groups.help2")}</li><li>${TH("editor.groups.help3")}</li><li>${TH("editor.groups.help4")}</li></ul></details></form>
     <p class="eg-error" role="alert"></p><p class="eg-status" role="status"></p>
-    <section class="eg-saved"><div class="eg-saved-head"><h3>Saved groups</h3><span class="eg-muted" data-count>Loading…</span></div><div data-groups></div></section></div>
-    <footer class="eg-footer"><div><button type="button" data-cancel-edit>Reset</button><button type="submit" form="episode-group-form" class="eg-primary" data-save>Save group</button></div></footer>`;
+    <section class="eg-saved"><div class="eg-saved-head"><h3>${TH("editor.groups.saved")}</h3><span class="eg-muted" data-count>${TH("editor.groups.loading")}</span></div><div data-groups></div></section></div>
+    <footer class="eg-footer"><div><button type="button" data-cancel-edit>${TH("editor.groups.reset")}</button><button type="submit" form="episode-group-form" class="eg-primary" data-save>${TH("editor.groups.saveGroup")}</button></div></footer>`;
   document.body.append(dialog);
   const $ = selector => dialog.querySelector(selector);
   let pairs = [], editingId = "", busy = false, changed = false;
@@ -43,7 +46,7 @@ export async function openEpisodeGroups(trigger, {pairId = "", groupId = "", ori
     const response = await fetch("/api/editor/episode-groups", {credentials:"same-origin", cache:"no-store", signal:controller.signal,
       ...(body ? {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body)} : {})});
     const data = await response.json();
-    if (!response.ok) throw new Error(typeof data.detail === "string" ? data.detail : "Check the group identifiers and episode coordinates.");
+    if (!response.ok) throw new Error(typeof data.detail === "string" ? data.detail : T("editor.groups.checkIds"));
     return data;
   };
   const selectedPair = () => pairs.find(pair => pair.id === $("[data-pair]").value);
@@ -56,13 +59,13 @@ export async function openEpisodeGroups(trigger, {pairId = "", groupId = "", ori
     editingId = group?.id || "";
     $("[data-name]").value = group?.name || "";
     $("[data-scrobble]").checked = group?.scrobble === true;
-    $("[data-save]").textContent = group ? "Save changes" : "Save group";
+    $("[data-save]").textContent = group ? T("editor.groups.saveChanges") : T("editor.groups.saveGroup");
     for (const side of ["source", "target"]) {
       const section = $(`[data-side="${side}"]`), endpoint = selectedPair()?.[side];
       const episode = group?.[side]?.episodes?.[0];
       const ids = episode?.show_ids || {};
       section.querySelector("[data-endpoint]").textContent = window.CW?.ProviderMeta?.label?.(endpoint?.provider) || endpoint?.provider || side;
-      section.querySelector("[data-instance]").textContent = endpoint?.instance === "default" ? "Default instance" : endpoint?.instance || "";
+      section.querySelector("[data-instance]").textContent = endpoint?.instance === "default" ? T("editor.groups.defaultInstance") : endpoint?.instance || "";
       const logo = section.querySelector("[data-logo]");
       logo.replaceChildren();
       const src = endpoint && window.CW?.ProviderMeta?.logoPath?.(endpoint.provider);
@@ -84,9 +87,9 @@ export async function openEpisodeGroups(trigger, {pairId = "", groupId = "", ori
     $("[data-form]").hidden = !pair;
     $("[data-new]").disabled = $("[data-align]").disabled = !pair;
     $("[data-pair]").disabled = !pairs.length;
-    $("[data-count]").textContent = pair ? `${groups.length} episode group${groups.length === 1 ? "" : "s"}` : "";
+    $("[data-count]").textContent = pair ? T("editor.groups.count", {count: groups.length}) : "";
     $("[data-save]").disabled = $("[data-cancel-edit]").disabled = !pair;
-    $("[data-groups]").innerHTML = groups.length ? groups.map((group,index)=>`<article class="eg-saved-group"><div class="eg-saved-heading"><strong>${esc(group.name)}</strong><span class="eg-scrobble-state">Scrobbles ${group.scrobble ? "on" : "off"}</span></div><div class="eg-saved-mapping">${["source","target"].map(side=>`<span><b>${esc(window.CW?.ProviderMeta?.label?.(group[side].provider) || group[side].provider)}</b> ${esc(coordinates(group[side].episodes))}</span>`).join('<span aria-hidden="true">↔</span>')}</div><div class="eg-saved-actions"><button type="button" data-edit="${index}" aria-label="Edit ${esc(group.name)}">Edit</button><button type="button" class="eg-delete" data-delete="${index}" aria-label="Delete ${esc(group.name)}"><span class="material-symbols-rounded" aria-hidden="true">delete</span></button></div></article>`).join("") : `<p class="eg-empty">${pair ? "No groups yet. Create one above to link these episode layouts." : provider ? "No accessible History sync pairs use this provider account. Configure a matching pair with History enabled first." : "No accessible History sync pairs. Configure a pair with History enabled first."}</p>`;
+    $("[data-groups]").innerHTML = groups.length ? groups.map((group,index)=>`<article class="eg-saved-group"><div class="eg-saved-heading"><strong>${esc(group.name)}</strong><span class="eg-scrobble-state">${TH(group.scrobble ? "editor.groups.scrobblesOn" : "editor.groups.scrobblesOff")}</span></div><div class="eg-saved-mapping">${["source","target"].map(side=>`<span><b>${esc(window.CW?.ProviderMeta?.label?.(group[side].provider) || group[side].provider)}</b> ${esc(coordinates(group[side].episodes))}</span>`).join('<span aria-hidden="true">↔</span>')}</div><div class="eg-saved-actions"><button type="button" data-edit="${index}" aria-label="${TH("editor.groups.editLabel", {name: group.name})}">${TH("editor.groups.edit")}</button><button type="button" class="eg-delete" data-delete="${index}" aria-label="${TH("editor.groups.deleteLabel", {name: group.name})}"><span class="material-symbols-rounded" aria-hidden="true">delete</span></button></div></article>`).join("") : `<p class="eg-empty">${pair ? T("editor.groups.none") : provider ? T("editor.groups.noPairsProvider") : T("editor.groups.noPairs")}</p>`;
   };
   const load = async () => {
     const selected = $("[data-pair]").value || pairId;
@@ -105,7 +108,7 @@ export async function openEpisodeGroups(trigger, {pairId = "", groupId = "", ori
     try {
       const warnings = (await request(body)).warnings || []; changed = true;
       await load();
-      $(".eg-status").textContent = body.action === "delete" ? "Group deleted." : warnings.length ? "Group saved, but please check it." : "Group saved. Refresh open History reviews. Enabled scrobble rules apply to new playback events.";
+      $(".eg-status").textContent = body.action === "delete" ? T("editor.groups.deleted") : warnings.length ? T("editor.groups.savedCheck") : T("editor.groups.savedOk");
       $(".eg-error").textContent = warnings.join(" ");
     } catch (error) { if (!controller.signal.aborted) $(".eg-error").textContent = error.message; }
     finally { busy = false; controls.forEach(control => { control.disabled = false; }); render(); }
@@ -124,7 +127,7 @@ export async function openEpisodeGroups(trigger, {pairId = "", groupId = "", ori
         group[side] = {...pair[side], episodes:parseEpisodes(section.querySelector("[data-episodes]").value, ids, name)};
       }
       if (Math.min(group.source.episodes.length, group.target.episodes.length) !== 1 || Math.max(group.source.episodes.length, group.target.episodes.length) < 2) {
-        throw new Error("Enter one combined episode on one side and two or more separate episodes on the other.");
+        throw new Error(T("editor.groups.oneCombined"));
       }
       mutate({pair_id:pair.id, group});
     } catch (error) { $(".eg-error").textContent = error.message; }
@@ -133,13 +136,13 @@ export async function openEpisodeGroups(trigger, {pairId = "", groupId = "", ori
     if (busy) return;
     const pair = selectedPair();
     const section = ["source","target"].map(side=>$(`[data-side="${side}"]`)).find(part=>part.querySelector("[data-show-id]").value.trim());
-    if (!pair || !section) { $(".eg-error").textContent = "Enter a show ID first, then check its matching."; return; }
+    if (!pair || !section) { $(".eg-error").textContent = T("editor.groups.showIdFirst"); return; }
     $(".eg-error").textContent = "";
     try {
       const {openEpisodeAlignment} = await import(`/assets/js/editor/episode-alignment.js?v=${encodeURIComponent(window.APP_VERSION || "1")}`);
       await openEpisodeAlignment($("[data-align]"), {pairId:pair.id,
         showIds:{[section.querySelector("[data-namespace]").value]:section.querySelector("[data-show-id]").value.trim()},
-        onSaved:async () => { changed = true; await load(); $(".eg-status").textContent = "Matching fixes saved."; }});
+        onSaved:async () => { changed = true; await load(); $(".eg-status").textContent = T("editor.groups.fixesSaved"); }});
     } catch (error) { $(".eg-error").textContent = error.message; }
   };
   $("[data-pair]").onchange = () => { render(); reset(); };
@@ -152,7 +155,7 @@ export async function openEpisodeGroups(trigger, {pairId = "", groupId = "", ori
     if (edit) { reset(selectedPair().groups[Number(edit.dataset.edit)]); $("[data-name]").focus(); }
     if (remove) {
       const group = selectedPair().groups[Number(remove.dataset.delete)];
-      if ((await (window.CW?.MobileUI?.ask || window.confirm)(`Delete episode group “${group.name}”? These episodes will use ordinary matching again.`))) {
+      if ((await (window.CW?.MobileUI?.ask || window.confirm)(T("editor.groups.confirmDelete", {name: group.name})))) {
         mutate({pair_id:selectedPair().id, action:"delete", group_id:group.id});
       }
     }

@@ -1,11 +1,13 @@
 /* tests/account-menu.browser.mjs */
 /* CrossWatch - Shared account and primary navigation across shells, permissions and devices */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
+import './i18n-browser-setup.mjs';
 import test, {before, after} from 'node:test';
 import assert from 'node:assert/strict';
 import {execFileSync} from 'node:child_process';
 import {readFile, mkdir} from 'node:fs/promises';
 import {chromium, webkit} from 'playwright';
+import {i18nHead, localeRoute} from './i18n-test-helper.mjs';
 
 const templates = JSON.parse(execFileSync('python', ['-c', `
 import json, ui_frontend as ui
@@ -26,9 +28,10 @@ async function fixture(t, {shell='main', role='admin', theme='flat-dark', width=
   const errors = [], writes = [];
   page.on('pageerror', error => errors.push(error.message));
   t.after(() => assert.deepEqual(errors, []));
-  const html = await page.evaluate(({source,theme,avatar}) => {
+  const html = await page.evaluate(({source,theme,avatar,head}) => {
     const doc = new DOMParser().parseFromString(source, 'text/html');
     doc.querySelectorAll('script').forEach(node => node.remove());
+    doc.head.insertAdjacentHTML('afterbegin', head);
     doc.getElementById('cw-main-loading')?.remove();
     doc.documentElement.className = theme === 'original' ? 'cw-theme-original' : `cw-theme-${theme === 'flat-light' ? 'light' : 'dark'}`;
     if (theme !== 'original') doc.documentElement.dataset.cwTheme = theme;
@@ -52,9 +55,11 @@ async function fixture(t, {shell='main', role='admin', theme='flat-dark', width=
     preferences.src = '/assets/helpers/mobile-settings.js';
     doc.body.append(preferences);
     return '<!doctype html>' + doc.documentElement.outerHTML;
-  }, {source:templates[role][shell], theme, avatar});
+  }, {source:templates[role][shell], theme, avatar, head:i18nHead()});
   await page.route('https://account-menu.test/**', async route => {
     const path = new URL(route.request().url()).pathname;
+    const locale = localeRoute(path);
+    if (locale) return route.fulfill(locale);
     if (path.startsWith('/assets/')) {
       try {
         if (!assets.has(path)) assets.set(path, await readFile(new URL('..'+path, import.meta.url)));

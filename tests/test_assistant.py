@@ -11,6 +11,7 @@ from typing import Any
 import pytest
 
 from services import assistant
+from tests.i18n_source import english_source
 
 MONITOR_ID = "c" * 32
 PLAIN_ID = "d" * 32
@@ -976,8 +977,8 @@ def test_assistant_ui_ships_for_admins_only() -> None:
 
     admin = ui_frontend.get_index_html(include_admin=True)
     user = ui_frontend.get_index_html(include_admin=False)
-    settings_js = Path("assets/js/assistant-settings.js").read_text("utf-8")
-    modals_js = Path("assets/js/modals.js").read_text("utf-8")
+    settings_js = english_source(Path("assets/js/assistant-settings.js").read_text("utf-8"))
+    modals_js = english_source(Path("assets/js/modals.js").read_text("utf-8"))
 
     for needle in ('id="assistant_settings"', "/assets/js/assistant-settings.js", "cwAboutMenuSelect('assistant')"):
         assert needle in admin
@@ -990,7 +991,7 @@ def test_assistant_ui_ships_for_admins_only() -> None:
     assert '<button id="det-ai" class="ghost det-ai" type="button"' in admin
     assert "data-ai-analyze" in admin.split('id="det-ai"', 1)[1].split(">", 1)[0]
     assert "[data-ai-analyze]" in settings_js and "_detailsTab" in settings_js and "cwAssistant" in settings_js
-    logs_js = Path("assets/js/logs.js").read_text("utf-8")
+    logs_js = english_source(Path("assets/js/logs.js").read_text("utf-8"))
     assert "data-ai-analyze data-ai-logs hidden" in logs_js and "aiQuestion" in logs_js
     assert 'html:not([data-cw-assistant="on"]) [data-ai-analyze]' in Path("assets/css/ai-settings.css").read_text("utf-8")
     assert Path("assets/css/ai-settings.css").read_text("utf-8").startswith("/* assets/css/ai-settings.css */")
@@ -1402,8 +1403,8 @@ def test_interactive_review_counts_proposed_removals_for_the_ai_button() -> None
     assert store.counts["conflicts"] == 1
     assert store.counts["attention"] == 1
 
-    page_js = Path("assets/js/interactive-sync.js").read_text("utf-8")
-    analyzer_js = Path("assets/js/analyzer/index.js").read_text("utf-8")
+    page_js = english_source(Path("assets/js/interactive-sync.js").read_text("utf-8"))
+    analyzer_js = english_source(Path("assets/js/analyzer/index.js").read_text("utf-8"))
     assert "${aiButton()}" in page_js and 'report.outcome === "success"' in page_js and "c.removals || c.conflicts || c.attention" in page_js
     assert 'sev === "error" || sev === "warn" ? aiAsk(' in analyzer_js and 'view !== "all" || mismatch ? aiAsk(' in analyzer_js
     assert all("data-ai-analyze data-ai-question" in source for source in (page_js, analyzer_js))

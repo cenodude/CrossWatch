@@ -1,6 +1,7 @@
 /* tests/status-mapping.browser.mjs */
 /* CrossWatch - Pair status mapping drafts, themes and mobile navigation. */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
+import './i18n-browser-setup.mjs';
 import assert from "node:assert/strict";
 import {readFile, mkdir} from "node:fs/promises";
 import test from "node:test";

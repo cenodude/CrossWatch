@@ -1,5 +1,7 @@
 // assets/auth/auth.punchplay.js
 (function () {
+  const T = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.t?.(key, vars) ?? key;
+  const TH = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.html?.(key, vars) ?? key;
   if (window._punchplayPatched) return;
   window._punchplayPatched = true;
 
@@ -35,24 +37,24 @@
     const key = String(code || "").trim();
     if (key === "rate_limited") {
       const local = data.rate_limit_source === "local" || (data.local && !data.rate_limit_source);
-      const message = local ? "CrossWatch device-code limit reached" : "PunchPlay requested a cooldown";
+      const message = local ? T("connections.auth.localLimit") : T("connections.auth.gen.cooldown", {provider: "PunchPlay"});
       const seconds = Math.ceil(Number(data.retry_after));
-      if (!Number.isFinite(seconds) || seconds <= 0) return message + " - try again later";
+      if (!Number.isFinite(seconds) || seconds <= 0) return T("connections.auth.tryLater", {message});
       const minutes = Math.floor(seconds / 60), remainder = seconds % 60;
       const wait = minutes ? minutes + "m" + (remainder ? " " + remainder + "s" : "") : seconds + "s";
-      return message + " - try again in " + wait;
+      return T("connections.auth.tryIn", {message, wait});
     }
     const map = {
-      missing_client_id: "No PunchPlay app id configured",
-      invalid_client: "PunchPlay rejected the CrossWatch app id",
-      unauthorized_client: "The CrossWatch PunchPlay app is inactive",
-      invalid_scope: "The CrossWatch PunchPlay app is missing a required scope",
-      invalid_grant: "PunchPlay access expired - connect again",
-      expired: "Link code expired",
-      network_error: "Could not reach PunchPlay",
-      device_start_failed: "Could not start PunchPlay device login",
+      missing_client_id: T("connections.auth.gen.noAppId", {provider: "PunchPlay"}),
+      invalid_client: T("connections.auth.gen.rejectedAppId", {provider: "PunchPlay"}),
+      unauthorized_client: T("connections.auth.gen.appInactive", {provider: "PunchPlay"}),
+      invalid_scope: T("connections.auth.gen.appScope", {provider: "PunchPlay"}),
+      invalid_grant: T("connections.auth.gen.accessExpired", {provider: "PunchPlay"}),
+      expired: T("connections.auth.linkExpired"),
+      network_error: T("connections.validation.reachFailed", {provider: "PunchPlay"}),
+      device_start_failed: T("connections.auth.gen.deviceStartFailedShort", {provider: "PunchPlay"}),
     };
-    return map[key] || key.replace(/_/g, " ") || "PunchPlay request failed";
+    return map[key] || key.replace(/_/g, " ") || T("connections.auth.gen.requestFailedShort", {provider: "PunchPlay"});
   }
 
   function setConn(ok, msg) {
@@ -84,7 +86,7 @@
     const t = el("punchplay_qc_timer"); if (!t) return;
     const left = Math.max(0, Math.round((ppQcDeadline - Date.now()) / 1000));
     const mm = Math.floor(left / 60), ss = String(left % 60).padStart(2, "0");
-    t.textContent = left > 0 ? ("Expires in " + mm + ":" + ss) : "";
+    t.textContent = left > 0 ? T("connections.auth.expiresIn", {time: mm + ":" + ss}) : "";
   }
 
   function ppQcStop() {
@@ -99,7 +101,7 @@
     if (ppQcTimer) { clearInterval(ppQcTimer); ppQcTimer = null; }
     stopPoll();
     ppQcDeadline = 0;
-    const st = el("punchplay_qc_status"); if (st) st.textContent = "Link code expired. Restart to try again.";
+    const st = el("punchplay_qc_status"); if (st) st.textContent = T("connections.auth.codeExpiredRestart");
     const t = el("punchplay_qc_timer"); if (t) t.textContent = "";
     ppQcShowRestart();
   }
@@ -114,7 +116,7 @@
   function ppQcShowCode(code, secondsLeft) {
     const codeInput = el("punchplay_device_code"); if (codeInput) codeInput.value = code || "";
     const codeEl = el("punchplay_qc_code"); if (codeEl) codeEl.textContent = code || "----–----";
-    const st = el("punchplay_qc_status"); if (st) st.textContent = "Waiting for approval…";
+    const st = el("punchplay_qc_status"); if (st) st.textContent = T("connections.auth.waitingApprovalEllipsis");
     ppQcDeadline = Date.now() + (Math.max(30, Number(secondsLeft) || 600) * 1000);
     ppQcSetState(true);
     ppQcUpdateTimer();
@@ -127,10 +129,10 @@
     if (!code || /^-+$/.test(code.replace(/–/g, "-"))) return;
     let ok = false;
     ok = (await window.cwCopyText?.(code)) === true;
-    if (!ok) { note("Copy failed"); return; }
-    btn.classList.add("copied"); btn.innerHTML = PP_ICON_CHECK; btn.title = "Copied!";
+    if (!ok) { note(T("connections.auth.copyFailed")); return; }
+    btn.classList.add("copied"); btn.innerHTML = PP_ICON_CHECK; btn.title = T("connections.auth.copiedBang");
     if (ppQcCopyRevert) clearTimeout(ppQcCopyRevert);
-    ppQcCopyRevert = setTimeout(function () { btn.classList.remove("copied"); btn.innerHTML = PP_ICON_COPY; btn.title = "Copy code"; }, 1400);
+    ppQcCopyRevert = setTimeout(function () { btn.classList.remove("copied"); btn.innerHTML = PP_ICON_COPY; btn.title = T("connections.auth.copyCode"); }, 1400);
   }
 
   function ensurePunchPlayInstanceUI() {
@@ -150,14 +152,14 @@
         if (code) code.value = txt(data.pending.user_code);
         if (!(ppPoller && ppPoller.isRunning())) startPoll(Math.max(5, Number(data.pending.interval || 5)));
       }
-      let msg = ok ? (data.username ? "Connected as " + data.username : "Connected") : "Not connected";
-      if (data.pending && !data.connected) msg = "Waiting for PunchPlay approval";
+      let msg = ok ? (data.username ? T("connections.auth.connectedAs", {name: data.username}) : T("connections.auth.connected")) : T("connections.auth.notConnected");
+      if (data.pending && !data.connected) msg = T("connections.auth.gen.waitingApproval", {provider: "PunchPlay"});
       setConn(data.pending && !data.connected ? false : ok, msg);
       if (ok) { try { ppQcStop(); } catch (_) {} }
-      if (showToast) note(ok ? "PunchPlay verified" : "PunchPlay not connected");
+      if (showToast) note(ok ? T("connections.auth.gen.verified", {provider: "PunchPlay"}) : T("connections.auth.gen.notConnected", {provider: "PunchPlay"}));
     } catch {
-      setConn(false, "PunchPlay verify failed");
-      if (showToast) note("PunchPlay verify failed");
+      setConn(false, T("connections.auth.gen.verifyFailedShort", {provider: "PunchPlay"}));
+      if (showToast) note(T("connections.auth.gen.verifyFailedShort", {provider: "PunchPlay"}));
     }
   }
 
@@ -187,7 +189,7 @@
       maxTotalMs: 660000,
       onAuthorized: async () => {
         try { ppQcStop(); } catch (_) {}
-        note("PunchPlay connected");
+        note(T("connections.auth.gen.connected", {provider: "PunchPlay"}));
         await hydrate();
         emitConnected();
       },
@@ -230,7 +232,7 @@
     const startBtn = el("punchplay_device_start");
     if (startBtn) { startBtn.disabled = true; startBtn.classList.add("busy"); }
 
-    const win = Shared.openWaitWindow("PunchPlay", "Requesting a PunchPlay code...", "PUNCHPLAY");
+    const win = Shared.openWaitWindow("PunchPlay", T("connections.auth.gen.requestingCode", {provider: "PunchPlay"}), "PUNCHPLAY");
     try {
       const r = await fetchJSON(ppApi("/api/punchplay/device/start"), {
         method: "POST",
@@ -247,23 +249,23 @@
 
       const helpEl = el("punchplay_qc_help");
       if (helpEl) helpEl.textContent = win
-        ? "Opening punchplay.tv/link — enter this code there and approve CrossWatch."
-        : "Open punchplay.tv/link and enter this code to approve CrossWatch.";
+        ? T("connections.auth.pp.opening")
+        : T("connections.auth.pp.open");
 
       ppQcShowCode(code, secs);
       setQr(txt(data.verification_uri_qr));
-      setConn(false, "Waiting for approval");
+      setConn(false, T("connections.auth.waitingForApproval"));
       startPoll(Math.max(5, Number(data.interval || 5)));
 
       if (!Shared.showWaitCode(win, { key: "PUNCHPLAY", label: "PunchPlay", code, url })) {
-        note("Popup blocked - open punchplay.tv/link and enter the code.");
+        note(T("connections.auth.pp.popup"));
       }
     } catch (e) {
       try { if (win && !win.closed) win.close(); } catch (_) {}
       try { ppQcStop(); } catch (_) {}
       const msg = e && e.message ? e.message : String(e);
       setConn(false, msg);
-      note("PunchPlay device login failed: " + msg);
+      note(T("connections.auth.deviceFailed", {provider: "PunchPlay", error: msg}));
     } finally {
       ppStarting = false;
       if (startBtn) { startBtn.disabled = false; startBtn.classList.remove("busy"); }
@@ -273,7 +275,7 @@
   async function onCancel() {
     try { ppQcStop(); } catch (_) {}
     try { await fetchJSON(ppApi("/api/punchplay/device/cancel"), { method: "POST" }); } catch (_) {}
-    setConn(false, "Not connected");
+    setConn(false, T("connections.auth.notConnected"));
   }
 
   async function onDisc() {
@@ -285,10 +287,10 @@
       const code = el("punchplay_device_code"); if (code) code.value = "";
       const codeEl = el("punchplay_qc_code"); if (codeEl) codeEl.textContent = "----–----";
       setConn(false);
-      note("PunchPlay disconnected");
+      note(T("connections.auth.gen.disconnected", {provider: "PunchPlay"}));
       await hydrate();
     } catch {
-      note("PunchPlay disconnect failed");
+      note(T("connections.auth.gen.disconnectFailed", {provider: "PunchPlay"}));
     }
   }
 

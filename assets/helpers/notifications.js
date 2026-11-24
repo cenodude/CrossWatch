@@ -2,6 +2,8 @@
 /* CrossWatch - shared notification menu, with read state, dismissals and alerts shared across devices. */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 (() => {
+  const T = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.t?.(key, vars) ?? key;
+  const TH = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.html?.(key, vars) ?? key;
   const account = document.getElementById("cw-nav-profile-menu");
   if (!account || window.CW?.Notifications) return;
   const esc = value => String(value ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -103,7 +105,7 @@
   const bell = document.createElement("button");
   bell.id = "cw-notifications-button";
   bell.type = "button";
-  bell.setAttribute("aria-label", "Notifications");
+  bell.setAttribute("aria-label", T("common.notifications.title"));
   bell.setAttribute("aria-haspopup", "dialog");
   bell.setAttribute("aria-expanded", "false");
   bell.setAttribute("aria-controls", "cw-notifications-panel");
@@ -118,7 +120,7 @@
   panel.hidden = true;
   panel.setAttribute("role", "dialog");
   panel.setAttribute("aria-labelledby", "cw-notifications-title");
-  panel.innerHTML = '<div class="cw-notifications-head"><h2 id="cw-notifications-title">Notifications</h2><div class="cw-notifications-tools"><button type="button" data-notifications-clear-all hidden>Clear all</button><button type="button" data-notifications-settings aria-expanded="false" aria-controls="cw-notifications-settings" aria-label="Notification settings" title="Notification settings"><span class="material-symbols-rounded" aria-hidden="true">tune</span></button><button type="button" data-notifications-close aria-label="Close notifications"><span class="material-symbols-rounded" aria-hidden="true">close</span></button></div></div><div class="cw-notifications-settings" id="cw-notifications-settings" hidden><label><input type="checkbox" data-notification-banner><span>Banner for new notifications</span></label><label><input type="checkbox" data-notification-push><span>Push notifications on this device</span></label><p class="cw-notifications-push-note" data-push-note></p><button type="button" data-push-test hidden>Send a test notification</button></div><div class="cw-notifications-body"></div>';
+  panel.innerHTML = '<div class="cw-notifications-head"><h2 id="cw-notifications-title">' + TH("common.notifications.title") + '</h2><div class="cw-notifications-tools"><button type="button" data-notifications-clear-all hidden>' + TH("common.actions.clearAll") + '</button><button type="button" data-notifications-settings aria-expanded="false" aria-controls="cw-notifications-settings" aria-label="' + TH("common.notifications.settings") + '" title="' + TH("common.notifications.settings") + '"><span class="material-symbols-rounded" aria-hidden="true">tune</span></button><button type="button" data-notifications-close aria-label="' + TH("common.notifications.close") + '"><span class="material-symbols-rounded" aria-hidden="true">close</span></button></div></div><div class="cw-notifications-settings" id="cw-notifications-settings" hidden><label><input type="checkbox" data-notification-banner><span>' + TH("common.notifications.banner") + '</span></label><label><input type="checkbox" data-notification-push><span>' + TH("common.notifications.pushDevice") + '</span></label><p class="cw-notifications-push-note" data-push-note></p><button type="button" data-push-test hidden>' + TH("common.notifications.sendTest") + '</button></div><div class="cw-notifications-body"></div>';
   document.body.append(panel);
   const body = panel.querySelector(".cw-notifications-body");
   const badge = bell.querySelector(".cw-notifications-count");
@@ -131,7 +133,7 @@
   const alert = document.createElement("div");
   alert.id = "cw-notification-alert";
   alert.hidden = true;
-  alert.innerHTML = '<button type="button" data-alert-open><span role="status" aria-live="polite" aria-atomic="true"></span><small>View notifications</small></button><button type="button" data-alert-close aria-label="Dismiss notification banner">&#215;</button>';
+  alert.innerHTML = '<button type="button" data-alert-open><span role="status" aria-live="polite" aria-atomic="true"></span><small>' + TH("common.notifications.view") + '</small></button><button type="button" data-alert-close aria-label="' + TH("common.notifications.dismissBanner") + '">&#215;</button>';
   document.body.append(alert);
   let alertTimer;
   const alertsOn = () => { try { return localStorage.getItem(alertKey) === "1"; } catch { return false; } };
@@ -160,7 +162,7 @@
     if (!fresh.length) return;
     hideAlert();
     alert.hidden = false;
-    alert.querySelector("[role=status]").textContent = fresh.length === 1 ? String(fresh[0].title || "New notification") : `${fresh.length} new notifications`;
+    alert.querySelector("[role=status]").textContent = fresh.length === 1 ? String(fresh[0].title || T("common.notifications.newOne")) : T("common.notifications.newCount", { count: fresh.length });
     alertTimer = setTimeout(hideAlert, 8000);
     try { navigator.vibrate?.([30, 60, 30]); } catch {}
   }
@@ -207,7 +209,7 @@
     panel.querySelector("[data-notifications-clear-all]").hidden = !items.length;
     badge.hidden = !count;
     badge.textContent = count > 99 ? "99+" : String(count);
-    bell.setAttribute("aria-label", count ? `Notifications (${count} new)` : "Notifications");
+    bell.setAttribute("aria-label", count ? T("common.notifications.titleWithNew", { count }) : T("common.notifications.title"));
     const loading = server.loading || values.some(source => source.loading);
     const errors = [...server.errors, ...values.map(source => source.error)].filter(Boolean);
     const managed = document.documentElement.dataset.cwRole === "user";
@@ -221,10 +223,10 @@
         external = url.origin !== location.origin;
         if (!href || (external && !(url.origin === "https://github.com" && url.pathname.startsWith("/cenodude/CrossWatch/releases/") && !url.username && !url.password))) return "";
       } catch { return ""; }
-      const time = item.time ? new Date(item.time * 1000).toLocaleString() : "";
+      const time = item.time ? ((window.CW?.I18n || window.__cwI18n)?.date?.(item.time) ?? new Date(item.time * 1000).toLocaleString()) : "";
       const fresh = openedFresh?.has(item.notificationKey);
-      return `<li${fresh ? ' class="is-new"' : ""}><a class="cw-notification" href="${esc(href)}"${external ? ' target="_blank" rel="noopener noreferrer"' : ""}><span class="material-symbols-rounded cw-notification-icon" aria-hidden="true">${esc(item.icon || "notifications")}</span><span class="cw-notification-copy"><strong>${fresh ? '<span class="cw-notification-new">New</span>' : ""}${esc(item.title)}</strong><span>${esc(item.detail)}</span>${time ? `<small>${esc(time)}</small>` : ""}<span class="cw-notification-action">${esc(item.action || "View")}<span class="material-symbols-rounded" aria-hidden="true">arrow_forward</span></span></span></a><button type="button" data-notification-clear="${esc(item.notificationKey)}" aria-label="${esc(`Clear notification: ${item.title}`)}" title="Clear notification"><span class="material-symbols-rounded" aria-hidden="true">close</span></button></li>`;
-    }).join("")}</ul>` : !loading && !errors.length ? '<div class="cw-notifications-empty"><span class="material-symbols-rounded" aria-hidden="true">notifications_none</span><p>You’re all caught up</p><small>New notifications will appear here.</small></div>' : ""}${loading ? '<p class="cw-notifications-message" role="status">Loading notifications…</p>' : ""}${errors.length ? `<div class="cw-notifications-message"><p>${errors.map(esc).join("<br>")}</p><button type="button" data-notifications-retry>Try again</button></div>` : ""}${canReview ? `<a class="cw-notifications-footer" href="${reviewsHref}">View sync reviews<span class="material-symbols-rounded" aria-hidden="true">arrow_forward</span></a>` : ""}`;
+      return `<li${fresh ? ' class="is-new"' : ""}><a class="cw-notification" href="${esc(href)}"${external ? ' target="_blank" rel="noopener noreferrer"' : ""}><span class="material-symbols-rounded cw-notification-icon" aria-hidden="true">${esc(item.icon || "notifications")}</span><span class="cw-notification-copy"><strong>${fresh ? '<span class="cw-notification-new">' + TH("common.notifications.new") + '</span>' : ""}${esc(item.title)}</strong><span>${esc(item.detail)}</span>${time ? `<small>${esc(time)}</small>` : ""}<span class="cw-notification-action">${esc(item.action || T("common.actions.view"))}<span class="material-symbols-rounded" aria-hidden="true">arrow_forward</span></span></span></a><button type="button" data-notification-clear="${esc(item.notificationKey)}" aria-label="${TH("common.notifications.clearOne", { title: item.title })}" title="${TH("common.notifications.clear")}"><span class="material-symbols-rounded" aria-hidden="true">close</span></button></li>`;
+    }).join("")}</ul>` : !loading && !errors.length ? '<div class="cw-notifications-empty"><span class="material-symbols-rounded" aria-hidden="true">notifications_none</span><p>' + TH("common.notifications.caughtUp") + '</p><small>' + TH("common.notifications.emptyHint") + '</small></div>' : ""}${loading ? '<p class="cw-notifications-message" role="status">' + TH("common.notifications.loading") + '</p>' : ""}${errors.length ? `<div class="cw-notifications-message"><p>${errors.map(esc).join("<br>")}</p><button type="button" data-notifications-retry>${TH("common.actions.tryAgain")}</button></div>` : ""}${canReview ? `<a class="cw-notifications-footer" href="${reviewsHref}">${TH("common.notifications.viewReviews")}<span class="material-symbols-rounded" aria-hidden="true">arrow_forward</span></a>` : ""}`;
     if (body.innerHTML !== html) body.innerHTML = html;
     position();
   }
@@ -264,21 +266,21 @@
     const agent = String(navigator.userAgent || "");
     const apple = /iPhone|iPad|iPod/.test(agent) || (/Macintosh/.test(agent) && Number(navigator.maxTouchPoints) > 1);
     const installed = !!window.matchMedia?.("(display-mode: standalone)")?.matches || navigator.standalone === true;
-    if (apple && !installed) return "On iPhone and iPad, add CrossWatch to the Home Screen and open it from there to use push notifications.";
-    if (apple) return "Push notifications need iOS or iPadOS 16.4 or later.";
-    return "This browser does not support push notifications.";
+    if (apple && !installed) return T("common.notifications.push.iosHomeScreen");
+    if (apple) return T("common.notifications.push.iosVersion");
+    return T("common.notifications.push.unsupported");
   }
   async function pushStatus() {
-    if (!window.isSecureContext) return {available: false, on: false, note: "Needs HTTPS. Open CrossWatch over a secure address to use push notifications."};
+    if (!window.isSecureContext) return {available: false, on: false, note: T("common.notifications.push.needsHttps")};
     if (!pushSupported()) return {available: false, on: false, note: unsupportedNote()};
-    if (Notification.permission === "denied") return {available: true, on: false, note: "Notifications are blocked for this site. Allow them in the browser's site settings."};
+    if (Notification.permission === "denied") return {available: true, on: false, note: T("common.notifications.push.blocked")};
     try {
       const subscription = await (await registration()).pushManager.getSubscription();
       const response = await fetch(`${base}/push`, {credentials: "same-origin", cache: "no-store"});
       const data = response.ok ? await response.json() : {};
       const on = !!subscription && Array.isArray(data.endpoints) && data.endpoints.includes(subscription.endpoint);
-      return {available: true, on, note: on ? "This device gets new notifications even when CrossWatch is closed." : "Get new notifications on this device even when CrossWatch is closed."};
-    } catch { return {available: true, on: false, note: "Push notifications are not available right now."}; }
+      return {available: true, on, note: on ? T("common.notifications.push.on") : T("common.notifications.push.offer")};
+    } catch { return {available: true, on: false, note: T("common.notifications.push.unavailable")}; }
   }
   function showPush(status) {
     pushToggle.disabled = !status.available;
@@ -291,13 +293,13 @@
     const viewAs = viewAsProfile();
     const response = await post("/push", {subscription: subscription.toJSON(), profile: scopeName(), view_profile: String(window.CW?.OverviewProfile?.id || "").trim()},
       "POST", viewAs ? {"X-CW-View-As": viewAs} : {});
-    if (!response.ok) throw new Error(((await response.json().catch(() => ({}))).error) || "Push notifications could not be turned on.");
+    if (!response.ok) throw new Error(((await response.json().catch(() => ({}))).error) || T("common.notifications.push.enableFailed"));
   }
   async function enablePush() {
-    if (await Notification.requestPermission() !== "granted") throw new Error("Notifications were not allowed for this site.");
+    if (await Notification.requestPermission() !== "granted") throw new Error(T("common.notifications.push.notAllowed"));
     const response = await fetch(`${base}/push`, {credentials: "same-origin", cache: "no-store"});
     const data = response.ok ? await response.json() : {};
-    if (!data.public_key) throw new Error("Push notifications are not available right now.");
+    if (!data.public_key) throw new Error(T("common.notifications.push.unavailable"));
     const manager = (await registration()).pushManager;
     const options = {userVisibleOnly: true, applicationServerKey: keyBytes(data.public_key)};
     let subscription;
@@ -324,7 +326,7 @@
     let failure = "";
     try {
       if (on) await enablePush(); else await disablePush();
-    } catch (error) { failure = String(error?.message || "Push notifications could not be changed."); }
+    } catch (error) { failure = String(error?.message || T("common.notifications.push.changeFailed")); }
     window.dispatchEvent(new CustomEvent("cw:notification-push-changed"));
     const status = await pushStatus();
     return failure ? {...status, note: failure} : status;
@@ -334,8 +336,8 @@
       const subscription = await (await registration()).pushManager.getSubscription();
       const response = await post("/push/test", {endpoint: subscription?.endpoint || ""});
       const data = await response.json().catch(() => ({}));
-      return response.ok ? "Test notification sent. If nothing appears, check that notifications are allowed for this browser in the device's system settings." : String(data.error || "The test notification could not be sent.");
-    } catch { return "The test notification could not be sent."; }
+      return response.ok ? T("common.notifications.push.testSent") : String(data.error || T("common.notifications.push.testFailed"));
+    } catch { return T("common.notifications.push.testFailed"); }
   }
   pushToggle.addEventListener("change", async () => {
     pushToggle.disabled = true;

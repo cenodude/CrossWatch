@@ -1,6 +1,7 @@
 /* tests/connection-whitelist.browser.mjs */
 /* CrossWatch - Library whitelist selections survive the settings collectors on save. */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
+import './i18n-browser-setup.mjs';
 import assert from "node:assert/strict";
 import {readFile} from "node:fs/promises";
 import test from "node:test";

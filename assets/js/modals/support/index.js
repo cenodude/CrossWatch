@@ -2,14 +2,17 @@
 /* Support modal: rebuild state.json from the database and pack a diagnostic bundle. */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 
+const I18N = () => globalThis.window?.CW?.I18n || globalThis.window?.__cwI18n;
+const T = (key, vars) => I18N()?.t?.(key, vars) ?? key;
+const TH = (key, vars) => I18N()?.html?.(key, vars) ?? key;
 const REQUEST_TIMEOUT_MS = 45_000;
 const DOWNLOAD_TIMEOUT_MS = 600_000;
-const timeoutError = (label, ms) => new Error(`${label} timed out after ${Math.round(ms / 1000)}s`);
+const timeoutError = (label, ms) => new Error(T("modals.support.timedOut", {label, seconds: Math.round(ms / 1000)}));
 const SECTIONS = [
-  { key: "config", label: "Redacted config", desc: "config.json with tokens, keys and hashes masked." },
-  { key: "diagnostics", label: "Diagnostics", desc: "Database and event-archive health, environment, baseline shape." },
-  { key: "reports", label: "Sync reports", desc: "The last 25 sync runs." },
-  { key: "logs", label: "Logs", desc: "Recent log tails, secrets stripped." },
+  { key: "config", label: T("modals.support.redactedConfig"), desc: T("modals.support.redactedConfigDesc") },
+  { key: "diagnostics", label: T("modals.support.diagnostics"), desc: T("modals.support.diagnosticsDesc") },
+  { key: "reports", label: T("modals.support.syncReports"), desc: T("modals.support.syncReportsDesc") },
+  { key: "logs", label: T("modals.support.logs"), desc: T("modals.support.logsDesc") },
 ];
 
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -18,7 +21,7 @@ let cleanupSupportMount = null;
 
 async function fjson(url) {
   const ctrl = new AbortController();
-  const timer = window.setTimeout(() => ctrl.abort(timeoutError("Request", REQUEST_TIMEOUT_MS)), REQUEST_TIMEOUT_MS);
+  const timer = window.setTimeout(() => ctrl.abort(timeoutError(T("modals.support.request"), REQUEST_TIMEOUT_MS)), REQUEST_TIMEOUT_MS);
   try {
     const r = await fetch(url, { cache: "no-store", signal: ctrl.signal });
     if (!r.ok) throw new Error(`${r.status} ${r.statusText || ""}`.trim());
@@ -30,7 +33,7 @@ async function fjson(url) {
 
 async function fblob(url, onProgress) {
   const ctrl = new AbortController();
-  const timer = window.setTimeout(() => ctrl.abort(timeoutError("Download", DOWNLOAD_TIMEOUT_MS)), DOWNLOAD_TIMEOUT_MS);
+  const timer = window.setTimeout(() => ctrl.abort(timeoutError(T("modals.support.download"), DOWNLOAD_TIMEOUT_MS)), DOWNLOAD_TIMEOUT_MS);
   try {
     const r = await fetch(url, { cache: "no-store", signal: ctrl.signal });
     if (!r.ok) throw new Error(`${r.status} ${r.statusText || ""}`.trim());
@@ -102,12 +105,12 @@ export default {
         <div class="mt-head">
           <div class="sup-head-left">
             <div>
-              <h2 class="sup-title">Support</h2>
-              <div class="sup-sub">Download diagnostic files for a bug report.</div>
+              <h2 class="sup-title">${TH("modals.support.title")}</h2>
+              <div class="sup-sub">${TH("modals.support.sub")}</div>
             </div>
           </div>
-          <button type="button" class="cw-page-button mt-button sup-close" id="sup-close" aria-label="Close">
-            Close
+          <button type="button" class="cw-page-button mt-button sup-close" id="sup-close" aria-label="${TH("modals.support.close")}">
+            ${TH("modals.support.close")}
           </button>
         </div>
 
@@ -118,17 +121,17 @@ export default {
             <section class="cw-page-panel sup-card">
               <div class="sup-card-head">
                 <div>
-                  <strong>Export sync state</strong>
-                  <small>Download state.json for the selected sync pairs.</small>
+                  <strong>${TH("modals.support.exportState")}</strong>
+                  <small>${TH("modals.support.exportStateDesc")}</small>
                 </div>
               </div>
               <label class="sup-field">
-                <span>Scope</span>
-                <select id="sup-state-scope" class="cw-page-input sup-select support-scope"><option value="all">All pairs</option></select>
+                <span>${TH("modals.support.scope")}</span>
+                <select id="sup-state-scope" class="cw-page-input sup-select support-scope"><option value="all">${TH("modals.support.allPairs")}</option></select>
               </label>
               <div class="sup-actions">
-                <button type="button" class="cw-page-button mt-button sup-btn primary" id="sup-state-download" aria-label="Download sync state">
-                  <span class="material-symbols-rounded" aria-hidden="true">download</span><span>Download</span>
+                <button type="button" class="cw-page-button mt-button sup-btn primary" id="sup-state-download" aria-label="${TH("modals.support.downloadState")}">
+                  <span class="material-symbols-rounded" aria-hidden="true">download</span><span>${TH("modals.support.downloadBtn")}</span>
                 </button>
               </div>
             </section>
@@ -136,13 +139,13 @@ export default {
             <section class="cw-page-panel sup-card">
               <div class="sup-card-head">
                 <div>
-                  <strong>Support bundle</strong>
-                  <small>Sync state and selected diagnostics in one ZIP.</small>
+                  <strong>${TH("modals.support.bundle")}</strong>
+                  <small>${TH("modals.support.bundleDesc")}</small>
                 </div>
               </div>
               <label class="sup-field">
-                <span>Scope</span>
-                <select id="sup-bundle-scope" class="cw-page-input sup-select support-scope"><option value="all">All pairs</option></select>
+                <span>${TH("modals.support.scope")}</span>
+                <select id="sup-bundle-scope" class="cw-page-input sup-select support-scope"><option value="all">${TH("modals.support.allPairs")}</option></select>
               </label>
               <div class="sup-includes">
                 ${SECTIONS.map((s) => `
@@ -152,8 +155,8 @@ export default {
                   </label>`).join("")}
               </div>
               <div class="sup-actions">
-                <button type="button" class="cw-page-button mt-button sup-btn primary" id="sup-bundle-download" aria-label="Download support bundle">
-                  <span class="material-symbols-rounded" aria-hidden="true">download</span><span>Download</span>
+                <button type="button" class="cw-page-button mt-button sup-btn primary" id="sup-bundle-download" aria-label="${TH("modals.support.downloadBundle")}">
+                  <span class="material-symbols-rounded" aria-hidden="true">download</span><span>${TH("modals.support.downloadBtn")}</span>
                 </button>
               </div>
             </section>
@@ -165,19 +168,19 @@ export default {
           <div id="sup-progress" class="sup-progress hidden" aria-live="polite">
             <div class="sup-progress-head">
               <div>
-                <strong id="sup-progress-title">Preparing export</strong>
-                <span id="sup-progress-sub">Starting...</span>
+                <strong id="sup-progress-title">${TH("modals.support.preparingExport")}</strong>
+                <span id="sup-progress-sub">${TH("modals.support.starting")}</span>
               </div>
               <b id="sup-progress-percent">0%</b>
             </div>
             <div class="sup-progress-bar" aria-hidden="true"><span id="sup-progress-fill"></span></div>
             <div class="sup-progress-grid">
-              <div><span>Export</span><b id="sup-progress-kind">-</b></div>
-              <div><span>Scope</span><b id="sup-progress-scope">-</b></div>
-              <div><span>Size</span><b id="sup-progress-size">-</b></div>
-              <div><span>Elapsed</span><b id="sup-progress-elapsed">0s</b></div>
+              <div><span>${TH("modals.support.export")}</span><b id="sup-progress-kind">-</b></div>
+              <div><span>${TH("modals.support.scope")}</span><b id="sup-progress-scope">-</b></div>
+              <div><span>${TH("modals.support.size")}</span><b id="sup-progress-size">-</b></div>
+              <div><span>${TH("modals.support.elapsed")}</span><b id="sup-progress-elapsed">0s</b></div>
             </div>
-            <div id="sup-progress-message" class="sup-progress-message">Preparing download...</div>
+            <div id="sup-progress-message" class="sup-progress-message">${TH("modals.support.preparingDownload")}</div>
           </div>
         </div>
       </div>
@@ -203,20 +206,20 @@ export default {
       try {
         payload = await fjson("/api/maintenance/support/scopes");
       } catch {
-        setStatus("Could not read sync pairs; the full export is still available.", "warn");
+        setStatus(T("modals.support.pairsUnreadable"), "warn");
       }
       const pairs = (Array.isArray(payload?.pairs) ? payload.pairs : []).map((pair, index) => ({ ...pair, order: index + 1 }));
       const pairOption = (value) => {
         const pair = pairs.find((item) => String(item?.id || "") === value);
         if (!pair) return null;
         const items = Number(pair.items || 0);
-        const tags = [...(pair.enabled === false ? ["Disabled"] : []), `${items} item${items === 1 ? "" : "s"}`];
+        const tags = [...(pair.enabled === false ? [T("modals.support.disabled")] : []), T("modals.support.items", {count: items})];
         return window.CW?.syncPairOptionData?.(pair, { tags }) || null;
       };
-      const options = ['<option value="all">All pairs</option>'].concat(pairs.map((p) => {
+      const options = ['<option value="all">' + TH("modals.support.allPairs") + '</option>'].concat(pairs.map((p) => {
         const items = Number(p?.items || 0);
-        const suffix = `${p?.enabled === false ? " · disabled" : ""} · ${items} item${items === 1 ? "" : "s"}`;
-        return `<option value="${esc(String(p?.id || ""))}">${esc(String(p?.label || p?.id || "Pair") + suffix)}</option>`;
+        const suffix = `${p?.enabled === false ? ` · ${T("modals.support.disabledLower")}` : ""} · ${T("modals.support.items", {count: items})}`;
+        return `<option value="${esc(String(p?.id || ""))}">${esc(String(p?.label || p?.id || T("modals.support.pair")) + suffix)}</option>`;
       })).join("");
       root.querySelectorAll(".support-scope").forEach((sel) => {
         const current = sel.value || "all";
@@ -228,16 +231,16 @@ export default {
 
       const totals = payload?.totals || {};
       const stats = [
-        ["Sync pairs", totals.pairs],
-        ["Feature baselines", totals.baselines],
-        ["Baseline items", totals.items],
-        ["Unreferenced", totals.orphan_baselines],
+        [T("modals.support.syncPairs"), totals.pairs],
+        [T("modals.support.baselines"), totals.baselines],
+        [T("modals.support.baselineItems"), totals.items],
+        [T("modals.support.unreferenced"), totals.orphan_baselines],
       ];
       const statsEl = $("#sup-stats", root);
       if (statsEl) {
         statsEl.innerHTML = stats.map(([label, value]) => `
           <div class="sup-stat">
-            <div class="sup-stat-value">${esc(new Intl.NumberFormat().format(Number(value || 0)))}</div>
+            <div class="sup-stat-value">${esc(new Intl.NumberFormat(I18N()?.locale).format(Number(value || 0)))}</div>
             <div class="sup-stat-label">${esc(label)}</div>
           </div>`).join("");
       }
@@ -298,12 +301,12 @@ export default {
       progressStartedAt = Date.now();
       progressPercent = 2;
       updateProgress({
-        title: isBundle ? "Building support bundle" : "Rebuilding state.json",
-        sub: "Preparing export",
-        message: isBundle ? "Collecting diagnostics, reports and log tails..." : "Rebuilding sync state from the database...",
-        kind: isBundle ? "Support bundle" : "state.json",
-        scope: scope === "all" ? "All pairs" : "1 pair",
-        size: "Waiting",
+        title: isBundle ? T("modals.support.buildingBundle") : T("modals.support.rebuildingState"),
+        sub: T("modals.support.preparingExport"),
+        message: isBundle ? T("modals.support.collecting") : T("modals.support.rebuildingFromDb"),
+        kind: isBundle ? T("modals.support.bundle") : "state.json",
+        scope: scope === "all" ? T("modals.support.allPairs") : T("modals.support.onePair"),
+        size: T("modals.support.waiting"),
         percent: 2,
         active: true,
       });
@@ -319,11 +322,11 @@ export default {
     const finishProgress = ({ isBundle, scope, blob }) => {
       stopProgressTimer();
       updateProgress({
-        title: "Export complete",
-        sub: "Download saved",
-        message: isBundle ? "Support bundle is ready." : "state.json is ready.",
-        kind: isBundle ? "Support bundle" : "state.json",
-        scope: scope === "all" ? "All pairs" : "1 pair",
+        title: T("modals.support.complete"),
+        sub: T("modals.support.saved"),
+        message: isBundle ? T("modals.support.bundleReady") : T("modals.support.stateReady"),
+        kind: isBundle ? T("modals.support.bundle") : "state.json",
+        scope: scope === "all" ? T("modals.support.allPairs") : T("modals.support.onePair"),
         size: formatBytes(blob?.size || 0),
         percent: 100,
         active: false,
@@ -334,8 +337,8 @@ export default {
     const failProgress = (message) => {
       stopProgressTimer();
       updateProgress({
-        title: "Export failed",
-        sub: "Download stopped",
+        title: T("modals.support.failed"),
+        sub: T("modals.support.stopped"),
         message,
         percent: Math.max(progressPercent, 6),
         active: false,
@@ -365,15 +368,15 @@ export default {
       const query = params.toString();
       setBusy(true);
       startProgress({ isBundle, scope });
-      setStatus(isBundle ? "Building support bundle..." : "Rebuilding state.json...", "busy");
+      setStatus(isBundle ? T("modals.support.buildingBundleDots") : T("modals.support.rebuildingStateDots"), "busy");
       try {
         const { blob, filename } = await fblob(`/api/maintenance/support/${isBundle ? "bundle" : "state"}${query ? `?${query}` : ""}`, ({ received, total }) => {
           const knownTotal = Number.isFinite(total) && total > 0;
           const pct = knownTotal ? Math.max(progressPercent, Math.min(98, Math.round((received / total) * 100))) : Math.max(progressPercent, 92);
           updateProgress({
-            title: isBundle ? "Downloading support bundle" : "Downloading state.json",
-            sub: knownTotal ? `${formatBytes(received)} of ${formatBytes(total)}` : `${formatBytes(received)} downloaded`,
-            message: "Receiving export from the server...",
+            title: isBundle ? T("modals.support.downloadingBundle") : T("modals.support.downloadingState"),
+            sub: knownTotal ? T("modals.support.ofTotal", {received: formatBytes(received), total: formatBytes(total)}) : T("modals.support.downloadedBytes", {received: formatBytes(received)}),
+            message: T("modals.support.receiving"),
             size: knownTotal ? `${formatBytes(received)} / ${formatBytes(total)}` : formatBytes(received),
             percent: pct,
             active: true,
@@ -381,11 +384,11 @@ export default {
         });
         saveBlob(blob, filename || (isBundle ? "crosswatch-support.zip" : "crosswatch-state.json"));
         finishProgress({ isBundle, scope, blob });
-        const bits = [filename || "download", formatBytes(blob.size), scope === "all" ? "all pairs" : "1 pair"];
-        if (isBundle) bits.push(sections.length ? sections.join(", ") : "state only");
-        setStatus(`Downloaded · ${bits.join(" · ")}.`, "ok");
+        const bits = [filename || "download", formatBytes(blob.size), scope === "all" ? T("modals.support.allPairsLower") : T("modals.support.onePairLower")];
+        if (isBundle) bits.push(sections.length ? sections.join(", ") : T("modals.support.stateOnly"));
+        setStatus(T("modals.support.downloaded", {details: bits.join(" · ")}), "ok");
       } catch (e) {
-        const message = `Download failed: ${e?.message || String(e)}`;
+        const message = T("modals.support.downloadFailed", {error: e?.message || String(e)});
         failProgress(message);
         setStatus(message, "err");
       } finally {

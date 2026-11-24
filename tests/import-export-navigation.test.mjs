@@ -7,6 +7,7 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import vm from 'node:vm';
 import {pageBackLink} from '../assets/js/page-return.js';
+import './i18n-vm-setup.mjs';
 
 const modals = readFileSync(new URL('../assets/js/modals.js', import.meta.url), 'utf8');
 const importer = readFileSync(new URL('../assets/js/import-export/index.js', import.meta.url), 'utf8');

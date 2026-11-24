@@ -1,6 +1,8 @@
 /* assets/helpers/account-menu.js */
 /* CrossWatch - header account menu */
 (function () {
+  const T = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.t?.(key, vars) ?? key;
+  const TH = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.html?.(key, vars) ?? key;
   if (window.__cwAccountMenuInstalled) return;
   window.__cwAccountMenuInstalled = true;
 
@@ -29,8 +31,8 @@
     toggle.id = 'cw-mobile-nav-toggle';
     toggle.className = 'cw-mobile-nav-toggle';
     toggle.type = 'button';
-    toggle.setAttribute('aria-label', 'Menu');
-    toggle.innerHTML = '<span class="material-symbols-rounded" aria-hidden="true">menu</span><span>Menu</span>';
+    toggle.setAttribute('aria-label', T("navigation.mobile.menu"));
+    toggle.innerHTML = '<span class="material-symbols-rounded" aria-hidden="true">menu</span><span>' + TH("navigation.mobile.menu") + '</span>';
     nav.id ||= 'cw-primary-navigation';
     toggle.setAttribute('aria-controls', panel.id);
     toggle.setAttribute('aria-expanded', 'false');
@@ -108,17 +110,17 @@
     if (!$('cw-mobile-nav-toggle') || $('cw-mobile-bottom-nav')) return;
     const nav = document.createElement('nav');
     nav.id = 'cw-mobile-bottom-nav';
-    nav.setAttribute('aria-label', 'Mobile navigation');
-    const fixed = [['main', 'home', 'Home']];
+    nav.setAttribute('aria-label', T("navigation.mobile.label"));
+    const fixed = [['main', 'home', T("navigation.mobile.home")]];
     const choices = [];
-    if ($('tab-tracker')) choices.push(['tracker', 'inventory_2', 'Tracker']);
+    if ($('tab-tracker')) choices.push(['tracker', 'inventory_2', T("navigation.tabs.tracker")]);
     if ($('tab-settings') && document.documentElement.dataset.cwRole !== 'user') {
-      choices.push(['settings/providers', 'device_hub', 'Connections'], ['settings/sync', 'sync_alt', 'Sync pairs'], ['settings/scrobbler', 'sensors', 'Scrobbler']);
+      choices.push(['settings/providers', 'device_hub', T("navigation.settingsMenu.connections")], ['settings/sync', 'sync_alt', T("navigation.settingsMenu.pairs")], ['settings/scrobbler', 'sensors', T("navigation.settingsMenu.scrobbler")]);
     }
-    for (const item of [['snapshots', 'photo_library', 'Captures'], ['playlists', 'queue_music', 'Playlists'], ['editor', 'edit_note', 'Editor']]) {
+    for (const item of [['snapshots', 'photo_library', T("navigation.tabs.captures")], ['playlists', 'queue_music', T("navigation.tabs.playlists")], ['editor', 'edit_note', T("navigation.pages.editor")]]) {
       if ($(`tab-${item[0]}`)) choices.push(item);
     }
-    if ($('tab-profile')) choices.push(['profile/overview', 'bar_chart', 'Hub']);
+    if ($('tab-profile')) choices.push(['profile/overview', 'bar_chart', T("navigation.tabs.hub")]);
     const storageKey = 'cw.mobile.shortcuts.v1';
     const defaults = [...new Set(['tracker', 'profile/overview', ...choices.map(item => item[0])])].filter(route => choices.some(item => item[0] === route)).slice(0, 2);
     const readShortcuts = () => {
@@ -131,7 +133,7 @@
     const routeBase = window.location.pathname === '/' ? '' : document.documentElement.dataset.cwRole === 'user' ? '/?main=1' : '/';
     const link = ([route, icon, label], extra = '', iconOnly = false) => `<a href="${route === 'profile/overview' ? '/hub' : `${routeBase}#${route}`}" data-mobile-route="${route}" aria-label="${esc(label)}" ${extra}><span class="material-symbols-rounded" aria-hidden="true">${icon}</span>${iconOnly ? '' : `<span>${label}</span>`}</a>`;
     nav.innerHTML =
-      '<button id="cw-mobile-more" type="button" aria-label="More" aria-controls="cw-mobile-navigation" aria-expanded="false"><span class="material-symbols-rounded" aria-hidden="true">menu</span></button><a id="cw-mobile-profile" href="/profile#account" aria-label="Profile"><span id="cw-mobile-profile-avatar" aria-hidden="true"></span></a>';
+      '<button id="cw-mobile-more" type="button" aria-label="' + TH("navigation.mobile.more") + '" aria-controls="cw-mobile-navigation" aria-expanded="false"><span class="material-symbols-rounded" aria-hidden="true">menu</span></button><a id="cw-mobile-profile" href="/profile#account" aria-label="' + TH("navigation.account.profileFallback") + '"><span id="cw-mobile-profile-avatar" aria-hidden="true"></span></a>';
     document.body.appendChild(nav);
     const accountAvatar = $('cw-nav-profile-avatar');
     setAvatarNode($('cw-mobile-profile-avatar'), accountAvatar?.dataset.cwAvatarUrl || accountAvatar?.querySelector('img')?.getAttribute('src') || '');
@@ -221,9 +223,9 @@
     navPanel.appendChild(secondary);
     const heading = document.createElement('div');
     heading.className = 'cw-mobile-sheet-heading';
-    heading.innerHTML = '<button type="button" class="cw-mobile-sheet-back" aria-label="Back"><span class="material-symbols-rounded" aria-hidden="true">chevron_left</span></button><strong></strong><button type="button" class="cw-mobile-sheet-close" aria-label="Close menu"><span class="material-symbols-rounded" aria-hidden="true">close</span></button>';
+    heading.innerHTML = '<button type="button" class="cw-mobile-sheet-back" aria-label="' + TH("common.actions.back") + '"><span class="material-symbols-rounded" aria-hidden="true">chevron_left</span></button><strong></strong><button type="button" class="cw-mobile-sheet-close" aria-label="' + TH("navigation.mobile.closeMenu") + '"><span class="material-symbols-rounded" aria-hidden="true">close</span></button>';
     navPanel.prepend(heading);
-    let contextTitle = 'Menu';
+    let contextTitle = T("navigation.mobile.menu");
     let settingsReturn = 'main';
     let submenuLayer = null;
     function showView(view, focus = true, fromBack = false) {
@@ -241,7 +243,7 @@
       }
       navPanel.dataset.mobileView = view;
       navPanel.classList.toggle('cw-mobile-tools-open', view === 'tools');
-      heading.querySelector('strong').textContent = ({more:'More',tools:'Tools',settings:'Mobile settings'})[view] || contextTitle;
+      heading.querySelector('strong').textContent = ({more:T("navigation.mobile.more"),tools:T("navigation.tabs.tools"),settings:T("navigation.mobile.settings")})[view] || contextTitle;
       heading.querySelector('.cw-mobile-sheet-back').hidden = view === 'main';
       const picker = $('cw-mobile-widgets');
       if (picker) picker.open = view === 'settings';
@@ -289,7 +291,7 @@
       const moreItems = items.filter(item => item.secondary).map(item => item.node);
       secondary.replaceChildren(...moreItems);
       if (moreItems.length) {
-        const more = tileNode('button', 'more_horiz', 'More');
+        const more = tileNode('button', 'more_horiz', T("navigation.mobile.more"));
         more.type = 'button';
         more.setAttribute('aria-haspopup', 'menu');
         more.classList.add('cw-mobile-context-more');
@@ -299,7 +301,7 @@
       }
       contextual.replaceChildren(...mainItems);
       navPanel.classList.toggle('cw-mobile-context-open', items.length > 0);
-      contextTitle = items.length ? onHub ? 'Hub' : 'Tracker' : 'Menu';
+      contextTitle = items.length ? onHub ? T("navigation.tabs.hub") : T("navigation.tabs.tracker") : T("navigation.mobile.menu");
       showView('main', false);
     };
     $('cw-mobile-nav-toggle').addEventListener('click', () => {
@@ -326,7 +328,7 @@
       if (!picker || picker.querySelector('.cw-mobile-shortcuts') || choices.length < 2) return;
       const controls = document.createElement('div');
       controls.className = 'cw-mobile-shortcuts';
-      controls.innerHTML = `<h3>Navigation shortcuts</h3><p>${fixed.map(item => item[2]).join(', ')}, More and Profile stay fixed. Choose two shortcuts for this browser.</p>` + [0, 1].map(index => `<label for="cw-mobile-shortcut-${index}">Shortcut ${index + 1}</label><select id="cw-mobile-shortcut-${index}" data-cw-native-select="true">${choices.map(([route, , label]) => `<option value="${route}">${label}</option>`).join('')}</select>`).join('');
+      controls.innerHTML = `<h3>${TH("navigation.mobile.shortcutsTitle")}</h3><p>${TH("navigation.mobile.shortcutsHint", { fixed: fixed.map(item => item[2]).join(', ') })}</p>` + [0, 1].map(index => `<label for="cw-mobile-shortcut-${index}">${TH("navigation.mobile.shortcutLabel", { n: String(index + 1) })}</label><select id="cw-mobile-shortcut-${index}" data-cw-native-select="true">${choices.map(([route, , label]) => `<option value="${route}">${label}</option>`).join('')}</select>`).join('');
       picker.querySelector('summary').after(controls);
       const selects = [...controls.querySelectorAll('select')];
       const sync = () => selects.forEach((select, index) => {
@@ -642,8 +644,8 @@
     if (!panel) return;
     const settings = $('tab-settings');
     if (settings) {
-      settings.title = 'Settings';
-      settings.setAttribute('aria-label', 'Settings');
+      settings.title = T("navigation.tabs.settings");
+      settings.setAttribute('aria-label', T("navigation.tabs.settings"));
       const icon = settings.querySelector('.cw-mobile-destination-icon');
       if (icon) icon.classList.add('cw-settings-icon');
     }
@@ -658,7 +660,7 @@
     host.id = 'cw-desktop-more';
     host.className = 'cw-tabmenu';
     host.hidden = true;
-    host.innerHTML = '<button id="cw-desktop-more-toggle" class="tab" type="button" aria-haspopup="menu" aria-controls="cw-desktop-more-menu" aria-expanded="false">More<span class="tab-caret" aria-hidden="true"></span></button><div id="cw-desktop-more-menu" class="cw-menu hidden" role="menu" aria-labelledby="cw-desktop-more-toggle"></div>';
+    host.innerHTML = '<button id="cw-desktop-more-toggle" class="tab" type="button" aria-haspopup="menu" aria-controls="cw-desktop-more-menu" aria-expanded="false">' + TH("navigation.mobile.more") + '<span class="tab-caret" aria-hidden="true"></span></button><div id="cw-desktop-more-menu" class="cw-menu hidden" role="menu" aria-labelledby="cw-desktop-more-toggle"></div>';
     anchors[0].before(host);
     const toggle = host.firstElementChild, dropdown = host.lastElementChild;
     const close = () => {

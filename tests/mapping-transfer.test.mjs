@@ -4,6 +4,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {readMappingFile} from "../assets/js/editor/saved-mappings.js";
+import {englishI18n} from './i18n-test-helper.mjs';
+
+globalThis.window ??= {};
+globalThis.window.__cwI18n ??= englishI18n();
 
 const file = data => new Blob([JSON.stringify(data)], {type:"application/json"});
 const bundle = version => ({format:"crosswatch-mappings-blocks", version, records:[]});

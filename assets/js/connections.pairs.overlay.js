@@ -1,6 +1,8 @@
 // connections.pairs.overlay.js - Pairs board UI
 
 (function () {
+  const T = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.t?.(key, vars) ?? key;
+  const TH = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.html?.(key, vars) ?? key;
   let _renderBusy = false;
   const _renderedPairs = new WeakMap();
   let _pairDrag = null;
@@ -12,7 +14,7 @@
   const brandKey = (k) => key(k).toLowerCase().replace(/[^a-z0-9]/g, "") || "x";
   const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
   const providerMeta = () => window.CW?.ProviderMeta || null;
-  const providerLabel = (provider) => providerMeta()?.label?.(provider) || key(provider) || "Provider";
+  const providerLabel = (provider) => providerMeta()?.label?.(provider) || key(provider) || T("connections.pairs.provider");
   const providerLogo = (provider) => providerMeta()?.logoPath?.(provider) || "";
   const brandTone = (provider) => providerMeta()?.tone?.(provider) || { solid: "#7c5cff", rgb: "124,92,255" };
   const truthy = (v) => {
@@ -117,7 +119,7 @@
         if (typeof window.openPairModal === "function") return window.openPairModal(pair);
         if (typeof window.cxOpenModalFor === "function") return window.cxOpenModalFor(pair);
       }
-      (window.CW?.MobileUI?.notice || window.alert)("Edit is not available.");
+      (window.CW?.MobileUI?.notice || window.alert)(T("connections.pairs.editUnavailable"));
     } catch (e) { console.warn("[cxPairsEditClick] failed", e); }
   };
 
@@ -229,7 +231,7 @@
     const el = board?.querySelector(`.pair-card[data-id="${id}"]`); if (!el) return;
     try {
       const res = await fetch(`/api/pairs/${id}`, { method: "DELETE" });
-      if (res.status === 409) (window.CW?.MobileUI?.notice || window.alert)("A sync or database maintenance task is running. Wait for it to finish, then delete the pair again.");
+      if (res.status === 409) (window.CW?.MobileUI?.notice || window.alert)(T("connections.pairs.busyDelete"));
       let data = null;
       try { data = await res.json(); } catch {}
       if (!res.ok || data?.ok === false || Number(data?.deleted || 0) < 1) throw new Error(data?.error || "pair delete failed");
@@ -265,7 +267,7 @@
     _pairDelBtn = null;
     if (btn && btn.isConnected) {
       btn.classList.remove("is-confirming");
-      btn.setAttribute("data-tip", "Delete");
+      btn.setAttribute("data-tip", T("connections.pairs.delete"));
       const ico = btn.querySelector("svg.ico");
       if (ico) ico.innerHTML = PAIR_DELETE_ICON;
     }
@@ -277,7 +279,7 @@
       resetPairDelete();
       _pairDelBtn = btn;
       btn.classList.add("is-confirming");
-      btn.setAttribute("data-tip", "Click again to delete");
+      btn.setAttribute("data-tip", T("connections.pairs.clickAgain"));
       const ico = btn.querySelector("svg.ico");
       if (ico) ico.innerHTML = PAIR_DELETE_WARN_ICON;
       _pairDelTimer = setTimeout(resetPairDelete, 4200);
@@ -298,9 +300,9 @@
     if (!pair || _resettingPairs.has(id) || window.CW?.AuthState?.read?.().isManaged) return;
     const features = pairResetFeatures(pair);
     if (!features.length) return;
-    const endpoint = side => `${providerLabel(pair[side])} (${providerMeta()?.instanceLabel?.(pair[side], pair[`${side}_instance`] || "default") || pair[`${side}_instance`] || "Default"})`;
+    const endpoint = side => `${providerLabel(pair[side])} (${providerMeta()?.instanceLabel?.(pair[side], pair[`${side}_instance`] || "default") || pair[`${side}_instance`] || T("connections.pairs.default")})`;
     const label = `${endpoint("source")} → ${endpoint("target")}`;
-    const message = `Give ${label} a fresh start?\n\nThis resets the sync memory for ${features.join(", ")} and clears retry and blocked items for this pair. Your pair settings stay as they are.\n\nThe next sync reads fresh provider data. Recent deletions won't carry across, and a two-way pair can add missing items back. Other pairs keep their sync state.\n\nReady to reset this pair?`;
+    const message = T("connections.pairs.resetConfirm", {label, features: features.join(", ")});
     if (!(await (window.CW?.MobileUI?.ask || window.confirm)(message))) return;
     _resettingPairs.add(id);
     btn.disabled = true;
@@ -311,13 +313,13 @@
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ pair_id: id, features, clear_retry: true }),
       });
-      if (response.status === 409) throw new Error("A sync or database maintenance task is running. Wait for it to finish, then reset the pair again.");
-      if (response.status === 403) throw new Error("You don't have permission to reset this pair.");
+      if (response.status === 409) throw new Error(T("connections.pairs.busyReset"));
+      if (response.status === 403) throw new Error(T("connections.pairs.noPermission"));
       const data = await response.json();
-      if (!response.ok || data?.ok !== true) throw new Error("The reset couldn't finish. Please try again.");
-      (window.CW?.MobileUI?.notice || window.alert)("Pair reset! Its next sync will start fresh.");
+      if (!response.ok || data?.ok !== true) throw new Error(T("connections.pairs.resetFailed"));
+      (window.CW?.MobileUI?.notice || window.alert)(T("connections.pairs.resetDone"));
     } catch (error) {
-      (window.CW?.MobileUI?.notice || window.alert)(error.message || "The reset couldn't finish. Please try again.");
+      (window.CW?.MobileUI?.notice || window.alert)(error.message || T("connections.pairs.resetFailed"));
     } finally {
       _resettingPairs.delete(id);
       document.querySelectorAll("[data-pair-reset]").forEach(button => {
@@ -359,14 +361,14 @@
   }
 
   function pairModeTip(pr, modeLabel) {
-    const lines = [`${modeLabel}: ${providerLabel(pr.source)} ${modeLabel === "Two-way" ? "and" : "to"} ${providerLabel(pr.target)}`];
+    const lines = [T(modeLabel === "Two-way" ? "connections.pairs.tipTwo" : "connections.pairs.tipOne", {source: providerLabel(pr.source), target: providerLabel(pr.target)})];
     const profile = pairProfileLabel(pr);
-    if (profile) lines.push(`Belongs to profile: ${profile}`);
+    if (profile) lines.push(T("connections.pairs.belongs", {profile}));
     if (pr?.match_users) {
       const links = Object.entries(pr.user_matches && typeof pr.user_matches === "object" ? pr.user_matches : {});
-      if (!links.length) lines.push("Identities on, but nobody linked yet");
+      if (!links.length) lines.push(T("connections.pairs.nobody"));
       else {
-        lines.push(`Syncs ${links.length} ${links.length === 1 ? "person" : "people"}, each with their own history:`);
+        lines.push(T("connections.pairs.syncsPeople", {count: links.length}));
         links.forEach(([src, dst]) => lines.push(`  ${identityName(pr.source, pr.source_instance, src)} → ${identityName(pr.target, pr.target_instance, dst)}`));
       }
     }
@@ -411,9 +413,9 @@
     const inst = (v) => (String(v || "default").trim() || "default");
     const pill = (provider, instance, role) => {
       const name = providerLabel(provider), logo = providerLogo(provider);
-      const detail = providerMeta()?.instanceLabel?.(provider, instance) || (instance === "default" ? "Default instance" : instance);
-      const named = detail !== "Default instance";
-      const tip = `${role === "src" ? "Source" : "Target"}: ${name}${named ? ` (${detail})` : ""}`;
+      const detail = providerMeta()?.instanceLabel?.(provider, instance) || (instance === "default" ? T("editor.groups.defaultInstance") : instance);
+      const named = detail !== T("editor.groups.defaultInstance");
+      const tip = `${T(role === "src" ? "connections.pairs.source" : "connections.pairs.target")}: ${name}${named ? ` (${detail})` : ""}`;
       return `<span class="pair-pill ${role}" data-tip="${esc(tip)}"><span class="pair-pill-text"><span>${esc(name)}</span>${named ? `<small class="pair-instance-name">${esc(detail)}</small>` : ""}</span><span class="prov-watermark" aria-hidden="true" style="--wm:url('${esc(logo)}')"></span></span>`;
     };
 
@@ -436,7 +438,7 @@
         <div class="pair-card brand-${brandKey(src)} dst-${brandKey(dst)} ${enabled ? "" : "pair-disabled"}" data-id="${pr.id || ""}" data-source="${src}" data-target="${dst}" data-mode="${modeLabel}" style="--src-solid:${srcTone.solid};--src-rgb:${srcTone.rgb};--dst-solid:${dstTone.solid};--dst-rgb:${dstTone.rgb};--accent:${srcTone.solid};--accent-rgb:${srcTone.rgb}">
           <div class="pair-row">
             <div class="pair-left">
-              <button type="button" class="ord-badge cw-page-pair-handle" data-tip="Drag to reorder · or use arrow keys" aria-label="Reorder pair ${displayIndex}: ${esc(providerLabel(src))} to ${esc(providerLabel(dst))}. Use Up or Down arrow keys."><span class="pair-order">${displayIndex}</span></button>
+              <button type="button" class="ord-badge cw-page-pair-handle" data-tip="${TH("connections.pairs.dragTip")}" aria-label="${TH("connections.pairs.reorder", {n: displayIndex, source: providerLabel(src), target: providerLabel(dst)})}"><span class="pair-order">${displayIndex}</span></button>
               ${pill(src, srcInst, "src")}
               <span class="cw-page-pair-direction" role="img" tabindex="0" aria-label="${directionTip}" data-pair-who data-tip="${directionTip}"><svg viewBox="0 0 40 24" aria-hidden="true"><path d="${directionPath}"/></svg></span>
               ${pill(dst, dstInst, "dst")}
@@ -444,45 +446,45 @@
             <div class="pair-actions">
               <div class="pair-feature-summary">
               ${people ? `<span data-pair-who data-tip="${directionTip}">${people}</span>` : ""}
-              <div class="feat-beads cw-page-pair-features" role="group" aria-label="Enabled features">
-                ${bead("wl", "Watchlist", f.watchlist)}
-                ${bead("rt", "Ratings", f.ratings)}
-                ${bead("hi", "History", f.history)}
-                ${bead("pr", "Progress", f.progress)}
-                ${bead("pl", "Playlists", f.playlists)}
-                ${bead("co", "Collections", f.collection)}
+              <div class="feat-beads cw-page-pair-features" role="group" aria-label="${TH("connections.pairs.features")}">
+                ${bead("wl", TH("connections.features.watchlist"), f.watchlist)}
+                ${bead("rt", TH("connections.features.ratings"), f.ratings)}
+                ${bead("hi", TH("connections.features.history"), f.history)}
+                ${bead("pr", TH("connections.features.progress"), f.progress)}
+                ${bead("pl", TH("connections.features.playlists"), f.playlists)}
+                ${bead("co", TH("connections.features.collection"), f.collection)}
               </div>
               </div>
 
-              <div class="pair-action-buttons cw-page-pair-actions" role="group" aria-label="Sync pair actions">
-              <button type="button" class="icon-btn cw-page-pair-run" data-tip="Interactive sync" aria-label="Interactive sync" ${enabled ? "" : "disabled"} data-interactive-pair="${esc(pr.id)}">
-                <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M8 5l11 7-11 7V5z"></path></svg><span class="pair-action-label">Sync</span>
+              <div class="pair-action-buttons cw-page-pair-actions" role="group" aria-label="${TH("connections.pairs.actions")}">
+              <button type="button" class="icon-btn cw-page-pair-run" data-tip="${TH("connections.pairs.interactive")}" aria-label="${TH("connections.pairs.interactive")}" ${enabled ? "" : "disabled"} data-interactive-pair="${esc(pr.id)}">
+                <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M8 5l11 7-11 7V5z"></path></svg><span class="pair-action-label">${TH("connections.pairs.sync")}</span>
               </button>
 
-              <button type="button" class="icon-btn" data-tip="Latest logs" aria-label="Latest logs" data-pair-logs="${esc(pr.id)}">
-                <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="m7 9 3 3-3 3M13 15h4"></path></svg><span class="pair-action-label">Logs</span>
+              <button type="button" class="icon-btn" data-tip="${TH("connections.pairs.latestLogs")}" aria-label="${TH("connections.pairs.latestLogs")}" data-pair-logs="${esc(pr.id)}">
+                <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="m7 9 3 3-3 3M13 15h4"></path></svg><span class="pair-action-label">${TH("connections.pairs.logs")}</span>
               </button>
 
-              <label class="icon-btn power ${enabled ? "" : "off"}" data-tip="Enable / disable" role="switch" aria-checked="${enabled}">
+              <label class="icon-btn power ${enabled ? "" : "off"}" data-tip="${TH("connections.pairs.toggle")}" role="switch" aria-checked="${enabled}">
                 <input class="sr-only" type="checkbox" name="pair-enabled" ${enabled ? "checked" : ""}
                   onchange="this.closest('.icon-btn.power')?.setAttribute('aria-checked', this.checked); window.cxToggleEnable && window.cxToggleEnable('${pr.id}', this.checked, this)">
-                <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M12 3v6"></path><path d="M5.6 7a8 8 0 1 0 12.8 0"></path></svg><span class="pair-action-label pair-power-label"><span class="pair-power-on">Enabled</span><span class="pair-power-off">Disabled</span></span>
+                <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M12 3v6"></path><path d="M5.6 7a8 8 0 1 0 12.8 0"></path></svg><span class="pair-action-label pair-power-label"><span class="pair-power-on">${TH("connections.pairs.enabled")}</span><span class="pair-power-off">${TH("connections.pairs.disabled")}</span></span>
               </label>
 
-              <button type="button" class="icon-btn" data-tip="Reset pair" data-pair-reset="${esc(pr.id)}" aria-label="Reset pair" ${_resettingPairs.has(String(pr.id)) || window.CW?.AuthState?.read?.().isManaged || !pairResetFeatures(pr).length ? "disabled" : ""}>
-                <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M3 11a9 9 0 1 1 2.6 7M3 4v7h7"></path></svg><span class="pair-action-label">Reset</span>
+              <button type="button" class="icon-btn" data-tip="${TH("connections.pairs.resetPair")}" data-pair-reset="${esc(pr.id)}" aria-label="${TH("connections.pairs.resetPair")}" ${_resettingPairs.has(String(pr.id)) || window.CW?.AuthState?.read?.().isManaged || !pairResetFeatures(pr).length ? "disabled" : ""}>
+                <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M3 11a9 9 0 1 1 2.6 7M3 4v7h7"></path></svg><span class="pair-action-label">${TH("connections.pairs.reset")}</span>
               </button>
-              <button type="button" class="icon-btn" data-tip="Edit" onclick="window.cxPairsEditClick(this)" aria-label="Edit">
-                <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25z"></path><path d="M14.06 4.94l3.75 3.75"></path></svg><span class="pair-action-label">Edit</span>
+              <button type="button" class="icon-btn" data-tip="${TH("connections.pairs.edit")}" onclick="window.cxPairsEditClick(this)" data-pair-edit aria-label="${TH("connections.pairs.edit")}">
+                <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25z"></path><path d="M14.06 4.94l3.75 3.75"></path></svg><span class="pair-action-label">${TH("connections.pairs.edit")}</span>
               </button>
-              <button type="button" class="icon-btn danger cw-danger-confirm" data-tip="Delete" onclick="window.cxPairsDeleteClick(this, '${pr.id}')" aria-label="Delete">
-                <svg viewBox="0 0 24 24" class="ico" aria-hidden="true">${PAIR_DELETE_ICON}</svg><span class="pair-action-label">Delete</span>
+              <button type="button" class="icon-btn danger cw-danger-confirm" data-tip="${TH("connections.pairs.delete")}" onclick="window.cxPairsDeleteClick(this, '${pr.id}')" data-pair-delete aria-label="${TH("connections.pairs.delete")}">
+                <svg viewBox="0 0 24 24" class="ico" aria-hidden="true">${PAIR_DELETE_ICON}</svg><span class="pair-action-label">${TH("connections.pairs.delete")}</span>
               </button>
-              <button type="button" class="icon-btn pair-more" popovertarget="pair-overflow-${displayIndex}" aria-label="More pair actions" aria-expanded="false">
-                <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><circle cx="5" cy="12" r="1"></circle><circle cx="12" cy="12" r="1"></circle><circle cx="19" cy="12" r="1"></circle></svg><span class="pair-action-label">More</span>
+              <button type="button" class="icon-btn pair-more" popovertarget="pair-overflow-${displayIndex}" aria-label="${TH("connections.pairs.more")}" aria-expanded="false">
+                <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><circle cx="5" cy="12" r="1"></circle><circle cx="12" cy="12" r="1"></circle><circle cx="19" cy="12" r="1"></circle></svg><span class="pair-action-label">${TH("connections.pairs.moreShort")}</span>
               </button>
               </div>
-              <div id="pair-overflow-${displayIndex}" class="pair-overflow cw-page-pair-actions" popover="auto" role="group" aria-label="More pair actions"></div>
+              <div id="pair-overflow-${displayIndex}" class="pair-overflow cw-page-pair-actions" popover="auto" role="group" aria-label="${TH("connections.pairs.more")}"></div>
             </div>
           </div>
         </div>`;
@@ -507,7 +509,7 @@
       const actions = card.querySelector(".pair-action-buttons");
       const more = actions.querySelector(".pair-more");
       const menu = card.querySelector(".pair-overflow");
-      const secondary = [...card.querySelectorAll('[data-pair-logs],[data-pair-reset],button[aria-label="Edit"],button[aria-label="Delete"]')];
+      const secondary = [...card.querySelectorAll('[data-pair-logs],[data-pair-reset],button[data-pair-edit],button[data-pair-delete]')];
       if (compact) secondary.filter(button => button.parentElement !== menu).forEach(button => menu.appendChild(button));
       else {
         if (menu.matches(":popover-open")) menu.hidePopover();
@@ -553,7 +555,7 @@
     [...board.querySelectorAll(".pair-card")].forEach((el, i) => {
       const b = el.querySelector(".pair-order"); if (b) b.textContent = String(i + 1);
       const handle = el.querySelector(".cw-page-pair-handle");
-      if (handle) handle.setAttribute("aria-label", `Reorder pair ${i + 1}: ${providerLabel(el.dataset.source)} to ${providerLabel(el.dataset.target)}. Use Up or Down arrow keys.`);
+      if (handle) handle.setAttribute("aria-label", T("connections.pairs.reorder", {n: i + 1, source: providerLabel(el.dataset.source), target: providerLabel(el.dataset.target)}));
     });
   }
 
@@ -582,7 +584,7 @@
     board.inert = true;
     board.setAttribute("aria-busy", "true");
     const focused = document.activeElement;
-    pairOrderNotice(host, "Saving pair order…");
+    pairOrderNotice(host, T("connections.pairs.saving"));
     try {
       const response = await fetch("/api/pairs/reorder", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(order) });
       const data = await response.json();
@@ -596,13 +598,13 @@
           if (card) board.appendChild(card);
         }
       });
-      pairOrderNotice(host, "Pair order saved.");
+      pairOrderNotice(host, T("connections.pairs.saved"));
       window._invalidatePairsCache?.();
       document.dispatchEvent(new Event("cw:sync-data-changed"));
     } catch {
       animatePairOrder(board, () => original.forEach(card => board.appendChild(card)));
-      pairOrderNotice(host, "Couldn't save the order. Your previous order is restored.");
-      (window.CW?.MobileUI?.notice || window.alert)("Couldn't save the pair order. Your previous order is restored. Please try again.");
+      pairOrderNotice(host, T("connections.pairs.saveFailed"));
+      (window.CW?.MobileUI?.notice || window.alert)(T("connections.pairs.saveFailedLong"));
     } finally {
       board.inert = false;
       board.removeAttribute("aria-busy");
@@ -628,7 +630,7 @@
       const next = others.find(card => drag.y < top + card.offsetTop + card.offsetHeight / 2) || null;
       if (drag.card.nextElementSibling === next) return;
       animatePairOrder(board, () => board.insertBefore(drag.card, next));
-      pairOrderNotice(host, `Pair moved to position ${[...board.children].indexOf(drag.card) + 1}. Release to save, or press Escape to cancel.`);
+      pairOrderNotice(host, T("connections.pairs.moved", {n: [...board.children].indexOf(drag.card) + 1}));
     };
     const scroll = () => {
       const drag = _pairDrag;
@@ -656,7 +658,7 @@
       drag.handle.focus({ preventScroll: true });
       if (cancel) {
         animatePairOrder(board, () => drag.original.forEach(card => board.appendChild(card)));
-        pairOrderNotice(host, "Reordering cancelled.");
+        pairOrderNotice(host, T("connections.pairs.cancelled"));
       } else {
         savePairOrder(host, board, drag.original);
       }

@@ -2,6 +2,9 @@
 /* Provider library loading UI for the pair-config modal. */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 
+const I18N = () => globalThis.window?.CW?.I18n || globalThis.window?.__cwI18n;
+const T = (key, vars) => I18N()?.t?.(key, vars) ?? key;
+
 export function createLibraryController({
   ID,
   hasPlex,
@@ -150,7 +153,7 @@ export function createLibraryController({
       const info = getFeatureLibraries(state, feature, kind, instance);
       const selected = new Set(info.selected);
       const known = new Set(libraries.map((lib) => String(lib.key)));
-      const missing = libraries.length ? info.selected.filter((id) => !known.has(String(id))).map((id) => ({key: id, title: `Missing library (${id})`, missing: true})) : [];
+      const missing = libraries.length ? info.selected.filter((id) => !known.has(String(id))).map((id) => ({key: id, title: T("pairs.libs.missing", {id: String(id)}), missing: true})) : [];
       const list = libraries.length ? libraries.concat(missing) : info.selected.map((id) => ({key: id, title: id}));
       for (const lib of list) {
         const key = String(lib.key);
@@ -158,7 +161,7 @@ export function createLibraryController({
         button.type = "button";
         button.className = "chip" + (selected.has(key) ? " on" : "");
         button.textContent = lib.title || key;
-        if (lib.missing) button.title = "No longer available for this pair. Click to remove it.";
+        if (lib.missing) button.title = T("pairs.libs.unavailable");
         button.dataset.key = key;
         button.addEventListener("click", () => {
           const current = getFeatureLibraries(state, feature, kind, instance);
@@ -174,7 +177,7 @@ export function createLibraryController({
       if (!list.length) {
         const empty = document.createElement("div");
         empty.className = "muted";
-        empty.textContent = "No libraries";
+        empty.textContent = T("pairs.libs.none");
         chips.appendChild(empty);
       }
     }
@@ -185,9 +188,9 @@ export function createLibraryController({
       return [{instance: null, label: ""}];
     }
     const rows = state.instanceMap?.[kind] || [];
-    return [["Source", state.src_instance], ["Target", state.dst_instance]].filter(([, id]) => id).map(([side, instance]) => {
+    return [[T("pairs.libs.source"), state.src_instance], [T("pairs.libs.target"), state.dst_instance]].filter(([, id]) => id).map(([side, instance]) => {
       const row = rows.find((entry) => entry?.id === instance);
-      const label = row?.display_label || row?.label || (instance === "default" ? "Default" : instance);
+      const label = row?.display_label || row?.label || (instance === "default" ? T("pairs.cfg.default") : instance);
       return {instance, label: `${side}: ${label}`};
     });
   }
@@ -205,7 +208,7 @@ export function createLibraryController({
     const load = () => {
       if (btn) {
         btn.disabled = true;
-        btn.textContent = "Loading...";
+        btn.textContent = T("pairs.libs.loading");
       }
       const endpoints = libraryEndpoints(state, kind);
       const selection = `${state.src}:${state.src_instance}:${state.dst}:${state.dst_instance}`;
@@ -220,7 +223,7 @@ export function createLibraryController({
       })).finally(() => {
         if (btn) {
           btn.disabled = false;
-          btn.textContent = "Load libraries";
+          btn.textContent = T("pairs.cfg.loadLibraries");
         }
       });
     };

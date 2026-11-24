@@ -243,7 +243,7 @@ function _cwSetAuthError(msg) {
 }
 
 function _cwAbortSave(msg) {
-  const err = new Error(String(msg || "Save aborted"));
+  const err = new Error(String(msg || T("settings.saveAborted")));
   err.__cwAbortSave = true;
   throw err;
 }
@@ -273,10 +273,10 @@ function _cwWireAuthPair() {
     const hasA = !!_cwNorm(a), hasB = !!_cwNorm(b);
     if (!hasA && !hasB) return _cwSetAuthError("");
     if (hasA && a.length < MIN_PASSWORD_LENGTH) {
-      return _cwSetAuthError(`Password must be at least ${MIN_PASSWORD_LENGTH} characters`);
+      return _cwSetAuthError(T("settings.security.password.tooShort", { count: MIN_PASSWORD_LENGTH }));
     }
     if (hasB && a !== b) {
-      return _cwSetAuthError("Passwords do not match");
+      return _cwSetAuthError(T("settings.security.password.mismatch"));
     }
     _cwSetAuthError("");
   };
@@ -298,73 +298,20 @@ function _cwReadSecret(id, previousValue) {
   return raw !== previousValue ? { changed: true, set: raw } : { changed: false };
 }
 
+const _cwProviderAuthErrors = {
+  tautulli: { name: "Tautulli", fallback: "saveFailed", codes: { server_url_required: "serverUrlRequired", "server_url required": "serverUrlRequired", api_key_required: "apiKeyRequired", "api_key required": "apiKeyRequired", invalid_api_key: "invalidApiKey", validation_timeout: "timeout", validation_failed: "connectFailed", validation_bad_response: "badResponse" } },
+  tracearr: { name: "Tracearr", fallback: "saveFailed", codes: { server_url_required: "serverUrlRequired", api_key_required: "apiKeyRequired", invalid_api_key: "invalidApiKey", api_v2_unavailable: "tracearrV2", validation_timeout: "timeout", validation_failed: "connectFailed", validation_bad_response: "badResponse" } },
+  floppy: { name: "Floppy", fallback: "saveFailed", codes: { server_url_required: "serverUrlRequired", api_token_required: "apiTokenRequired", invalid_api_token: "invalidApiToken", validation_timeout: "timeout", unreachable: "connectFailed", validation_failed: "connectFailed", invalid_ssl: "sslFailed", validation_bad_response: "badResponse", server_error: "serverError" } },
+  scrob: { name: "Scrob", fallback: "saveFailed", codes: { server_url_required: "serverUrlRequired", api_key_required: "apiKeyRequired", username_required: "usernameRequired", password_required: "passwordRequired", invalid_api_key: "invalidApiKey", invalid_credentials: "invalidCredentials", totp_required: "totpRequired", invalid_totp_code: "invalidTotp", credentials_mismatch: "credentialsMismatch", password_login_disabled: "passwordLoginDisabled", email_not_confirmed: "emailNotConfirmed", api_not_found: "apiNotFound", api_prefix_mismatch: "apiPrefixMismatch", validation_timeout: "timeout", unreachable: "reachFailed", validation_failed: "reachFailed", invalid_ssl: "sslFailed", validation_bad_response: "returnedUnexpected", server_error: "serverError" } },
+  publicmetadb: { name: "PublicMetaDB", fallback: "saveKeyFailed", codes: { api_key_required: "apiKeyRequired", invalid_api_key: "invalidApiKey", validation_timeout: "timeout", validation_failed: "validateKeyFailed", validation_bad_response: "badResponse" } },
+};
+
 function _cwProviderAuthError(provider, code) {
   const key = _cwNorm(code);
-  if (provider === "tautulli") {
-    if (key === "server_url_required" || key === "server_url required") return "Enter Tautulli server URL";
-    if (key === "api_key_required" || key === "api_key required") return "Enter your Tautulli API key";
-    if (key === "invalid_api_key") return "Invalid Tautulli API key";
-    if (key === "validation_timeout") return "Tautulli validation timed out";
-    if (key === "validation_failed") return "Could not connect to Tautulli";
-    if (key === "validation_bad_response") return "Tautulli validation returned an unexpected response";
-    if (key.startsWith("validation_http_")) return "Tautulli validation failed";
-    return "Saving Tautulli failed";
-  }
-  if (provider === "tracearr") {
-    if (key === "server_url_required") return "Enter Tracearr server URL";
-    if (key === "api_key_required") return "Enter your Tracearr API key";
-    if (key === "invalid_api_key") return "Invalid Tracearr API key";
-    if (key === "api_v2_unavailable") return "Tracearr 2.0 or later is required";
-    if (key === "validation_timeout") return "Tracearr validation timed out";
-    if (key === "validation_failed") return "Could not connect to Tracearr";
-    if (key === "validation_bad_response") return "Tracearr validation returned an unexpected response";
-    if (key.startsWith("validation_http_")) return "Tracearr validation failed";
-    return "Saving Tracearr failed";
-  }
-  if (provider === "floppy") {
-    if (key === "server_url_required") return "Enter Floppy server URL";
-    if (key === "api_token_required") return "Enter your Floppy API token";
-    if (key === "invalid_api_token") return "Invalid Floppy API token";
-    if (key === "validation_timeout") return "Floppy validation timed out";
-    if (key === "unreachable" || key === "validation_failed") return "Could not connect to Floppy";
-    if (key === "invalid_ssl") return "Floppy SSL validation failed";
-    if (key === "validation_bad_response") return "Floppy validation returned an unexpected response";
-    if (key === "server_error") return "Floppy server error";
-    if (key.startsWith("validation_http_")) return "Floppy validation failed";
-    return "Saving Floppy failed";
-  }
-  if (provider === "scrob") {
-    if (key === "server_url_required") return "Enter Scrob server URL";
-    if (key === "api_key_required") return "Enter your Scrob API key";
-    if (key === "username_required") return "Enter your Scrob username";
-    if (key === "password_required") return "Enter your Scrob password";
-    if (key === "invalid_api_key") return "Invalid Scrob API key";
-    if (key === "invalid_credentials") return "Invalid Scrob username or password";
-    if (key === "totp_required") return "Enter the 6 digit code from your authenticator app";
-    if (key === "invalid_totp_code") return "That two factor code was not accepted";
-    if (key === "credentials_mismatch") return "That API key belongs to a different Scrob account than this login";
-    if (key === "password_login_disabled") return "Password login is disabled on this Scrob server";
-    if (key === "email_not_confirmed") return "Confirm your Scrob account email first";
-    if (key === "api_not_found") return "No Scrob API found at this URL";
-    if (key === "api_prefix_mismatch") return "Scrob API not reachable at this URL";
-    if (key === "validation_timeout") return "Scrob validation timed out";
-    if (key === "unreachable" || key === "validation_failed") return "Could not reach Scrob";
-    if (key === "invalid_ssl") return "Scrob SSL validation failed";
-    if (key === "validation_bad_response") return "Scrob returned an unexpected response";
-    if (key === "server_error") return "Scrob server error";
-    if (key.startsWith("validation_http_")) return "Scrob validation failed";
-    return "Saving Scrob failed";
-  }
-  if (provider === "publicmetadb") {
-    if (key === "api_key_required") return "Enter your PublicMetaDB API key";
-    if (key === "invalid_api_key") return "Invalid PublicMetaDB API key";
-    if (key === "validation_timeout") return "PublicMetaDB validation timed out";
-    if (key === "validation_failed") return "Could not validate PublicMetaDB API key";
-    if (key === "validation_bad_response") return "PublicMetaDB validation returned an unexpected response";
-    if (key.startsWith("validation_http_")) return "PublicMetaDB validation failed";
-    return "Saving PublicMetaDB key failed";
-  }
-  return "Provider authentication failed";
+  const spec = _cwProviderAuthErrors[provider];
+  if (!spec) return T("connections.validation.generic");
+  const name = spec.codes[key] || (key.startsWith("validation_http_") ? "httpFailed" : spec.fallback);
+  return T(`connections.validation.${name}`, { provider: spec.name });
 }
 
 async function _cwValidateProviderSecret(provider, inst, change) {
@@ -390,14 +337,14 @@ async function _cwValidateTmdbSecret(change) {
   }, 15000);
   const body = await _cwReadBody(resp);
   if (!resp?.ok || body?.ok === false) {
-    _cwAbortSave(body?.error || body?.detail || `TMDb key check failed (${resp?.status || 0})`);
+    _cwAbortSave(body?.error || body?.detail || T("settings.meta.tmdb.checkFailedStatus", { status: String(resp?.status || 0) }));
   }
   try {
     const input = _cwEl("tmdb_api_key");
     if (input) input.dataset.verified = "1";
     const msg = _cwEl("tmdb_check_msg");
     if (msg) {
-      msg.textContent = "Connected";
+      msg.textContent = T("common.status.connected");
       msg.classList.remove("hidden", "warn");
       msg.classList.add("ok");
     }
@@ -518,34 +465,34 @@ async function _cwSaveAppAuth(serverCfg) {
   try { _cwEl("app_auth_username")?.classList.remove("cw-invalid"); } catch {}
 
   if (wantsPwd && pass1 !== pass2) {
-    _cwSetAuthError("Passwords do not match");
-    _cwShowToast("Password mismatch", false);
+    _cwSetAuthError(T("settings.security.password.mismatch"));
+    _cwShowToast(T("settings.security.password.mismatchShort"), false);
     focusField("app_auth_password2");
-    _cwAbortSave("Password mismatch");
+    _cwAbortSave(T("settings.security.password.mismatchShort"));
   }
   if (wantsPwd && pass1.length < MIN_PASSWORD_LENGTH) {
-    _cwSetAuthError(`Password must be at least ${MIN_PASSWORD_LENGTH} characters`);
-    _cwShowToast(`Password must be at least ${MIN_PASSWORD_LENGTH} characters`, false);
+    _cwSetAuthError(T("settings.security.password.tooShort", { count: MIN_PASSWORD_LENGTH }));
+    _cwShowToast(T("settings.security.password.tooShort", { count: MIN_PASSWORD_LENGTH }), false);
     focusField("app_auth_password");
-    _cwAbortSave("Password too short");
+    _cwAbortSave(T("settings.security.password.tooShortShort"));
   }
   if (wantEnabled && !wantUser) {
-    _cwShowToast("Auth username required", false);
+    _cwShowToast(T("settings.security.usernameRequired"), false);
     try { _cwEl("app_auth_username")?.classList.add("cw-invalid"); } catch {}
-    _cwAbortSave("Auth username required");
+    _cwAbortSave(T("settings.security.usernameRequired"));
   }
   if (wantEnabled && (!status?.configured || status?.reset_required) && !_cwNorm(pass1)) {
-    _cwSetAuthError("Password required to save sign-in");
-    _cwShowToast("Set a password to save sign-in", false);
+    _cwSetAuthError(T("settings.security.password.requiredToSave"));
+    _cwShowToast(T("settings.security.password.setToSave"), false);
     focusField("app_auth_password");
-    _cwAbortSave("Password required");
+    _cwAbortSave(T("settings.security.password.required"));
   }
   if (rememberEnabled && (!rememberDaysValid || !rememberDaysRaw)) {
-    _cwSetAuthError("Session cache days must be between 1 and 365");
-    _cwShowToast("Session cache days must be between 1 and 365", false);
+    _cwSetAuthError(T("settings.security.sessions.daysInvalid"));
+    _cwShowToast(T("settings.security.sessions.daysInvalid"), false);
     try { window.cwValidateAppAuthRememberDays?.(); } catch {}
     try { rememberDaysEl?.focus?.(); } catch {}
-    _cwAbortSave("Invalid session cache days");
+    _cwAbortSave(T("settings.security.sessions.daysInvalidShort"));
   }
   if (!needsCall) return true;
 
@@ -563,7 +510,7 @@ async function _cwSaveAppAuth(serverCfg) {
   });
   const body = await _cwReadBody(resp);
   if (!resp.ok || !body?.ok) {
-    _cwShowToast(body?.error || `Auth save failed (${resp.status})`, false);
+    _cwShowToast(body?.error || T("settings.security.saveFailedStatus", { status: String(resp.status) }), false);
     return false;
   }
   try { _cwEl("app_auth_password").value = ""; } catch {}
@@ -587,7 +534,7 @@ async function saveSettings() {
     }
   };
   const schedulingSaveError = (message, tab = "advanced") => {
-    const msg = _cwNorm(message) || "Fix the scheduling errors before saving.";
+    const msg = _cwNorm(message) || T("settings.scheduleErrors");
     try {
       window.cwSettingsSelect?.("scheduling");
       window.cwSchedSettingsSelect?.(tab);
@@ -638,14 +585,14 @@ async function saveSettings() {
       const saveOidc = _cwFn("cwAppAuthOidcSavePending", window);
       const res = saveOidc && oidcDraft ? await saveOidc(oidcDraft) : null;
       if (res && res.ok === false) {
-        _cwShowToast(res.error || "OIDC save failed", false);
-        _cwAbortSave(res.error || "OIDC save failed");
+        _cwShowToast(res.error || T("settings.security.oidc.saveFailed"), false);
+        _cwAbortSave(res.error || T("settings.security.oidc.saveFailed"));
       }
     } catch (e) {
       console.warn("saveSettings: OIDC save failed", e);
       if (e?.__cwAbortSave) throw e;
-      _cwShowToast("OIDC save failed", false);
-      _cwAbortSave("OIDC save failed");
+      _cwShowToast(T("settings.security.oidc.saveFailed"), false);
+      _cwAbortSave(T("settings.security.oidc.saveFailed"));
     }
 
     try {
@@ -798,7 +745,7 @@ async function saveSettings() {
         const inst = _cwSelectedInst("crosswatch", "cw.ui.crosswatch.auth.instance.v1");
         const prevRoot = serverCfg?.crosswatch && typeof serverCfg.crosswatch === "object" ? serverCfg.crosswatch : {};
         const prevBlock = _cwInstBlock(prevRoot, inst);
-        if (prevBlock?.connected !== true) throw new Error("Connect CrossWatch Local Tracker before saving.");
+        if (prevBlock?.connected !== true) throw new Error(T("settings.trackerConnectFirst"));
         cfg.crosswatch = cfg.crosswatch && typeof cfg.crosswatch === "object" ? cfg.crosswatch : {};
         const target = _cwEnsureInstBlock(cfg.crosswatch, inst);
         let dirty = false;
@@ -1200,21 +1147,21 @@ async function saveSettings() {
     try { _cwLater(() => window.refreshSchedulingBanner?.()); } catch {}
     try { window.refreshSettingsInsight?.(); } catch {}
 
-    if (!fromFab) _cwShowToast("Settings saved", true);
+    if (!fromFab) _cwShowToast(T("settings.saved"), true);
 
     try {
       const reasons = [];
-      let kind = "", applyText = "Restart NOW";
+      let kind = "", applyText = T("settings.restart.now");
       const wantProto = _cwNorm(window.__cwProtoChanged).toLowerCase();
       if (wantProto) {
         try { delete window.__cwProtoChanged; } catch {}
         try { window.cwQueueProtocolApply?.(wantProto, window.cwBuildProtoUrl?.(wantProto)); } catch {}
-        reasons.push("Protocol changed");
+        reasons.push(T("settings.restart.protocolChanged"));
         kind = "protocol";
-        applyText = "Apply NOW";
+        applyText = T("settings.restart.applyNow");
       }
       if (reasons.length) {
-        const msg = `${reasons.join(" + ")}: restart required`;
+        const msg = T("settings.restart.required", { reasons: reasons.join(" + ") });
         try { window.cwShowRestartBanner?.(msg, { showApply: true, applyText, kind }); } catch {}
         _cwShowToast(msg, true);
       }
@@ -1226,7 +1173,7 @@ async function saveSettings() {
       _cwShowToast(err.message.trim(), false);
       throw err;
     }
-    _cwShowToast("Save failed — see console", false);
+    _cwShowToast(T("settings.saveFailedConsole"), false);
     throw err;
   }
 }

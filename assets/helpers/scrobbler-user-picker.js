@@ -1,4 +1,6 @@
 (function (w, d) {
+  const T = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.t?.(key, vars) ?? key;
+  const TH = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.html?.(key, vars) ?? key;
   w.CW ||= {};
 
   function create(deps) {
@@ -89,7 +91,7 @@
 
       if (USER_PICK.mode === "webhook") {
         const added = addToWhitelist("#sc-whitelist-webhook", "scrobble.webhook.filters_plex.username_whitelist", name, removeUserWebhook);
-        setNote("sc-users-note-webhook", added ? `Picked ${name}` : `${name} already added`);
+        setNote("sc-users-note-webhook", added ? T("scrobbler.picker.picked", {name}) : T("scrobbler.picker.already", {name}));
         closeUserPicker();
         return;
       }
@@ -105,7 +107,7 @@
       listEl.innerHTML = "";
       const items = (USER_PICK.users || []).filter((u) => !q || String(u.name || "").toLowerCase().includes(q));
       if (!items.length) {
-        listEl.appendChild(el("div", { className: "sub", textContent: "No users found." }));
+        listEl.appendChild(el("div", { className: "sub", textContent: T("scrobbler.picker.noUsers") }));
         return;
       }
 
@@ -128,12 +130,12 @@
       if (d.getElementById("sc_user_pop")) return;
       const pop = el("div", { id: "sc_user_pop", className: "sc-user-pop hidden" });
       const head = el("div", { className: "head" });
-      const title = el("div", { className: "title", id: "sc_user_title", textContent: "Pick user" });
-      const closeBtn = el("button", { type: "button", id: "sc_user_close", className: "btn small", textContent: "Close" });
+      const title = el("div", { className: "title", id: "sc_user_title", textContent: T("scrobbler.picker.pick") });
+      const closeBtn = el("button", { type: "button", id: "sc_user_close", className: "btn small", textContent: T("scrobbler.picker.close") });
       head.append(title, closeBtn);
 
       const body = el("div", { className: "body" });
-      const filter = el("input", { id: "sc_user_filter", className: "input", placeholder: "Filter users..." });
+      const filter = el("input", { id: "sc_user_filter", className: "input", placeholder: T("scrobbler.picker.filter") });
       const list = el("div", { id: "sc_user_list", className: "list" });
       body.append(filter, list);
       pop.append(head, body);
@@ -211,7 +213,7 @@
           provider: USER_PICK.prov,
           instance: String(USER_PICK.opts?.instance || activeProviderInstance() || "default"),
           anchorEl: USER_PICK.anchor,
-          title: String(USER_PICK.opts?.title || (USER_PICK.prov === "emby" ? "Pick Emby user" : "Pick Jellyfin user")),
+          title: String(USER_PICK.opts?.title || (USER_PICK.prov === "emby" ? T("scrobbler.picker.pickEmby") : T("scrobbler.picker.pickJellyfin"))),
           onPick: (u) => applyPickedUser({ name: u?.name, id: u?.id }),
         });
         return;
@@ -226,10 +228,10 @@
       if (!pop || !title || !filter || !listEl) return;
 
       const provLabel = USER_PICK.prov === "plex" ? "Plex" : USER_PICK.prov === "emby" ? "Emby" : "Jellyfin";
-      title.textContent = String(USER_PICK.opts?.title || (USER_PICK.mode === "webhook" ? "Pick Plex user" : `Pick ${provLabel} user`));
+      title.textContent = String(USER_PICK.opts?.title || (USER_PICK.mode === "webhook" ? T("scrobbler.picker.pickPlex") : T("scrobbler.picker.pickProvider", {name: provLabel})));
       filter.value = "";
       listEl.innerHTML = "";
-      listEl.appendChild(el("div", { className: "sub", textContent: "Loading..." }));
+      listEl.appendChild(el("div", { className: "sub", textContent: T("scrobbler.picker.loading") }));
 
       pop.classList.remove("hidden");
       try {
@@ -242,7 +244,7 @@
       } catch (e) {
         console.warn("[scrobbler] users fetch failed:", e);
         listEl.innerHTML = "";
-        listEl.appendChild(el("div", { className: "sub", textContent: "Couldn't load users. Check Authentication + logs." }));
+        listEl.appendChild(el("div", { className: "sub", textContent: T("scrobbler.picker.loadFailed") }));
         return;
       }
 

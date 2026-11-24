@@ -1,5 +1,7 @@
 // auth.anilist.js - AniList auth (instance-aware)
 (function (w, d) {
+  const T = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.t?.(key, vars) ?? key;
+  const TH = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.html?.(key, vars) ?? key;
   "use strict";
 
   const Shared = w.CW.AuthShared;
@@ -14,7 +16,7 @@
     sectionId: "sec-anilist",
     selectId: "anilist_instance",
     storageKey: "cw.ui.anilist.auth.instance.v1",
-    title: "Select which AniList account this config applies to.",
+    title: T("connections.auth.gen.selectAccount", {provider: "AniList"}),
   });
 
   function isMaskedSecret(v) {
@@ -66,7 +68,7 @@
   function setAniListSuccess(on, txt) {
     anilistConnected = !!on;
     try { Shared.setConnectLocked("btn-connect-anilist", anilistConnected); } catch {}
-    return Shared.setStatusPill("anilist_msg", on ? "ok" : (txt ? "warn" : null), txt || (on ? "Connected" : ""));
+    return Shared.setStatusPill("anilist_msg", on ? "ok" : (txt ? "warn" : null), txt || (on ? T("connections.auth.connected") : ""));
   }
 
   function toast(message, ok = true) {
@@ -113,14 +115,14 @@
     box.className = "anime-mapping-rec hidden";
     box.innerHTML =
       '<div class="anime-mapping-rec-copy">' +
-        '<div class="anime-mapping-rec-kicker">Recommended for AniList</div>' +
-        '<strong>Use Anime ID Mapping</strong>' +
-        '<div class="muted">Improves matching by translating AniList IDs to IDs your media servers and trackers understand.</div>' +
+        '<div class="anime-mapping-rec-kicker">' + TH("connections.auth.anilist.recommended") + '</div>' +
+        '<strong>' + TH("connections.auth.anilist.useMapping") + '</strong>' +
+        '<div class="muted">' + TH("connections.auth.anilist.improves") + '</div>' +
         '<div class="anime-mapping-rec-state" id="anilist_mapping_recommendation_state"></div>' +
       '</div>' +
       '<div class="anime-mapping-rec-actions">' +
-        '<button class="btn primary" type="button" id="btn-anilist-enable-mapping">Enable Anime ID Mapping</button>' +
-        '<button class="btn" type="button" id="btn-anilist-dismiss-mapping">Not now</button>' +
+        '<button class="btn primary" type="button" id="btn-anilist-enable-mapping">' + TH("connections.auth.enableMapping") + '</button>' +
+        '<button class="btn" type="button" id="btn-anilist-dismiss-mapping">' + TH("connections.auth.notNow") + '</button>' +
       '</div>';
 
     const controls = Q(SECTION + " .inline");
@@ -158,13 +160,13 @@
     const btn = $("btn-anilist-enable-mapping");
     if (btn) {
       btn.disabled = !!mappingRecommendBusy;
-      btn.textContent = mappingRecommendBusy ? "Enabling..." : "Enable Anime ID Mapping";
+      btn.textContent = mappingRecommendBusy ? T("connections.auth.kitsu.enabling") : T("connections.auth.enableMapping");
     }
 
     const state = $("anilist_mapping_recommendation_state");
     if (state) {
       const err = String(status?.error || "").trim();
-      state.textContent = mappingRecommendBusy ? "Downloading mapping database if needed..." : err;
+      state.textContent = mappingRecommendBusy ? T("connections.auth.downloadingMapping") : err;
       state.classList.toggle("hidden", !(mappingRecommendBusy || err));
     }
   }
@@ -186,10 +188,10 @@
 
     try {
       const r = await fetch("/api/anime-mapping/status", { cache: "no-store", credentials: "same-origin" });
-      if (!r.ok) throw new Error(`Status failed (${r.status})`);
+      if (!r.ok) throw new Error(T("connections.auth.statusFailed", {status: String(r.status)}));
       mappingRecommendStatus = await r.json().catch(() => ({}));
     } catch (e) {
-      mappingRecommendStatus = { ...(mappingRecommendStatus || {}), error: e?.message || "Could not check Anime ID Mapping status" };
+      mappingRecommendStatus = { ...(mappingRecommendStatus || {}), error: e?.message || T("connections.auth.checkMappingFailed") };
     }
 
     renderMappingRecommendation(mappingRecommendStatus);
@@ -214,7 +216,7 @@
         }),
       });
       const data = await r.json().catch(() => ({}));
-      if (!r.ok || data.ok === false) throw new Error(data.message || data.error || `Enable failed (${r.status})`);
+      if (!r.ok || data.ok === false) throw new Error(data.message || data.error || T("connections.auth.enableFailed", {status: String(r.status)}));
 
       w._cfgCache ||= {};
       w._cfgCache.anime_mapping = data.anime_mapping || {
@@ -228,9 +230,9 @@
 
       try { w.cwAnimeMappingRenderStatus?.(mappingRecommendStatus); } catch {}
       try { await w.cwAnimeMappingRefreshStatus?.(); } catch {}
-      toast(data.bootstrap_error ? data.bootstrap_error : "Anime ID Mapping enabled", !data.bootstrap_error);
+      toast(data.bootstrap_error ? data.bootstrap_error : T("connections.auth.mappingEnabled"), !data.bootstrap_error);
     } catch (e) {
-      mappingRecommendStatus = { ...(mappingRecommendStatus || {}), error: e?.message || "Could not enable Anime ID Mapping" };
+      mappingRecommendStatus = { ...(mappingRecommendStatus || {}), error: e?.message || T("connections.auth.enableMappingFailed") };
       toast(mappingRecommendStatus.error, false);
     } finally {
       mappingRecommendBusy = false;
@@ -244,10 +246,10 @@
     if (!hint || hint.__cwRendered) return;
 
     hint.innerHTML =
-      'You need an AniList API key. Create one at ' +
+      TH("connections.auth.anilist.needKey") + ' ' +
       '<a href="https://anilist.co/settings/developer" target="_blank" rel="noreferrer">AniList Developer</a>. ' +
-      'Set the Redirect URL to <code id="redirect_uri_preview_anilist"></code>.' +
-      ' <button id="btn-copy-anilist-redirect" class="btn" type="button" style="margin-left:8px">Copy Redirect URL</button>';
+      TH("connections.auth.setRedirect") + ' <code id="redirect_uri_preview_anilist"></code>.' +
+      ' <button id="btn-copy-anilist-redirect" class="btn" type="button" style="margin-left:8px">' + TH("connections.auth.copyRedirect") + '</button>';
 
     hint.__cwRendered = true;
   }
@@ -348,7 +350,7 @@
 
   async function copyAniListRedirect() {
     const uri = computeRedirect();
-    return Shared.copyText(uri, $("btn-copy-anilist-redirect"), { successMessage: "Redirect URL copied" });
+    return Shared.copyText(uri, $("btn-copy-anilist-redirect"), { successMessage: T("connections.auth.trakt.redirectCopied") });
   }
 
   async function anilistDeleteToken() {
@@ -377,20 +379,20 @@
       if (r.ok && j.ok !== false) {
         if (msg) {
           msg.classList.add("warn");
-          msg.textContent = "Disconnected";
+          msg.textContent = T("connections.auth.disconnected");
         }
-        notify("AniList disconnected");
+        notify(T("connections.auth.gen.disconnected", {provider: "AniList"}));
         try { w.dispatchEvent(new CustomEvent("auth-changed")); } catch {}
       } else {
         if (msg) {
           msg.classList.add("warn");
-          msg.textContent = "Could not disconnect";
+          msg.textContent = T("connections.auth.couldNotDisconnect");
         }
       }
     } catch {
       if (msg) {
         msg.classList.add("warn");
-        msg.textContent = "Could not disconnect";
+        msg.textContent = T("connections.auth.couldNotDisconnect");
       }
     } finally {
       if (btn) {
@@ -412,7 +414,7 @@
     const secState = readSecretField($("anilist_client_secret"));
     if (!cidState.hasValue || !secState.hasValue) return;
 
-    const win = Shared.openWaitWindow("AniList", "Preparing the AniList approval page...");
+    const win = Shared.openWaitWindow("AniList", T("connections.auth.gen.preparing", {provider: "AniList"}));
     let authCompleted;
     try { authCompleted = await Shared.captureAuthCompletion(profile); }
     catch (e) { Shared.closeWaitWindow(win); notify(e.message); return; }

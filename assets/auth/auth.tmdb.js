@@ -1,5 +1,7 @@
 // assets/auth/auth.tmdb.js
 (function () {
+  const T = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.t?.(key, vars) ?? key;
+  const TH = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.html?.(key, vars) ?? key;
   if (window._tmdbPatched) return;
   window._tmdbPatched = true;
 
@@ -17,11 +19,11 @@
   const profile = Shared.createProfileAdapter({
     provider: "tmdb_sync",
     configKey: "tmdb_sync",
-    label: "TMDb Sync",
+    label: T("connections.auth.tmdb.label"),
     sectionId: "sec-tmdb-sync",
     selectId: "tmdb_sync_instance",
     storageKey: "cw.ui.tmdb_sync.auth.instance.v1",
-    title: "Select which TMDb Sync account this config applies to.",
+    title: T("connections.auth.tmdb.select"),
   });
 
   function getTMDbSyncInstance() {
@@ -123,29 +125,28 @@
       const ok = !!j.connected;
       if (ok) {
         await hydrate(true, false);
-        const u = j.account?.username ? ` (${j.account.username})` : "";
-        setConn(true, `Connected${u}`);
+                setConn(true, j.account?.username ? T("connections.auth.connectedParen", {name: j.account.username}) : T("connections.auth.connected"));
         setListsHint(!j.lists_ready);
-        if (!silent) note("TMDb verified ");
+        if (!silent) note(T("connections.auth.gen.verifiedSpace", {provider: "TMDb"}));
         return;
       }
       setListsHint(false);
       if (j.pending) {
-        setConn(false, "Pending approval...");
-        if (!silent) note("TMDb pending approval");
+        setConn(false, T("connections.auth.tmdb.pending"));
+        if (!silent) note(T("connections.auth.gen.pendingApproval", {provider: "TMDb"}));
         return;
       }
       const hasKey = !!txt(el("tmdb_sync_api_key")?.value);
       if (hasKey) {
-        setConn(false, j.error || "Not connected");
+        setConn(false, j.error || T("connections.auth.notConnected"));
       } else {
         try { Shared.setConnectLocked("tmdb_sync_connect", false); } catch {}
         try { Shared.setStatusPill("tmdb_sync_msg", "clear"); } catch {}
       }
-      if (!silent) note("TMDb not connected");
+      if (!silent) note(T("connections.auth.gen.notConnected", {provider: "TMDb"}));
     } catch {
-      setConn(false, "TMDb verify failed");
-      if (!silent) note("TMDb verify failed");
+      setConn(false, T("connections.auth.gen.verifyFailedShort", {provider: "TMDb"}));
+      if (!silent) note(T("connections.auth.gen.verifyFailedShort", {provider: "TMDb"}));
     }
   }
 
@@ -156,26 +157,25 @@
     if (j.connected) {
       stopPoll();
       await hydrate(true, false);
-      const u = j.account?.username ? ` (${j.account.username})` : "";
-      setConn(true, `Connected${u}`);
+            setConn(true, j.account?.username ? T("connections.auth.connectedParen", {name: j.account.username}) : T("connections.auth.connected"));
       setListsHint(!j.lists_ready);
-      note("TMDb connected ");
+      note(T("connections.auth.gen.connectedSpace", {provider: "TMDb"}));
       return;
     }
 
     if (Date.now() >= pollUntil) {
       stopPoll();
-      setConn(false, j.pending ? "Still pending. Approve on TMDb, then click Connect." : (j.error || "Not connected"));
+      setConn(false, j.pending ? T("connections.auth.tmdb.stillPending") : (j.error || T("connections.auth.notConnected")));
       return;
     }
 
     if (!j.pending) {
       stopPoll();
-      setConn(false, j.error || "Not connected");
+      setConn(false, j.error || T("connections.auth.notConnected"));
       return;
     }
 
-    setConn(false, "Waiting...");
+    setConn(false, T("connections.auth.waiting"));
     pollTimer = setTimeout(tickPoll, 2000);
   }
 
@@ -193,7 +193,7 @@
     const managed = document.documentElement.dataset.cwRole === "user";
 
     if (!hasKey && !managed) {
-      setConn(false, "Enter your API key first.");
+      setConn(false, T("connections.auth.enterKeyFirst"));
       el("tmdb_sync_hint")?.classList.remove("hidden");
       return;
     }
@@ -201,7 +201,7 @@
     const readState = readSecretField(el("tmdb_sync_read_token"));
     const readToken = readState.masked ? "********" : readState.value;
 
-    const win = Shared.openWaitWindow("TMDb", "Preparing the TMDb approval page...");
+    const win = Shared.openWaitWindow("TMDb", T("connections.auth.gen.preparing", {provider: "TMDb"}));
     try {
       const r = await fetchJSON(tmdbApi(API.start), {
         method: "POST",
@@ -216,11 +216,11 @@
         Shared.closeWaitWindow(win);
         if (j.auth_url) window.open(j.auth_url, "_blank", "noopener,noreferrer");
       }
-      setConn(false, "Approve in TMDb...");
+      setConn(false, T("connections.auth.gen.approveIn", {provider: "TMDb"}));
       startPoll(120000);
     } catch (err) {
       Shared.closeWaitWindow(win);
-      setConn(false, (err && err.message) ? err.message : "TMDb connect failed");
+      setConn(false, (err && err.message) ? err.message : T("connections.auth.gen.connectFailedShort", {provider: "TMDb"}));
     }
   }
 
@@ -245,11 +245,11 @@
       if (readEl) { readEl.dataset.touched = "0"; readEl.value = ""; readEl.dataset.masked = "0"; }
       el("tmdb_sync_hint")?.classList.remove("hidden");
       setListsHint(false);
-      setConn(false, "Disconnected");
-      note("TMDb disconnected");
+      setConn(false, T("connections.auth.disconnected"));
+      note(T("connections.auth.gen.disconnected", {provider: "TMDb"}));
     } catch {
-      setConn(false, "TMDb disconnect failed");
-      note("TMDb disconnect failed");
+      setConn(false, T("connections.auth.gen.disconnectFailed", {provider: "TMDb"}));
+      note(T("connections.auth.gen.disconnectFailed", {provider: "TMDb"}));
     }
   }
 

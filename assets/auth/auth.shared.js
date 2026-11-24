@@ -1,6 +1,8 @@
 // assets/auth/auth.shared.js
 // Shared frontend helpers for auth provider panels.
 (function (w, d) {
+  const T = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.t?.(key, vars) ?? key;
+  const TH = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.html?.(key, vars) ?? key;
   if (w.CW?.AuthShared) return;
 
   const el = (id) => d.getElementById(id);
@@ -90,23 +92,23 @@
     const role = txt(usage?.role).toLowerCase();
     if (feature === "sync_pair") {
       const pairId = txt(usage?.pair_id);
-      const where = pairId ? `Sync pair ${pairId}` : "a sync pair";
-      const side = role === "source" ? "source" : "target";
-      return `${where} (${side})${usage?.enabled ? "" : " (disabled)"}`;
+      const where = pairId ? T("connections.auth.usage.pairN", {id: pairId}) : T("connections.auth.usage.aPair");
+      const side = T(role === "source" ? "connections.auth.usage.source" : "connections.auth.usage.target");
+      return `${where} (${side})${usage?.enabled ? "" : ` (${T("connections.auth.usage.disabled")})`}`;
     }
     if (feature === "watcher") {
       const routeId = txt(usage?.route_id);
-      const where = routeId ? `Watcher route ${routeId}` : "a Watcher route";
-      const side = role === "provider" ? "source" : "sink";
-      return `${where} (${side})${usage?.enabled ? "" : " (disabled)"}`;
+      const where = routeId ? T("connections.auth.usage.routeN", {id: routeId}) : T("connections.auth.usage.aRoute");
+      const side = T(role === "provider" ? "connections.auth.usage.source" : "connections.auth.usage.sink");
+      return `${where} (${side})${usage?.enabled ? "" : ` (${T("connections.auth.usage.disabled")})`}`;
     }
     if (feature === "webhook") {
       const inst = txt(usage?.instance) || "default";
       const name = providerLabel(usage?.provider);
       const source = inst === "default" ? name : `${name} ${inst}`;
-      return `${source} webhook (${role === "sink" ? "destination" : "source"})`;
+      return T("connections.auth.usage.webhook", {source, side: T(role === "sink" ? "connections.auth.usage.destination" : "connections.auth.usage.source")});
     }
-    return txt(usage?.label) || "an unknown configuration";
+    return txt(usage?.label) || T("connections.auth.usage.unknown");
   }
 
   function isProviderInUse(res) {
@@ -118,12 +120,12 @@
     const data = res?.data ?? res;
     if (!isProviderInUse(res)) return "";
     const usages = Array.isArray(data?.usages) ? data.usages : [];
-    if (!usages.length) return txt(data?.message) || "This connection is still in use.";
+    if (!usages.length) return txt(data?.message) || T("connections.auth.inUse");
     const inst = txt(data?.instance) || "default";
     const name = providerLabel(data?.provider);
-    const subject = inst === "default" ? `${name} connection` : `${name} instance ${inst}`;
+    const subject = inst === "default" ? T("connections.auth.usage.connection", {name}) : T("connections.auth.usage.instance", {name, inst});
     const details = usages.map(describeUsage).join(", ");
-    return `Cannot delete ${subject} because it is used by ${details}. Remove this instance from Sync pairs, Watcher, or Webhooks first.`;
+    return T("connections.auth.usage.cannotDelete", {subject, details});
   }
 
   const CONNECTION_WARN_VISIBLE_MS = 10000;
@@ -212,7 +214,7 @@
 
     const ok = value === "ok" || value === "connected" || value === "success";
     node.classList.add(ok ? "ok" : "warn");
-    node.textContent = msg || (ok ? "Connected" : "Not connected");
+    node.textContent = msg || (ok ? T("connections.auth.connected") : T("connections.auth.notConnected"));
   }
 
   function setStatus(msgId, ok, msg) {
@@ -234,9 +236,9 @@
         }
         if (!/restart/i.test(node.id)) {
           if (node.dataset.cwConnectOriginalLabel === undefined) node.dataset.cwConnectOriginalLabel = node.innerHTML;
-          if (node.textContent !== "Reconnect") node.textContent = "Reconnect";
+          if (node.textContent !== T("connections.auth.reconnect")) node.textContent = T("connections.auth.reconnect");
         }
-        node.setAttribute("title", "Reconnect this connection instance");
+        node.setAttribute("title", T("connections.auth.reconnectTitle"));
       } else {
         if (node.dataset.cwConnectOriginalLabel !== undefined) {
           node.innerHTML = node.dataset.cwConnectOriginalLabel;
@@ -255,7 +257,7 @@
   async function captureAuthCompletion(profile) {
     const instance = profile.getInstance();
     const response = await fetchJSON("/api/config?ts=" + Date.now(), { cache: "no-store" });
-    if (!response.ok || !response.data || profile.getInstance() !== instance) throw new Error("Could not load the connection instance");
+    if (!response.ok || !response.data || profile.getInstance() !== instance) throw new Error(T("connections.auth.loadInstanceFailed"));
     const before = profile.cfgBlock(response.data, false)?.auth_completed_at;
     return (current) => {
       if (profile.getInstance() !== instance) return false;
@@ -306,16 +308,16 @@
     const code = txt(opts.code).replace(/[^A-Za-z0-9-]/g, "");
     const url = txt(opts.url);
     const seconds = Math.max(1, Number(opts.seconds) || (code ? 6 : 3));
-    const heading = txt(opts.message) || (code ? "Enter this code on the " + brand.label + " approval page" : url ? "Opening the " + brand.label + " approval page" : "Contacting " + brand.label + "...");
+    const heading = txt(opts.message) || (code ? T("connections.auth.wait.enterCode", {name: brand.label}) : url ? T("connections.auth.wait.opening", {name: brand.label}) : T("connections.auth.wait.contacting", {name: brand.label}));
     const logo = brand.logo ? '<img src="' + escWait(brand.logo) + '" alt="" style="display:block;margin:0 auto 18px;max-width:150px;max-height:72px;width:auto;height:auto">' : "";
     const codeHtml = code
       ? '<div style="font-size:38px;font-weight:800;letter-spacing:.18em;padding-left:.18em;word-break:break-all;background:linear-gradient(135deg,' + rgb(t1) + ',' + rgb(t2) + ');-webkit-background-clip:text;background-clip:text;color:transparent">' + escWait(code) + '</div>' +
         '<div id="cw-wait-state" style="font-size:12px;opacity:.65;margin-top:10px;min-height:16px"></div>'
       : "";
     const action = url
-      ? '<button id="cw-wait-go" type="button" style="margin-top:18px;cursor:pointer;border:0;border-radius:10px;padding:11px 18px;font:600 14px system-ui,sans-serif;color:' + (light ? "#0b0d12" : "#fff") + ';background:linear-gradient(135deg,' + rgb(brand.c1) + ',' + rgb(brand.c2) + ');box-shadow:0 0 16px rgba(' + brand.c2.join(",") + ',.4)">' + (code ? "Copy code and continue" : "Continue") + '</button>' +
-        '<div style="font-size:12px;opacity:.55;margin-top:14px">Continuing to ' + escWait(brand.label) + ' in <span id="cw-wait-left">' + seconds + '</span>s</div>'
-      : '<div style="font-size:12px;opacity:.5;margin-top:14px">This page continues on its own</div>';
+      ? '<button id="cw-wait-go" type="button" style="margin-top:18px;cursor:pointer;border:0;border-radius:10px;padding:11px 18px;font:600 14px system-ui,sans-serif;color:' + (light ? "#0b0d12" : "#fff") + ';background:linear-gradient(135deg,' + rgb(brand.c1) + ',' + rgb(brand.c2) + ');box-shadow:0 0 16px rgba(' + brand.c2.join(",") + ',.4)">' + (code ? TH("connections.auth.wait.copyContinue") : TH("connections.auth.wait.continue")) + '</button>' +
+        '<div style="font-size:12px;opacity:.55;margin-top:14px">' + TH("connections.auth.wait.continuing", {name: brand.label, seconds: "__CW_SECONDS__"}).replace("__CW_SECONDS__", '<span id="cw-wait-left">' + seconds + '</span>') + '</div>'
+      : '<div style="font-size:12px;opacity:.5;margin-top:14px">' + TH("connections.auth.wait.ownWay") + '</div>';
     const script = url
       ? '<script>(function(){var code=' + scriptJSON(code) + ',url=' + scriptJSON(url) + ',left=' + seconds + ';' +
         'function state(t){var s=document.getElementById("cw-wait-state");if(s)s.textContent=t}' +
@@ -392,13 +394,13 @@
       const authPanel = root.querySelector('.cw-subpanel[data-sub="auth"]');
       if (authPanel) authPanel.insertBefore(node, authPanel.firstChild || null);
     }
-    const label = txt(opts?.label) || "media server";
+    const label = txt(opts?.label) || T("connections.auth.mediaServer");
     const kind = txt(opts?.kind).toLowerCase();
-    const title = txt(opts?.title) || `Connect ${label}`;
+    const title = txt(opts?.title) || T("connections.auth.connectName", {name: label});
     const copy = txt(opts?.copy) || (
       kind === "plex"
-        ? "Click Connect Plex, then use the link code shown here in the browser window. Once the account is connected, CrossWatch will move you to Settings to validate the server."
-        : `Enter your ${label} server URL and sign in. After the connection succeeds, CrossWatch will move you to Settings so you can validate the server and pick the right user.`
+        ? T("connections.auth.journeyPlex")
+        : T("connections.auth.journeyServer", {name: label})
     );
     const brand = kind === "plex"
       ? { c1: "229,160,13", c2: "229,160,13", logo: "PLEX", help: w.CW.HelpLinks.url("plex") }
@@ -414,7 +416,7 @@
         <div class="cw-auth-journey-title">${title}</div>
         <div class="cw-auth-journey-copy">${copy}</div>
       </div>
-      <a class="cw-auth-journey-help" href="${brand.help}" target="_blank" rel="noopener noreferrer" aria-label="Open ${label} guide" title="Open guide"><span class="material-symbols-rounded" aria-hidden="true">help</span></a>`;
+      <a class="cw-auth-journey-help" href="${brand.help}" target="_blank" rel="noopener noreferrer" aria-label="${TH("connections.auth.openGuideName", {name: label})}" title="${TH("connections.auth.openGuide")}"><span class="material-symbols-rounded" aria-hidden="true">help</span></a>`;
     return node;
   }
 
@@ -439,7 +441,7 @@
       if (disabled) btn.setAttribute("aria-disabled", "true");
       else btn.removeAttribute("aria-disabled");
       if (disabled) {
-        btn.title = sub === "settings" ? "Connect or configure this instance first." : sub === "users" ? "Connect this instance before choosing users." : "Connect this instance before whitelisting libraries.";
+        btn.title = sub === "settings" ? T("connections.auth.connectFirst") : sub === "users" ? T("connections.auth.connectUsers") : T("connections.auth.connectLibraries");
       } else {
         btn.removeAttribute("title");
       }
@@ -454,11 +456,11 @@
   function flashCopyButton(btn, text) {
     if (!btn) return;
     const old = btn.textContent;
-    btn.textContent = text || "Copied";
+    btn.textContent = text || T("connections.auth.copied");
     btn.classList.add("copied");
     clearTimeout(btn.__cwAuthCopyTimer);
     btn.__cwAuthCopyTimer = setTimeout(() => {
-      btn.textContent = old || "Copy";
+      btn.textContent = old || T("connections.auth.copy");
       btn.classList.remove("copied");
     }, 900);
   }
@@ -474,7 +476,7 @@
       if (opts?.successMessage) notify(opts.successMessage);
       return true;
     }
-    if (opts?.failureMessage !== false) notify(opts?.failureMessage || "Copy failed");
+    if (opts?.failureMessage !== false) notify(opts?.failureMessage || T("connections.auth.copyFailed"));
     return false;
   }
 
@@ -507,14 +509,14 @@
     const sectionId = txt(opts.sectionId || `sec-${provider}`);
     const panelSelector = opts.panelSelector || `#${sectionId} .cw-meta-provider-panel`;
     const apiProvider = txt(opts.instanceProvider || provider);
-    const title = txt(opts.title || `Select which ${label} instance this config applies to.`);
+    const title = txt(opts.title || T("connections.auth.selectInstance", {name: label}));
     let uiObserver = null;
 
     function addDefaultOption(sel) {
       if (!sel || sel.options.length) return;
       const option = d.createElement("option");
       option.value = "default";
-      option.textContent = "Default";
+      option.textContent = T("connections.auth.default");
       option.dataset.friendlyLabel = "";
       option.dataset.userProfileLabel = "";
       option.dataset.userProfileId = "";
@@ -584,7 +586,7 @@
         const scope = w.CW?.SettingsScope?.active?.() ? w.CW.SettingsScope : null;
         const allowed = (id) => !scope || scope.allowsInstance(apiProvider, id);
         const defaultRow = opts.find((item) => item && item.id === "default") || {};
-        if (allowed("default")) addOpt("default", defaultRow.display_label || defaultRow.label || "Default", defaultRow);
+        if (allowed("default")) addOpt("default", defaultRow.display_label || defaultRow.label || T("connections.auth.default"), defaultRow);
         opts.forEach((item) => {
           if (item && item.id && item.id !== "default" && allowed(item.id)) addOpt(item.id, item.display_label || item.label || item.id, item);
         });
@@ -636,7 +638,7 @@
         try { w.dispatchEvent(new CustomEvent("cw-user-profiles-changed")); } catch {}
         try { w.dispatchEvent(new CustomEvent("auth-changed")); } catch {}
       } catch (e) {
-        notify("Could not save instance label: " + (e && e.message ? e.message : e));
+        notify(T("connections.auth.labelFailed", {error: String(e && e.message ? e.message : e)}));
       }
     }
 
@@ -680,7 +682,7 @@
       const lab = d.createElement("span");
       lab.className = "muted";
       lab.dataset.cwProfileLabel = "true";
-      lab.textContent = "Instance";
+      lab.textContent = T("connections.auth.instance");
 
       const sel = d.createElement("select");
       sel.id = selectId;
@@ -703,8 +705,8 @@
       labelInput.className = "input cw-profile-label-input";
       labelInput.type = "text";
       labelInput.maxLength = 12;
-      labelInput.placeholder = "Display name";
-      labelInput.title = "Display name for this provider instance. Internal ID stays unchanged.";
+      labelInput.placeholder = T("connections.auth.displayName");
+      labelInput.title = T("connections.auth.displayNameTitle");
       labelInput.autocomplete = "off";
       labelInput.spellcheck = false;
 
@@ -712,20 +714,20 @@
       labelWrap.className = "cw-profile-label-field";
       labelWrap.htmlFor = labelInput.id;
       const labelCaption = d.createElement("span");
-      labelCaption.textContent = "Display name";
+      labelCaption.textContent = T("connections.auth.displayName");
       labelWrap.append(labelCaption, labelInput);
 
       const btnNew = d.createElement("button");
       btnNew.type = "button";
       btnNew.className = "btn secondary cw-profile-new";
       btnNew.id = `${selectId}_new`;
-      btnNew.textContent = "New";
+      btnNew.textContent = T("connections.auth.new");
 
       const btnDel = d.createElement("button");
       btnDel.type = "button";
       btnDel.className = "btn secondary cw-profile-delete";
       btnDel.id = `${selectId}_del`;
-      btnDel.textContent = "Delete";
+      btnDel.textContent = T("connections.auth.delete");
 
       wrap.append(lab, sel, labelWrap, btnNew, btnDel);
       head.appendChild(wrap);
@@ -769,14 +771,14 @@
           try { panel.dispatchEvent(new CustomEvent("cw-auth-profile-created", { bubbles: true, detail: { provider: apiProvider, instance: id } })); } catch (_) {}
           try { Promise.resolve(onChange?.()).catch(() => {}); } catch (_) {}
         } catch (e) {
-          const message = e && e.message === "profile_limit_reached" ? `Maximum ${e.limit || 10} instances reached.` : (e && e.message ? e.message : e);
-          notify("Could not create instance: " + message);
+          const message = e && e.message === "profile_limit_reached" ? T("connections.auth.maxInstances", {n: e.limit || 10}) : (e && e.message ? e.message : e);
+          notify(T("connections.auth.createFailed", {error: String(message)}));
         }
       });
       btnDel.addEventListener("click", async () => {
         const id = getInstance();
-        if (id === "default") return notify("Default instance cannot be deleted.");
-        if (!confirm(`Delete ${label} instance "${id}"?`)) return;
+        if (id === "default") return notify(T("connections.auth.defaultUndeletable"));
+        if (!confirm(T("connections.auth.confirmDeleteInstance", {name: label, id}))) return;
         try {
           const r = await fetchJSON(`/api/provider-instances/${encodeURIComponent(apiProvider)}/${encodeURIComponent(id)}`, { method: "DELETE", cache: "no-store" });
           if (reportProviderUsage(r)) return;
@@ -790,7 +792,7 @@
           try { w.dispatchEvent(new CustomEvent("auth-changed")); } catch (_) {}
           try { Promise.resolve(onChange?.()).catch(() => {}); } catch (_) {}
         } catch (e) {
-          notify("Could not delete instance: " + (e && e.message ? e.message : e));
+          notify(T("connections.auth.deleteFailed", {error: String(e && e.message ? e.message : e)}));
         }
       });
     }

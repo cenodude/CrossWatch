@@ -1,6 +1,10 @@
 /* assets/js/modals/provider-cleanup/index.js */
 /* Provider cleanup modal. */
 
+const I18N = () => globalThis.window?.CW?.I18n || globalThis.window?.__cwI18n;
+const T = (key, vars) => I18N()?.t?.(key, vars) ?? key;
+const TH = (key, vars) => I18N()?.html?.(key, vars) ?? key;
+const fmt = (value) => Number(value || 0).toLocaleString(I18N()?.locale);
 const REQUEST_TIMEOUT_MS = 30_000;
 const FEATURES = [
   { key: "watchlist", icon: "bookmark_remove", title: "Watchlist", desc: "Remove saved watchlist items from the selected instance." },
@@ -21,7 +25,7 @@ async function apiJson(url, opts = {}) {
     if (!r.ok) throw new Error(`${r.status} ${r.statusText || ""}`.trim());
     return await r.json();
   } catch (e) {
-    if (e?.name === "AbortError") throw new Error("Request timed out");
+    if (e?.name === "AbortError") throw new Error(T("modals.cleanup.timedOut"));
     throw e;
   } finally {
     window.clearTimeout(timeout);
@@ -75,7 +79,7 @@ function providerFeatures(provider) {
 
 function providerInstances(provider) {
   const instances = Array.isArray(provider?.instances) ? provider.instances : [];
-  return instances.length ? instances : [{ id: "default", label: "Default", configured: true }];
+  return instances.length ? instances : [{ id: "default", label: T("modals.cleanup.default"), configured: true }];
 }
 
 function instanceIdentities(provider, instanceId) {
@@ -98,15 +102,15 @@ function providerLogo(provider) {
 }
 
 function resultLine(key, result) {
-  if (!result) return `${key}: no result`;
-  if (result.skipped) return `${key}: skipped (${result.reason || "not available"})`;
+  if (!result) return `${key}: ${T("modals.cleanup.noResult")}`;
+  if (result.skipped) return `${key}: ${T("modals.cleanup.skippedReason", {reason: result.reason || T("modals.cleanup.notAvailable")})}`;
   const unresolved = result.unresolved_count != null
     ? Number(result.unresolved_count || 0)
     : (Array.isArray(result.unresolved) ? result.unresolved.length : 0);
-  const bits = [`removed ${Number(result.removed || 0).toLocaleString()}`];
-  if (result.count != null) bits.push(`had ${Number(result.count || 0).toLocaleString()}`);
-  if (unresolved) bits.push(`${unresolved.toLocaleString()} unresolved`);
-  if (result.remaining) bits.push(`${Number(result.remaining || 0).toLocaleString()} remaining`);
+  const bits = [T("modals.cleanup.bitRemoved", {n: fmt(result.removed)})];
+  if (result.count != null) bits.push(T("modals.cleanup.bitHad", {n: fmt(result.count)}));
+  if (unresolved) bits.push(T("modals.cleanup.bitUnresolved", {n: fmt(unresolved)}));
+  if (result.remaining) bits.push(T("modals.cleanup.bitRemaining", {n: fmt(result.remaining)}));
   return `${key}: ${bits.join(", ")}`;
 }
 
@@ -128,28 +132,28 @@ export default {
         <div class="mt-head">
           <div class="cc-head-left">
             <div>
-              <h2 class="cc-title">Provider cleanup</h2>
-              <div class="cc-sub">Remove selected data from a provider instance.</div>
+              <h2 class="cc-title">${TH("modals.cleanup.title")}</h2>
+              <div class="cc-sub">${TH("modals.cleanup.sub")}</div>
             </div>
           </div>
-          <button type="button" class="cw-page-button mt-button cc-close" id="ccc-close" title="Close" aria-label="Close">Close</button>
+          <button type="button" class="cw-page-button mt-button cc-close" id="ccc-close" title="${TH("modals.cleanup.close")}" aria-label="${TH("modals.cleanup.close")}">${TH("modals.cleanup.close")}</button>
         </div>
         <div class="mt-body cc-body cw-scrollbars">
           <section class="cw-page-panel cc-target-card">
             <div class="cc-card-head">
               <div>
-                <h3>Provider and instance</h3>
+                <h3>${TH("modals.cleanup.providerInstance")}</h3>
               </div>
             </div>
             <div class="cc-target-grid">
               <label>
-                <span>Provider</span>
+                <span>${TH("modals.cleanup.provider")}</span>
                 <div class="cc-provider-picker" id="ccc-provider-picker">
                   <select id="ccc-provider" class="cw-page-input cc-profile-native" data-cw-profile-kind="provider"></select>
                 </div>
               </label>
               <label>
-                <span>Instance</span>
+                <span>${TH("modals.cleanup.instance")}</span>
                 <div class="cc-provider-picker" id="ccc-instance-picker">
                   <select id="ccc-instance" class="cw-page-input cc-profile-native" data-cw-profile-kind="profile"></select>
                 </div>
@@ -159,7 +163,7 @@ export default {
               <button type="button" class="cc-feature" id="ccc-identities-toggle" aria-pressed="false">
                 <span class="cc-feature-icon material-symbols-rounded" aria-hidden="true">group</span>
                 <span class="cc-feature-copy">
-                  <strong id="ccc-identities-title">Also clear identities</strong>
+                  <strong id="ccc-identities-title">${TH("modals.cleanup.alsoClear")}</strong>
                   <small id="ccc-identities-names"></small>
                 </span>
               </button>
@@ -173,7 +177,7 @@ export default {
           <section class="cc-feature-card">
             <div class="cc-card-head compact">
               <div>
-                <h3>Data to clear</h3>
+                <h3>${TH("modals.cleanup.dataToClear")}</h3>
               </div>
             </div>
             <div class="cc-feature-grid" id="ccc-features">
@@ -181,44 +185,44 @@ export default {
                 <button type="button" class="cc-feature" data-feature="${feature.key}" aria-pressed="false">
                   <span class="cc-feature-mark" aria-hidden="true"></span>
                   <span class="cc-feature-copy">
-                    <strong>${feature.title}</strong>
+                    <strong>${TH(`modals.cleanup.features.${feature.key}`)}</strong>
                   </span>
                 </button>
               `).join("")}
             </div>
             <div class="cc-feature-empty hidden" id="ccc-features-empty">
-              No cleanup options are available for this instance.
+              ${TH("modals.cleanup.noOptions")}
             </div>
           </section>
 
           <section class="cc-run-card">
             <div class="cc-warning">
               <span class="material-symbols-rounded" aria-hidden="true">warning</span>
-              <div id="ccc-run-warning">This clears data on the selected provider instance.</div>
+              <div id="ccc-run-warning">${TH("modals.cleanup.clearsData")}</div>
             </div>
             <div class="cc-actions">
               <button type="button" class="cw-page-button mt-button cc-btn mt-danger" id="ccc-clear-selected">
                 <span class="material-symbols-rounded" aria-hidden="true">delete</span>
-                <span>Clear selected data</span>
+                <span>${TH("modals.cleanup.clearSelected")}</span>
               </button>
             </div>
             <div id="ccc-status" class="cc-status" aria-live="polite"></div>
             <div id="ccc-progress" class="cc-progress hidden" aria-live="polite">
               <div class="cc-progress-head">
                 <div>
-                  <strong id="ccc-progress-title">Clearing provider data</strong>
-                  <span id="ccc-progress-sub">Preparing cleanup...</span>
+                  <strong id="ccc-progress-title">${TH("modals.cleanup.clearing")}</strong>
+                  <span id="ccc-progress-sub">${TH("modals.cleanup.preparing")}</span>
                 </div>
                 <b id="ccc-progress-percent">0%</b>
               </div>
               <div class="cc-progress-bar" aria-hidden="true"><span id="ccc-progress-fill"></span></div>
               <div class="cc-progress-grid">
-                <div><span>Provider</span><b id="ccc-progress-provider">-</b></div>
-                <div><span>Instance</span><b id="ccc-progress-instance">default</b></div>
-                <div><span>Feature</span><b id="ccc-progress-feature">-</b></div>
-                <div><span>Removed</span><b id="ccc-progress-items">-</b></div>
+                <div><span>${TH("modals.cleanup.provider")}</span><b id="ccc-progress-provider">-</b></div>
+                <div><span>${TH("modals.cleanup.instance")}</span><b id="ccc-progress-instance">default</b></div>
+                <div><span>${TH("modals.cleanup.feature")}</span><b id="ccc-progress-feature">-</b></div>
+                <div><span>${TH("modals.cleanup.removed")}</span><b id="ccc-progress-items">-</b></div>
               </div>
-              <div id="ccc-progress-message" class="cc-progress-message">Starting cleanup...</div>
+              <div id="ccc-progress-message" class="cc-progress-message">${TH("modals.cleanup.starting")}</div>
             </div>
           </section>
         </div>
@@ -247,7 +251,7 @@ export default {
       btn.classList.remove("is-confirming");
       btn.innerHTML = `
         <span class="material-symbols-rounded" aria-hidden="true">delete</span>
-        <span>Clear selected data</span>
+        <span>${TH("modals.cleanup.clearSelected")}</span>
       `;
     };
 
@@ -258,7 +262,7 @@ export default {
       btn.classList.add("is-confirming");
       btn.innerHTML = `
         <span class="material-symbols-rounded" aria-hidden="true">warning</span>
-        <span>Confirm clear</span>
+        <span>${TH("modals.cleanup.confirm")}</span>
       `;
       if (confirmClearTimer) window.clearTimeout(confirmClearTimer);
       confirmClearTimer = window.setTimeout(clearConfirm, 4200);
@@ -288,10 +292,10 @@ export default {
       const done = Number(progress?.items_done ?? progress?.total_items);
       const current = Number(progress?.feature_items);
       if (Number.isFinite(done) && done > 0 && Number.isFinite(current) && current > 0 && done !== current) {
-        return `${done.toLocaleString()} total, ${current.toLocaleString()} current`;
+        return T("modals.cleanup.totalCurrent", {total: fmt(done), current: fmt(current)});
       }
-      if (Number.isFinite(done) && done > 0) return `${done.toLocaleString()} removed`;
-      if (Number.isFinite(current) && current > 0) return `${current.toLocaleString()} current`;
+      if (Number.isFinite(done) && done > 0) return T("modals.cleanup.removedN", {n: fmt(done)});
+      if (Number.isFinite(current) && current > 0) return T("modals.cleanup.currentN", {n: fmt(current)});
       return "-";
     };
 
@@ -308,11 +312,11 @@ export default {
       const pct = $("#ccc-progress-percent", root);
       if (pct) pct.textContent = `${percent}%`;
       const title = $("#ccc-progress-title", root);
-      if (title) title.textContent = failed ? "Cleanup failed" : progress.done ? "Cleanup complete" : "Clearing provider data";
+      if (title) title.textContent = failed ? T("modals.cleanup.failed") : progress.done ? T("modals.cleanup.complete") : T("modals.cleanup.clearing");
       const featureTotal = Number(progress.feature_total || 1);
       const featureIndex = Number(progress.feature_index || 0);
       const sub = $("#ccc-progress-sub", root);
-      if (sub) sub.textContent = featureTotal > 1 && featureIndex > 0 ? `Feature ${featureIndex} of ${featureTotal}` : "Provider cleanup";
+      if (sub) sub.textContent = featureTotal > 1 && featureIndex > 0 ? T("modals.cleanup.featureOf", {n: featureIndex, total: featureTotal}) : T("modals.cleanup.title");
       const provider = $("#ccc-progress-provider", root);
       if (provider) provider.textContent = String(progress.provider || $("#ccc-provider", root)?.value || "-").toUpperCase();
       const instance = $("#ccc-progress-instance", root);
@@ -322,7 +326,7 @@ export default {
       const items = $("#ccc-progress-items", root);
       if (items) items.textContent = progressItemText(progress);
       const msg = $("#ccc-progress-message", root);
-      if (msg) msg.textContent = String(progress.message || "Working...");
+      if (msg) msg.textContent = String(progress.message || T("modals.cleanup.working"));
     };
 
     const waitForProgress = async (progressId) => {
@@ -337,7 +341,7 @@ export default {
           if (progress.done) return progress;
         } catch (e) {
           misses += 1;
-          updateProgress({ stage: "waiting", message: "Waiting for cleanup progress...", percent: 8 });
+          updateProgress({ stage: "waiting", message: T("modals.cleanup.waiting"), percent: 8 });
           if (misses >= 8) throw e;
         }
         await sleep(700);
@@ -360,7 +364,7 @@ export default {
 
     const includeIdentities = () => !!$("#ccc-identities-toggle", root)?.classList.contains("selected") && currentIdentities().length > 0;
 
-    const identityCount = (count) => `${count} ${count === 1 ? "identity" : "identities"}`;
+    const identityCount = (count) => T("modals.cleanup.identities", {count});
 
     const updateIdentities = () => {
       const identities = currentIdentities();
@@ -369,17 +373,17 @@ export default {
       $("#ccc-identities", root)?.classList.toggle("hidden", !identities.length);
       $("#ccc-identities-toggle", root)?.setAttribute("aria-pressed", included ? "true" : "false");
       const title = $("#ccc-identities-title", root);
-      if (title) title.textContent = `Also clear ${identityCount(identities.length)}`;
+      if (title) title.textContent = T("modals.cleanup.alsoClearN", {what: identityCount(identities.length)});
       const list = $("#ccc-identities-names", root);
       if (list) list.textContent = names;
       $("#ccc-identities-warning", root)?.classList.toggle("hidden", included);
       const warning = $("#ccc-identities-warning-text", root);
-      if (warning) warning.textContent = `Only the account of this instance is cleared. Not included: ${names}.`;
+      if (warning) warning.textContent = T("modals.cleanup.onlyAccount", {names});
       const run = $("#ccc-run-warning", root);
       if (run) {
         run.textContent = included
-          ? `This clears data on the selected provider instance and ${identityCount(identities.length)}.`
-          : "This clears data on the selected provider instance.";
+          ? T("modals.cleanup.clearsAnd", {what: identityCount(identities.length)})
+          : T("modals.cleanup.clearsData");
       }
     };
 
@@ -408,7 +412,7 @@ export default {
             const id = providerId(provider);
             return `<option value="${esc(id)}" data-provider="${esc(id)}" data-label="${esc(providerLabel(provider))}" data-icon="${esc(providerLogo(provider))}">${esc(providerLabel(provider))}</option>`;
           }).join("")
-        : `<option value="">No configured providers</option>`;
+        : `<option value="">${TH("modals.cleanup.noProviders")}</option>`;
       enhanceTargetSelects();
     };
 
@@ -419,7 +423,7 @@ export default {
       const rows = providerInstances(provider);
       select.innerHTML = rows.map((instance) => {
         const id = String(instance?.id || "default");
-        const label = String(instance?.label || id || "Default");
+        const label = String(instance?.label || id || T("modals.cleanup.default"));
         const configured = instance?.configured !== false;
         return `<option value="${esc(id)}" data-profile="${esc(id)}" data-label="${esc(label)}" ${configured ? "" : "disabled"}>${esc(configured ? label : `${label} (not configured)`)}</option>`;
       }).join("");
@@ -453,17 +457,17 @@ export default {
     }
 
     const refresh = async () => {
-      setStatus("Loading provider targets...", "busy");
+      setStatus(T("modals.cleanup.loading"), "busy");
       try {
         const data = await apiJson(`/api/snapshots/manifest?identities=1&_=${Date.now()}`);
         providers = Array.isArray(data?.providers) ? data.providers : [];
         fillProviders();
         fillInstances();
         updateAvailability();
-        setStatus(configuredProviders(providers).length ? "" : "No configured providers found.", configuredProviders(providers).length ? "" : "err");
+        setStatus(configuredProviders(providers).length ? "" : T("modals.cleanup.noProvidersFound"), configuredProviders(providers).length ? "" : "err");
       } catch (e) {
         console.warn("[provider-cleanup] manifest failed", e);
-        setStatus(`Unable to load providers: ${e.message || e}`, "err");
+        setStatus(T("modals.cleanup.loadFailed", {error: String(e.message || e)}), "err");
       }
     };
 
@@ -499,7 +503,7 @@ export default {
       const targets = [instance, ...(includeIdentities() ? currentIdentities().map((identity) => identity.id) : [])];
       const lines = [];
       const failures = [];
-      setStatus("Cleanup is running. This window stays locked until it finishes.", "busy");
+      setStatus(T("modals.cleanup.running"), "busy");
       try {
         for (const target of targets) {
           const prefix = targets.length > 1 ? `${instanceLabel(target)}: ` : "";
@@ -508,7 +512,7 @@ export default {
             ok: true,
             done: false,
             stage: "queued",
-            message: "Starting provider cleanup...",
+            message: T("modals.cleanup.startingProvider"),
             percent: 1,
             provider,
             instance: target,
@@ -518,22 +522,22 @@ export default {
           try {
             await postJson("/api/snapshots/tools/clear", { provider, instance: target, features, progress_id: progressId, background: true });
             const progress = await waitForProgress(progressId);
-            if (!progress) throw new Error("Cleanup progress was interrupted.");
-            if (progress.ok === false) throw new Error(progress.error || progress.message || "Cleanup failed");
+            if (!progress) throw new Error(T("modals.cleanup.interrupted"));
+            if (progress.ok === false) throw new Error(progress.error || progress.message || T("modals.cleanup.failed"));
             const results = progress.cleanup_results || {};
             const keys = Object.keys(results);
-            lines.push(`${prefix}${keys.length ? keys.map((key) => resultLine(key, results[key])).join(", ") : (progress.message || "Cleanup complete.")}`);
+            lines.push(`${prefix}${keys.length ? keys.map((key) => resultLine(key, results[key])).join(", ") : (progress.message || T("modals.cleanup.completeDot"))}`);
           } catch (e) {
             console.warn("[provider-cleanup] clear failed", target, e);
             failures.push(`${prefix}${e.message || e}`);
           }
         }
         if (failures.length) {
-          setStatus(`Cleanup failed: ${[...failures, ...lines].join(" | ")}`, "err");
-          window.CW?.DOM?.showToast?.(`Cleanup failed: ${failures[0]}`, false);
+          setStatus(T("modals.cleanup.failedWith", {error: [...failures, ...lines].join(" | ")}), "err");
+          window.CW?.DOM?.showToast?.(T("modals.cleanup.failedWith", {error: failures[0]}), false);
         } else {
           setStatus(lines.join(" | "), "ok");
-          window.CW?.DOM?.showToast?.("Provider cleanup complete", true);
+          window.CW?.DOM?.showToast?.(T("modals.cleanup.toastComplete"), true);
         }
       } finally {
         setBusy(false);

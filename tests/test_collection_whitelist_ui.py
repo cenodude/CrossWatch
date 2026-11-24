@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 from pathlib import Path
+from tests.i18n_source import english_source
 
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 def _read(rel: str) -> str:
-    return (ROOT / rel).read_text(encoding="utf-8")
+    return english_source((ROOT / rel).read_text(encoding="utf-8"))
 
 
 def test_media_server_whitelist_ui_exposes_collection_category() -> None:

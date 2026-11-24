@@ -1,6 +1,7 @@
 /* tests/hub-airing.browser.mjs */
 /* CrossWatch - Hub upcoming episode navigation and cached refresh */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude */
+import './i18n-browser-setup.mjs';
 import test from "node:test";
 import assert from "node:assert/strict";
 import {readFile, mkdir} from "node:fs/promises";

@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from tests.i18n_source import english_source
 
 ROOT = Path(__file__).resolve().parents[1]
 SERVER = "http://tofa.local:33333"
@@ -405,14 +406,14 @@ def test_probe_registration_key_opacity_and_reasons(monkeypatch: pytest.MonkeyPa
 
 
 def test_frontend_wiring_and_brand_assets() -> None:
-    meta = (ROOT / "assets" / "helpers" / "provider-meta.js").read_text(encoding="utf-8")
-    loader = (ROOT / "assets" / "auth" / "auth_loader.js").read_text(encoding="utf-8")
-    core = (ROOT / "assets" / "helpers" / "core.js").read_text(encoding="utf-8")
-    ui = (ROOT / "assets" / "helpers" / "providers-ui.js").read_text(encoding="utf-8")
+    meta = english_source((ROOT / "assets" / "helpers" / "provider-meta.js").read_text(encoding="utf-8"))
+    loader = english_source((ROOT / "assets" / "auth" / "auth_loader.js").read_text(encoding="utf-8"))
+    core = english_source((ROOT / "assets" / "helpers" / "core.js").read_text(encoding="utf-8"))
+    ui = english_source((ROOT / "assets" / "helpers" / "providers-ui.js").read_text(encoding="utf-8"))
     flat = (ROOT / "assets" / "themes" / "flat.css").read_text(encoding="utf-8")
     providers_css = (ROOT / "assets" / "css" / "providers.css").read_text(encoding="utf-8")
     auth_css = (ROOT / "assets" / "css" / "auth-providers.css").read_text(encoding="utf-8")
-    libs = (ROOT / "assets" / "js" / "modals" / "pair-config" / "libraries.js").read_text(encoding="utf-8")
+    libs = english_source((ROOT / "assets" / "js" / "modals" / "pair-config" / "libraries.js").read_text(encoding="utf-8"))
 
     assert 'TOFA: { key: "TOFA"' in meta and '"SILO","TOFA"' in meta
     assert 'tofa: "/assets/auth/auth.tofa.js"' in loader and '"sec-tofa": "tofa"' in loader

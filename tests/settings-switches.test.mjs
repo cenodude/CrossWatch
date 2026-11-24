@@ -6,10 +6,12 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {readFileSync} from "node:fs";
 import vm from "node:vm";
+import './i18n-vm-setup.mjs';
+import {englishFrontendSource} from './i18n-test-helper.mjs';
 
 const uiSource = readFileSync(new URL("../assets/helpers/settings-ui.js", import.meta.url), "utf8");
 const saveSource = readFileSync(new URL("../assets/helpers/settings-save.js", import.meta.url), "utf8");
-const markup = readFileSync(new URL("../ui_frontend.py", import.meta.url), "utf8");
+const markup = englishFrontendSource();
 const ids = [...markup.matchAll(/<input id="(ui_show_[^"]+)"[^>]+role="switch"/g)].map(match => match[1]);
 const helperStart = uiSource.indexOf("  const _setChecked =");
 const helperEnd = uiSource.indexOf("\n  };", helperStart) + "\n  };".length;

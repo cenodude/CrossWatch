@@ -1,10 +1,13 @@
 // assets/js/modals/tls/index.js
 
+const I18N = () => globalThis.window?.CW?.I18n || globalThis.window?.__cwI18n;
+const T = (key, vars) => I18N()?.t?.(key, vars) ?? key;
+const TH = (key, vars) => I18N()?.html?.(key, vars) ?? key;
 const fjson = async (url, opts = {}) => {
   const r = await fetch(url, { cache: "no-store", ...opts });
   if (!r.ok) {
     const msg = `${r.status} ${r.statusText || ""}`.trim();
-    throw new Error(msg || "Request failed");
+    throw new Error(msg || T("modals.tls.requestFailed"));
   }
   if (r.status === 204) return {};
   try { return await r.json(); } catch { return {}; }
@@ -26,7 +29,7 @@ function splitCSV(s) {
 
 async function downloadBlob(url, filename) {
   const r = await fetch(url, { cache: "no-store" });
-  if (!r.ok) throw new Error(`Download failed: ${r.status}`);
+  if (!r.ok) throw new Error(T("modals.tls.downloadFailed", {error: String(r.status)}));
   const blob = await r.blob();
   const href = URL.createObjectURL(blob);
   const a = document.createElement("a");
@@ -66,7 +69,7 @@ function renderStatus(root, st) {
   setText(root, "#st-proto", st?.protocol || "—");
   setText(root, "#st-cert-path", tls?.resolved_cert_path || cert?.path || "—");
   setText(root, "#st-key-path",  tls?.resolved_key_path || "—");
-  setPill(root, "#st-cert", exists, exists ? "OK" : "Not found");
+  setPill(root, "#st-cert", exists, exists ? "OK" : T("modals.tls.notFound"));
   setText(root, "#st-exp", cert?.not_after || "—");
   setText(root, "#st-sha", cert?.sha256 || "—");
   setText(root, "#st-sans", (Array.isArray(cert?.sans) && cert.sans.length) ? cert.sans.join(", ") : "—");
@@ -122,7 +125,7 @@ async function saveTlsConfig(root) {
   });
   if (!r.ok) throw new Error(`POST /api/config ${r.status}`);
 
-  setNotice(root, true, "Saved. Restart required if you changed protocol, certs, or key paths.");
+  setNotice(root, true, T("modals.tls.saved"));
 }
 
 async function regenerateSelfSigned(root) {
@@ -139,7 +142,7 @@ async function regenerateSelfSigned(root) {
     body: JSON.stringify(payload),
   });
 
-  setNotice(root, true, "Certificate regenerated. Restart required.");
+  setNotice(root, true, T("modals.tls.regenerated"));
 }
 
 export default {
@@ -159,85 +162,85 @@ export default {
             <div class="icon"><span class="material-symbols-rounded">lock</span></div>
             <div class="titles">
               <div class="title">TLS / HTTPS</div>
-              <div class="sub">Self-signed certificate or custom cert/key paths</div>
+              <div class="sub">${TH("modals.tls.sub")}</div>
             </div>
           </div>
           <div class="head-actions">
-            <button class="btn" id="tls-close" type="button">Close</button>
+            <button class="btn" id="tls-close" type="button">${TH("modals.tls.close")}</button>
           </div>
         </div>
 
         <div class="cx-body">
           <div class="section">
-            <h3>Current status</h3>
+            <h3>${TH("modals.tls.status")}</h3>
             <div class="kv">
-              <div class="k">Protocol</div><div class="v" id="st-proto">—</div>
-              <div class="k">Cert path</div><div class="v" id="st-cert-path">—</div>
-              <div class="k">Key path</div><div class="v" id="st-key-path">—</div>
-              <div class="k">Certificate</div><div class="v"><span class="pill bad" id="st-cert">—</span></div>
-              <div class="k">Expires</div><div class="v" id="st-exp">—</div>
+              <div class="k">${TH("modals.tls.protocol")}</div><div class="v" id="st-proto">—</div>
+              <div class="k">${TH("modals.tls.certPath")}</div><div class="v" id="st-cert-path">—</div>
+              <div class="k">${TH("modals.tls.keyPath")}</div><div class="v" id="st-key-path">—</div>
+              <div class="k">${TH("modals.tls.certificate")}</div><div class="v"><span class="pill bad" id="st-cert">—</span></div>
+              <div class="k">${TH("modals.tls.expires")}</div><div class="v" id="st-exp">—</div>
               <div class="k">SHA-256</div><div class="v" id="st-sha">—</div>
               <div class="k">SANs</div><div class="v" id="st-sans">—</div>
             </div>
             <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:10px">
-              <button class="btn" id="tls-refresh" type="button">Refresh</button>
-              <button class="btn primary" id="tls-download" type="button" disabled>Download .crt</button>
+              <button class="btn" id="tls-refresh" type="button">${TH("modals.tls.refresh")}</button>
+              <button class="btn primary" id="tls-download" type="button" disabled>${TH("modals.tls.download")}</button>
             </div>
-            <div class="hint">Tip: for a real certificate, terminate TLS in a reverse proxy (Caddy/Nginx/Traefik) and run CrossWatch on HTTP behind it.</div>
+            <div class="hint">${TH("modals.tls.tip")}</div>
           </div>
 
           <div class="section">
-            <h3>Certificate configuration</h3>
+            <h3>${TH("modals.tls.config")}</h3>
             <div class="grid2">
               <div class="field">
-                <label for="tls-mode">Mode</label>
+                <label for="tls-mode">${TH("modals.tls.mode")}</label>
                 <select id="tls-mode">
-                  <option value="self">Self-signed (generated)</option>
-                  <option value="custom">Custom cert/key paths</option>
+                  <option value="self">${TH("modals.tls.self")}</option>
+                  <option value="custom">${TH("modals.tls.custom")}</option>
                 </select>
-                <div class="hint">Custom mode expects you to mount files into the container.</div>
+                <div class="hint">${TH("modals.tls.customHint")}</div>
               </div>
 
               <div class="field">
-                <label for="tls-hostname">Hostname (CN)</label>
+                <label for="tls-hostname">${TH("modals.tls.hostname")}</label>
                 <input id="tls-hostname" type="text" value="localhost" />
-                <div class="hint">Used for the self-signed certificate CN and included in SAN.</div>
+                <div class="hint">${TH("modals.tls.hostnameHint")}</div>
               </div>
 
               <div class="field">
-                <label for="tls-days">Valid days</label>
+                <label for="tls-days">${TH("modals.tls.days")}</label>
                 <input id="tls-days" type="number" min="1" max="3650" value="825" />
               </div>
 
               <div class="field">
-                <label for="tls-altdns">Additional DNS names (comma separated)</label>
+                <label for="tls-altdns">${TH("modals.tls.altDns")}</label>
                 <input id="tls-altdns" type="text" placeholder="mybox.local, crosswatch.local" />
               </div>
 
               <div class="field">
-                <label for="tls-altips">Additional IPs (comma separated)</label>
+                <label for="tls-altips">${TH("modals.tls.altIps")}</label>
                 <input id="tls-altips" type="text" placeholder="192.168.1.10" />
               </div>
 
               <div class="field">
-                <label for="tls-certfile">Cert file path</label>
+                <label for="tls-certfile">${TH("modals.tls.certFile")}</label>
                 <input id="tls-certfile" type="text" placeholder="/config/tls/crosswatch.crt" />
               </div>
 
               <div class="field">
-                <label for="tls-keyfile">Key file path</label>
+                <label for="tls-keyfile">${TH("modals.tls.keyFile")}</label>
                 <input id="tls-keyfile" type="text" placeholder="/config/tls/crosswatch.key" />
               </div>
             </div>
 
-            <div class="notice" id="tls-restart">Restart required.</div>
+            <div class="notice" id="tls-restart">${TH("modals.tls.restart")}</div>
           </div>
         </div>
 
         <div class="foot">
-          <button class="btn" id="tls-validate" type="button">Validate paths</button>
-          <button class="btn danger" id="tls-regenerate" type="button">Regenerate self-signed</button>
-          <button class="btn primary" id="tls-save" type="button">Save</button>
+          <button class="btn" id="tls-validate" type="button">${TH("modals.tls.validate")}</button>
+          <button class="btn danger" id="tls-regenerate" type="button">${TH("modals.tls.regenerate")}</button>
+          <button class="btn primary" id="tls-save" type="button">${TH("modals.tls.save")}</button>
         </div>
       </div>
     `;
@@ -254,7 +257,7 @@ export default {
         const st = await fjson("/api/ui/tls/status");
         renderStatus(root, st);
       } catch (e) {
-        setNotice(root, true, `Failed to load status: ${e?.message || e}`);
+        setNotice(root, true, T("modals.tls.loadFailed", {error: String(e?.message || e)}));
       }
     };
 
@@ -262,7 +265,7 @@ export default {
 
     on("#tls-download", "click", async () => {
       try { await downloadBlob("/api/ui/tls/cert", "crosswatch.crt"); }
-      catch (e) { setNotice(root, true, `Download failed: ${e?.message || e}`); }
+      catch (e) { setNotice(root, true, T("modals.tls.downloadFailed", {error: String(e?.message || e)})); }
     });
 
     on("#tls-save", "click", async () => {
@@ -270,7 +273,7 @@ export default {
         await saveTlsConfig(root);
         await refresh();
       } catch (e) {
-        setNotice(root, true, `Save failed: ${e?.message || e}`);
+        setNotice(root, true, T("modals.tls.saveFailed", {error: String(e?.message || e)}));
       }
     });
 
@@ -279,7 +282,7 @@ export default {
         await saveTlsConfig(root);
         await refresh();
       } catch (e) {
-        setNotice(root, true, `Validate failed: ${e?.message || e}`);
+        setNotice(root, true, T("modals.tls.validateFailed", {error: String(e?.message || e)}));
       }
     });
 
@@ -288,7 +291,7 @@ export default {
         await regenerateSelfSigned(root);
         await refresh();
       } catch (e) {
-        setNotice(root, true, `Regenerate failed: ${e?.message || e}`);
+        setNotice(root, true, T("modals.tls.regenerateFailed", {error: String(e?.message || e)}));
       }
     });
 

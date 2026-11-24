@@ -1,8 +1,11 @@
 /* CrossWatch - shared media user picker (Emby/Jellyfin/Plex) */
 (() => {
+  const T = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.t?.(key, vars) ?? key;
+  const TH = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.html?.(key, vars) ?? key;
   const w = window;
   const d = document;
 
+  const TAG_KEYS = { Owner: "scrobbler.picker.owner", Friend: "scrobbler.picker.friend", Current: "scrobbler.picker.current", Admin: "scrobbler.picker.admin" };
   const HOST_ID = "cw_media_user_picker";
   const OVERLAY_ID = "cw_media_user_picker_overlay";
 
@@ -31,12 +34,12 @@
     );
 
     const head = host.querySelector(".head");
-    head.appendChild(el("div", { className: "title", id: `${HOST_ID}_title`, textContent: "Pick user" }));
+    head.appendChild(el("div", { className: "title", id: `${HOST_ID}_title`, textContent: T("scrobbler.picker.pick") }));
 
     const body = el("div", { className: "body" });
     const pophead = el("div", { className: "pophead" });
-    pophead.appendChild(el("input", { id: `${HOST_ID}_filter`, placeholder: "Filter users...", type: "text" }));
-    pophead.appendChild(el("button", { className: "xbtn", type: "button", textContent: "Close", onclick: () => api.close() }));
+    pophead.appendChild(el("input", { id: `${HOST_ID}_filter`, placeholder: T("scrobbler.picker.filter"), type: "text" }));
+    pophead.appendChild(el("button", { className: "xbtn", type: "button", textContent: T("scrobbler.picker.close"), onclick: () => api.close() }));
     body.appendChild(pophead);
     body.appendChild(el("div", { className: "list", id: `${HOST_ID}_list` }));
 
@@ -145,7 +148,7 @@
     try {
       r = await fetch(url, { headers: { Accept: "application/json" }, cache: "no-store", credentials: "same-origin" });
     } catch (e) {
-      throw new Error("Could not reach CrossWatch API. Is the app running?");
+      throw new Error(T("scrobbler.picker.noApi"));
     }
 
     try {
@@ -160,11 +163,11 @@
       let msg = String(payload?.error || payload?.detail || payload?.message || payload?.msg || "");
 
       if (!msg) {
-        if (status === 401 || status === 403) msg = "Unauthorized. Please sign in first.";
-        else if (status === 404) msg = "Endpoint not found.";
-        else if (status === 502 || status === 503 || status === 504) msg = "Media server unreachable. Check Server URL, token, and network.";
+        if (status === 401 || status === 403) msg = T("scrobbler.picker.unauthorized");
+        else if (status === 404) msg = T("scrobbler.picker.notFound");
+        else if (status === 502 || status === 503 || status === 504) msg = T("scrobbler.picker.unreachable");
         else if (status) msg = `HTTP ${status}`;
-        else msg = "Request failed.";
+        else msg = T("scrobbler.picker.requestFailed");
       }
 
       throw new Error(msg);
@@ -179,7 +182,7 @@
     provider: "",
     instance: "default",
     anchorEl: null,
-    title: "Pick user",
+    title: T("scrobbler.picker.pick"),
     onPick: null,
     all: [],
     overlay: true,
@@ -227,7 +230,7 @@
       .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
 
     if (!mapped.length) {
-      listEl.appendChild(el("div", { className: "sub", textContent: "No users found." }));
+      listEl.appendChild(el("div", { className: "sub", textContent: T("scrobbler.picker.noUsers") }));
       return;
     }
 
@@ -235,7 +238,7 @@
       const btn = el("button", { className: "userrow", type: "button" });
       const row = el("div", { className: "row1" });
       row.appendChild(el("strong", { textContent: u.name }));
-      if (u.tag) row.appendChild(el("span", { className: `tag ${String(u.tag || "").toLowerCase()}`, textContent: u.tag }));
+      if (u.tag) row.appendChild(el("span", { className: `tag ${String(u.tag || "").toLowerCase()}`, textContent: TAG_KEYS[u.tag] ? T(TAG_KEYS[u.tag]) : u.tag }));
       btn.appendChild(row);
       btn.addEventListener("click", () => {
         try {
@@ -254,7 +257,7 @@
     STATE.provider = String(opts?.provider || "").toLowerCase();
     STATE.instance = canonicalInstanceId(opts?.instance || "default");
     STATE.anchorEl = opts?.anchorEl || null;
-    STATE.title = String(opts?.title || "Pick user");
+    STATE.title = String(opts?.title || T("scrobbler.picker.pick"));
     STATE.onPick = typeof opts?.onPick === "function" ? opts.onPick : null;
     STATE.overlay = opts?.overlay !== false;
     STATE.server = String(opts?.server || "").trim();
@@ -272,7 +275,7 @@
     titleEl.textContent = STATE.title;
     filter.value = "";
     listEl.innerHTML = "";
-    listEl.appendChild(el("div", { className: "sub", textContent: "Loading..." }));
+    listEl.appendChild(el("div", { className: "sub", textContent: T("scrobbler.picker.loading") }));
 
     overlay.classList.toggle("hidden", !STATE.overlay);
     host.classList.remove("hidden");
@@ -292,7 +295,7 @@
       STATE.all = [];
       if (seq !== STATE.seq || !STATE.open) return;
       listEl.innerHTML = "";
-      const msg = String(e?.message || e || "Couldn't load users.");
+      const msg = String(e?.message || e || T("scrobbler.picker.loadFailedShort"));
       listEl.appendChild(el("div", { className: "sub", textContent: msg }));
       console.warn("[media_user_picker] users fetch failed:", e);
     }

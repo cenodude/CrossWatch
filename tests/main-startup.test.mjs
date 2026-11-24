@@ -6,11 +6,13 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import vm from "node:vm";
 import { readFileSync } from "node:fs";
+import './i18n-vm-setup.mjs';
+import {englishFrontendSource} from './i18n-test-helper.mjs';
 
 const sources = ["helpers/core.js", "js/insights.js"].map(path =>
   readFileSync(new URL(`../assets/${path}`, import.meta.url), "utf8"));
 
-const shellSource = readFileSync(new URL("../ui_frontend.py", import.meta.url), "utf8");
+const shellSource = englishFrontendSource();
 // Extract trusted repository fixtures only; this is not an HTML sanitizer.
 function extractMainRevealScript(source) {
   const script = [...source.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script\b[^>]*>/gi)]

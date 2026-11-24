@@ -2,15 +2,18 @@
 /* CrossWatch - Sync topology graph layout and rendering */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 
+const I18N = () => globalThis.window?.CW?.I18n || globalThis.window?.__cwI18n;
+const T = (key, vars) => I18N()?.t?.(key, vars) ?? key;
+const TH = (key, vars) => I18N()?.html?.(key, vars) ?? key;
 import { edgeId } from "./analysis.js";
 
 export const esc = value => String(value ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 export const providerName = node => window.CW?.ProviderMeta?.label?.(node.provider) || node.provider;
-export const instanceName = node => window.CW?.ProviderMeta?.instanceLabel?.(node.provider, node.instance) || (node.instance === "default" ? "Default instance" : node.instance);
-export const nodeName = node => node ? `${providerName(node)}${instanceName(node) === "Default instance" ? "" : ` (${instanceName(node)})`}` : "Provider";
+export const instanceName = node => window.CW?.ProviderMeta?.instanceLabel?.(node.provider, node.instance) || (node.instance === "default" ? T("editor.groups.defaultInstance") : node.instance);
+export const nodeName = node => node ? `${providerName(node)}${[T("editor.groups.defaultInstance"), "Default instance"].includes(instanceName(node)) ? "" : ` (${instanceName(node)})`}` : T("modals.topology.providerFallback");
 export const featureName = feature => window.CW?.FeatureMeta?.label?.(feature) || feature;
 export const connectionLabel = (connection, nodes) => `${nodeName(nodes.get(connection.source))} ${connection.twoWay ? "↔" : "→"} ${nodeName(nodes.get(connection.target))}`;
-export const pairBadge = connection => connection.number ? `<span class="topology-pair-badge" aria-label="Pair ${connection.number}" title="Pair ${connection.number}">${connection.number}</span>` : "";
+export const pairBadge = connection => connection.number ? `<span class="topology-pair-badge" aria-label="${TH("modals.topology.pairN", {n: String(connection.number)})}" title="${TH("modals.topology.pairN", {n: String(connection.number)})}">${connection.number}</span>` : "";
 const connectionOrder = (a, b) => (a.number || Infinity) - (b.number || Infinity) || a.id.localeCompare(b.id);
 
 export function findingConnections(finding, graph) {
@@ -45,7 +48,7 @@ export function topologySummary(graph, findings, unsupportedPairs = 0) {
   const conflict = findings.some(finding => !finding.informational && finding.severity === "conflict");
   const status = conflict ? "attention" : review ? "review" : graph.nodes.length ? "healthy" : "empty";
   return { providers: graph.nodes.length, twoWay, oneWay: graph.connections.length - twoWay, status,
-    label: { attention: "Attention", review: "Review", healthy: "Healthy", empty: "No routes" }[status],
+    label: T(`modals.topology.health.${status}`),
     icon: { attention: "error", review: "info", healthy: "check_circle", empty: "route" }[status] };
 }
 
@@ -153,7 +156,7 @@ function connectionPath(from, to, positions) {
 }
 
 export function renderGraph(graph, finding = null, compact = false) {
-  if (!graph.nodes.length) return '<div class="topology-empty"><span class="material-symbol" aria-hidden="true">route</span><strong>No active routes</strong><p>Enable a supported feature in a sync pair to see its topology.</p></div>';
+  if (!graph.nodes.length) return `<div class="topology-empty"><span class="material-symbol" aria-hidden="true">route</span><strong>${TH("modals.topology.noActive")}</strong><p>${TH("modals.topology.enableToSee")}</p></div>`;
   const { positions, width, height } = layoutGraph(graph, compact);
   const highlights = new Set(finding?.edges || []), selectedNodes = new Set(finding?.nodes || []);
   const nodes = new Map(graph.nodes.map(node => [node.id, node]));
@@ -184,7 +187,7 @@ export function renderGraph(graph, finding = null, compact = false) {
       const { x, y } = candidates.find(fits) || candidates[0];
       occupied.push({ x: x - badgeWidth / 2, y: y - 11, width: badgeWidth, height: 22 });
       const leader = x !== path.badge.x || y !== path.badge.y ? `<path class="topology-badge-leader" d="M ${path.badge.x - x} ${path.badge.y - y} L 0 0"/>` : "";
-      badges.push(`<g class="topology-edge-badge ${cls}" transform="translate(${x},${y})"><title>${esc(`Pair ${connection.number}: ${connectionLabel(connection, nodes)}`)}</title>${leader}<rect x="${-badgeWidth / 2}" y="-11" width="${badgeWidth}" height="22" rx="8"/><text text-anchor="middle" dy=".35em">${connection.number}</text></g>`);
+      badges.push(`<g class="topology-edge-badge ${cls}" transform="translate(${x},${y})"><title>${esc(`${T("modals.topology.pairN", {n: String(connection.number)})}: ${connectionLabel(connection, nodes)}`)}</title>${leader}<rect x="${-badgeWidth / 2}" y="-11" width="${badgeWidth}" height="22" rx="8"/><text text-anchor="middle" dy=".35em">${connection.number}</text></g>`);
     });
     return `<path class="topology-edge ${cls}" d="${path.d}" marker-end="url(#topology-arrow${selected ? "-selected" : ""})" ${twoWay ? `marker-start="url(#topology-arrow${selected ? "-selected" : ""})"` : ""}><title>${esc(title)}</title></path>`;
   }).join("");
@@ -203,7 +206,7 @@ export function renderGraph(graph, finding = null, compact = false) {
       <text class="topology-node-detail" x="58" y="47">${esc(detail.length > 19 ? detail.slice(0, 18) + "…" : detail)}</text>
     </g>`;
   }).join("");
-  return `<svg class="topology-svg" width="${Math.ceil(width)}" height="${Math.ceil(height)}" viewBox="0 0 ${width} ${height}" role="img" aria-label="${esc(finding ? `Highlighted ${featureName(finding.feature)} routes` : "Configured synchronization routes")}">
+  return `<svg class="topology-svg" width="${Math.ceil(width)}" height="${Math.ceil(height)}" viewBox="0 0 ${width} ${height}" role="img" aria-label="${esc(finding ? T("modals.topology.highlighted", {feature: featureName(finding.feature)}) : T("modals.topology.configured"))}">
     <defs><marker id="topology-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 1 1 L 9 5 L 1 9 z"/></marker>
     <marker id="topology-arrow-selected" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 1 1 L 9 5 L 1 9 z"/></marker></defs>${paths}${cards}${badges.join("")}</svg>`;
 }

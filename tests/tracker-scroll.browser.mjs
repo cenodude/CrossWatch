@@ -1,16 +1,18 @@
 /* tests/tracker-scroll.browser.mjs */
 /* CrossWatch - Tracker detail expansion and single-scroll responsive layouts */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
+import './i18n-browser-setup.mjs';
 import test from "node:test";
 import assert from "node:assert/strict";
 import {readFile, mkdir} from "node:fs/promises";
 import {chromium, webkit} from "playwright";
+import {englishFrontendSource} from './i18n-test-helper.mjs';
 
 const viewports = [[320,740],[390,844],[430,932],[740,360],[844,390],[768,1024],[820,1180],[1024,768],[1194,834],[1366,1024],[1366,768],[1440,900],[1920,1080]];
 const seasons = Array.from({length:30}, (_, season) => ({season, episodes:12}));
 const shows = Array.from({length:48}, (_, index) => ({key:`show:${index}`,title:index ? `Example show ${index}` : "South Park",type:"show",art:{tmdb:index + 1,kind:"tv"},last_watched:"2026-11-08T12:00:00Z",last_season:29,last_episode:4,plays:8}));
 const plays = Array.from({length:8}, (_, index) => ({key:`play:${index}`,type:"episode",season:29,episode:index + 1,date:`2026-10-${String(index + 1).padStart(2,"0")}T12:00:00Z`}));
-const source = await readFile(new URL("../ui_frontend.py", import.meta.url), "utf8");
+const source = englishFrontendSource();
 const assets = new Map();
 
 async function fixture(browser, theme, width, height, details = {}) {

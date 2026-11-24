@@ -6,7 +6,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import {readFileSync} from 'node:fs';
+import './i18n-vm-setup.mjs';
 globalThis.window={addEventListener(){}};
+const {englishI18n}=await import('./i18n-test-helper.mjs');
+globalThis.window ??= {};
+globalThis.window.__cwI18n ??= englishI18n();
 const {highlight,logsBackLink,savedLogList}=await import('../assets/js/logs.js');
 
 test('session list shows selection and diagnostic metadata',()=>{

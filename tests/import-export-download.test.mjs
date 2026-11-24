@@ -5,8 +5,10 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import vm from "node:vm";
+import './i18n-vm-setup.mjs';
+import { readEnglishSource } from './i18n-test-helper.mjs';
 
-const source = readFileSync(new URL("../assets/js/import-export/index.js", import.meta.url), "utf8");
+const source = readEnglishSource(new URL("../assets/js/import-export/index.js", import.meta.url));
 
 function fixture() {
   const nodes = new Map();

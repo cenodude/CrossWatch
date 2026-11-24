@@ -1641,7 +1641,7 @@ def api_profile_update(request: Request, payload: dict[str, Any] = Body(default_
             incoming = (payload or {}).get("preferences")
             merged = dict(current)
             if isinstance(incoming, dict):
-                for key in ("playing_card", "quick_add", "timezone", "time_format", "media_card"):
+                for key in ("playing_card", "quick_add", "timezone", "time_format", "media_card", "language"):
                     if key in incoming:
                         merged[key] = bool(incoming[key]) if key in {"playing_card", "quick_add"} else incoming[key]
             raw["preferences"] = clean_user_preferences(merged)

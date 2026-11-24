@@ -1,6 +1,9 @@
 /* assets/js/modals/editor-raw/index.js */
 /* CrossWatch - editor record fields modal */
 
+const I18N = () => globalThis.window?.CW?.I18n || globalThis.window?.__cwI18n;
+const T = (key, vars) => I18N()?.t?.(key, vars) ?? key;
+const TH = (key, vars) => I18N()?.html?.(key, vars) ?? key;
 const _cwV = (() => {
   try { return new URL(import.meta.url).searchParams.get("v") || window.__CW_VERSION__ || Date.now(); }
   catch { return window.__CW_VERSION__ || Date.now(); }
@@ -36,16 +39,16 @@ function flatten(value, prefix = "") {
 
 function labelForSource(source) {
   const s = String(source || "").toLowerCase();
-  if (s === "tracker") return "Tracker State";
-  if (s === "state") return "Database State";
-  if (s === "manual") return "Manual Overrides";
-  if (s === "playlist") return "Playlist Endpoint";
-  return "Editor";
+  if (s === "tracker") return T("editor.raw.tracker");
+  if (s === "state") return T("editor.raw.state");
+  if (s === "manual") return T("editor.raw.manual");
+  if (s === "playlist") return T("editor.raw.playlist");
+  return T("editor.raw.editor");
 }
 
 function view(props = {}) {
   const item = props.item && typeof props.item === "object" ? props.item : {};
-  const title = String(props.title || item.title || item.series_title || props.key || "Stored item");
+  const title = String(props.title || item.title || item.series_title || props.key || T("editor.raw.stored"));
   const source = labelForSource(props.source);
   const kind = String(props.kind || "").trim();
   const key = String(props.key || "").trim();
@@ -66,7 +69,7 @@ function view(props = {}) {
         <span class="raw-value">${escapeHtml(pretty(value))}</span>
       </div>
     `).join("")
-    : '<div class="raw-empty">No database fields found.</div>';
+    : '<div class="raw-empty">' + TH("editor.raw.noFields") + '</div>';
 
   return `
     <div id="cx-modal" class="cx-card editor-raw-modal ${sizeClass}">
@@ -77,14 +80,14 @@ function view(props = {}) {
           <strong>${escapeHtml(title)}</strong>
           <span>${escapeHtml(source)}${kind ? ` - ${escapeHtml(kind)}` : ""}</span>
         </div>
-        <button class="cx-btn raw-close" type="button" data-close aria-label="Close"><span class="material-symbols-rounded" aria-hidden="true">close</span></button>
+        <button class="cx-btn raw-close" type="button" data-close aria-label="${TH("editor.raw.close")}"><span class="material-symbols-rounded" aria-hidden="true">close</span></button>
       </div>
       <div class="cx-body">
         <div class="raw-grid">
           <section class="raw-panel">
             <div class="raw-panel-head">
-              <span>Database fields</span>
-              <button class="cx-btn" type="button" data-copy title="Copy fields" aria-label="Copy fields"><span class="material-symbols-rounded" aria-hidden="true">content_copy</span></button>
+              <span>${TH("editor.raw.fields")}</span>
+              <button class="cx-btn" type="button" data-copy title="${TH("editor.raw.copy")}" aria-label="${TH("editor.raw.copy")}"><span class="material-symbols-rounded" aria-hidden="true">content_copy</span></button>
             </div>
             <div class="raw-rows">${fieldRows}</div>
             <div class="raw-copy-text" hidden>${escapeHtml(copyText)}</div>
@@ -108,21 +111,21 @@ export async function mount(shell, props = {}) {
     try {
       if (!(await window.cwCopyText?.(txt))) throw new Error("copy failed");
       btn.innerHTML = '<span class="material-symbols-rounded" aria-hidden="true">check</span>';
-      btn.title = "Copied";
-      btn.setAttribute("aria-label", "Copied");
+      btn.title = T("editor.raw.copied");
+      btn.setAttribute("aria-label", T("editor.raw.copied"));
       setTimeout(() => {
         btn.innerHTML = '<span class="material-symbols-rounded" aria-hidden="true">content_copy</span>';
-        btn.title = "Copy fields";
-        btn.setAttribute("aria-label", "Copy fields");
+        btn.title = T("editor.raw.copy");
+        btn.setAttribute("aria-label", T("editor.raw.copy"));
       }, 1400);
     } catch {
       btn.innerHTML = '<span class="material-symbols-rounded" aria-hidden="true">error</span>';
-      btn.title = "Copy failed";
-      btn.setAttribute("aria-label", "Copy failed");
+      btn.title = T("editor.raw.copyFailed");
+      btn.setAttribute("aria-label", T("editor.raw.copyFailed"));
       setTimeout(() => {
         btn.innerHTML = '<span class="material-symbols-rounded" aria-hidden="true">content_copy</span>';
-        btn.title = "Copy fields";
-        btn.setAttribute("aria-label", "Copy fields");
+        btn.title = T("editor.raw.copy");
+        btn.setAttribute("aria-label", T("editor.raw.copy"));
       }, 1600);
     }
   });

@@ -5,6 +5,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import vm from "node:vm";
+import './i18n-vm-setup.mjs';
 
 const source = readFileSync(new URL("../assets/js/profile-page.js", import.meta.url), "utf8");
 const context = vm.createContext({esc: String, visibleProviderLabel: String, providerLogo: () => "", numberFmt: new Intl.NumberFormat("en-US")});

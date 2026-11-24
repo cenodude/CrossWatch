@@ -3,6 +3,8 @@
 (function () {
   const NS = (window.CW ||= {});
   const Editor = (NS.Editor ||= {});
+  const T = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.t?.(key, vars) ?? key;
+  const TH = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.html?.(key, vars) ?? key;
 
   const REPLACEABLE_TYPES = ["movie", "show", "anime", "season", "episode"];
   function rowType(row) {
@@ -32,12 +34,12 @@
       head.className = "cw-meta-search-head";
       head.innerHTML = `
         <span class="material-symbols-rounded cw-meta-search-head-icon" aria-hidden="true">search</span>
-        <div class="cw-meta-search-title">Search metadata</div>
+        <div class="cw-meta-search-title">${TH("editor.meta.title")}</div>
       `;
       const headClose = document.createElement("button");
       headClose.type = "button";
       headClose.className = "cw-meta-search-close";
-      headClose.setAttribute("aria-label", "Close search metadata");
+      headClose.setAttribute("aria-label", T("editor.meta.close"));
       headClose.innerHTML = '<span class="material-symbols-rounded" aria-hidden="true">close</span>';
       headClose.onclick = close;
       head.appendChild(headClose);
@@ -49,13 +51,13 @@
       const titleField = document.createElement("label");
       titleField.className = "cw-meta-search-field cw-meta-search-field-title";
       titleField.htmlFor = "cw_meta_search_title";
-      titleField.appendChild(document.createTextNode("Title"));
+      titleField.appendChild(document.createTextNode(T("editor.meta.titleField")));
 
       const qInput = document.createElement("input");
       qInput.type = "text";
       qInput.id = "cw_meta_search_title";
       qInput.name = qInput.id;
-      qInput.placeholder = "Title...";
+      qInput.placeholder = T("editor.meta.titlePlaceholder");
       qInput.value = row.title || "";
       const qWrap = document.createElement("div");
       qWrap.className = "cw-meta-search-input-wrap";
@@ -71,13 +73,13 @@
       const yearField = document.createElement("label");
       yearField.className = "cw-meta-search-field";
       yearField.htmlFor = "cw_meta_search_year";
-      yearField.appendChild(document.createTextNode("Year"));
+      yearField.appendChild(document.createTextNode(T("editor.meta.year")));
 
       const yearInput = document.createElement("input");
       yearInput.type = "number";
       yearInput.id = "cw_meta_search_year";
       yearInput.name = yearInput.id;
-      yearInput.placeholder = "Year";
+      yearInput.placeholder = T("editor.meta.year");
       if (row.year) yearInput.value = row.year;
       const yearWrap = document.createElement("div");
       yearWrap.className = "cw-meta-search-input-wrap";
@@ -90,18 +92,18 @@
       yearField.appendChild(yearWrap);
       bar.appendChild(yearField);
 
-      const typeOptions = [["all", "All"], ["movie", "Movie"], ["show", "TV Show"]];
+      const typeOptions = [["all", T("editor.meta.all")], ["movie", T("editor.rowType.movie")], ["show", T("editor.meta.tvShow")]];
       let typeValue = row.type === "show" || row.type === "episode" ? "show" : row.type === "anime" ? "all" : "movie";
 
       const typeField = document.createElement("div");
       typeField.className = "cw-meta-search-field cw-meta-search-type-field";
       const typeLabel = document.createElement("div");
       typeLabel.className = "cw-meta-search-label";
-      typeLabel.textContent = "Type";
+      typeLabel.textContent = T("editor.rowType.type");
       const typeSegment = document.createElement("div");
       typeSegment.className = "cw-meta-type-segment";
       typeSegment.setAttribute("role", "group");
-      typeSegment.setAttribute("aria-label", "Metadata type");
+      typeSegment.setAttribute("aria-label", T("editor.meta.type"));
       typeOptions.forEach(([val, label]) => {
         const btn = document.createElement("button");
         btn.type = "button";
@@ -132,13 +134,13 @@
       const searchBtn = document.createElement("button");
       searchBtn.type = "button";
       searchBtn.className = "cw-pop-btn primary";
-      searchBtn.innerHTML = '<span class="material-symbols-rounded" aria-hidden="true">search</span><span>Search</span>';
+      searchBtn.innerHTML = '<span class="material-symbols-rounded" aria-hidden="true">search</span><span>' + TH("editor.meta.search") + '</span>';
       actions.appendChild(searchBtn);
 
       const closeBtn = document.createElement("button");
       closeBtn.type = "button";
       closeBtn.className = "cw-pop-btn ghost";
-      closeBtn.textContent = "Close";
+      closeBtn.textContent = T("editor.raw.close");
       closeBtn.onclick = close;
       actions.appendChild(closeBtn);
 
@@ -163,7 +165,7 @@
         const q = (qInput.value || "").trim();
         const yearVal = parseInt(yearInput.value || "", 10);
         if (q.length < 2) {
-          status.textContent = "Type at least 2 characters.";
+          status.textContent = T("editor.meta.minChars");
           resultsBox.innerHTML = "";
           return;
         }
@@ -174,7 +176,7 @@
           return u;
         };
 
-        status.textContent = "Searching...";
+        status.textContent = T("editor.meta.searching");
         resultsBox.innerHTML = "";
         try {
           let items = [];
@@ -185,7 +187,7 @@
             const movieOk = !!(movieRes && movieRes.ok !== false);
 
             if (!showOk && !movieOk) {
-              const msg = (showRes && showRes.error) || (movieRes && movieRes.error) || "Search failed.";
+              const msg = (showRes && showRes.error) || (movieRes && movieRes.error) || T("editor.meta.failed");
               status.textContent = msg;
               return;
             }
@@ -205,13 +207,13 @@
           } else {
             const data = await ctx.fetchJSON(makeUrl(typ));
             if (!data || data.ok === false) {
-              status.textContent = data && data.error ? data.error : "Search failed.";
+              status.textContent = data && data.error ? data.error : T("editor.meta.failed");
               return;
             }
             items = Array.isArray(data.results) ? data.results : [];
           }
           if (!items.length) {
-            resultsBox.innerHTML = '<div class="cw-search-empty">No results.</div>';
+            resultsBox.innerHTML = '<div class="cw-search-empty">' + TH("editor.meta.noResults") + '</div>';
             status.textContent = "";
             return;
           }
@@ -233,14 +235,14 @@
                 img.remove();
                 const ph = document.createElement("div");
                 ph.className = "cw-search-poster-placeholder";
-                ph.textContent = item.type === "show" ? "TV" : "MOV";
+                ph.textContent = item.type === "show" ? T("editor.meta.tv") : "MOV";
                 posterWrap.appendChild(ph);
               };
               posterWrap.appendChild(img);
             } else {
               const ph = document.createElement("div");
               ph.className = "cw-search-poster-placeholder";
-              ph.textContent = item.type === "show" ? "TV" : "MOV";
+              ph.textContent = item.type === "show" ? T("editor.meta.tv") : "MOV";
               posterWrap.appendChild(ph);
             }
 
@@ -260,7 +262,7 @@
 
             const tag2 = document.createElement("span");
             tag2.className = "cw-search-tag";
-            tag2.textContent = item.type === "show" ? "Show" : "Movie";
+            tag2.textContent = item.type === "show" ? T("editor.rowType.show") : T("editor.rowType.movie");
             titleLine.appendChild(tag2);
 
             content.appendChild(titleLine);
@@ -269,7 +271,7 @@
             meta.className = "cw-search-meta";
             const bits = [];
             if (item.year) bits.push(String(item.year));
-            bits.push(item.type === "show" ? "TV" : "Movie");
+            bits.push(item.type === "show" ? T("editor.meta.tv") : T("editor.rowType.movie"));
             if (item.tmdb) bits.push(`TMDb ${item.tmdb}`);
             meta.textContent = bits.join(" • ");
             content.appendChild(meta);
@@ -381,7 +383,7 @@
               }
 
               ctx.markChanged?.();
-              ctx.setStatusSticky?.("Row updated from metadata", 2500);
+              ctx.setStatusSticky?.(T("editor.meta.updated"), 2500);
               close();
               ctx.renderRows?.();
             };
@@ -389,10 +391,10 @@
             resultsBox.appendChild(btn);
           });
 
-          status.textContent = `${items.length} result${items.length === 1 ? "" : "s"} found`;
+          status.textContent = T("editor.meta.found", {count: items.length});
         } catch (err) {
           console.error("search failed", err);
-          status.textContent = "Search failed.";
+          status.textContent = T("editor.meta.failed");
         }
       }
 
@@ -406,7 +408,7 @@
       });
 
       if ((row.title || "").trim().length >= 3) doSearch();
-      else status.textContent = "Enter a title and press Enter or Search.";
+      else status.textContent = T("editor.meta.enter");
     }, { closeOnOutside: false, trackAnchorOnScroll: true });
   }
 

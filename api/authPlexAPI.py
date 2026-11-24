@@ -86,14 +86,14 @@ def _plex_totp_response(request: Request, cfg: dict[str, Any], state: str, rec: 
     code = app_auth._totp_clean_code(rec.get("totp_code"))
     if not code:
         return JSONResponse(
-            {"ok": False, "error": "Verification code required", "requires_2fa": True, "state": state},
+            {"ok": False, "error": "Verification code required", "code": "verification_required", "requires_2fa": True, "state": state},
             status_code=401,
             headers={"Cache-Control": "no-store"},
         )
     ok_rl, retry = app_auth._rate_limit_ok(request)
     if not ok_rl:
         st = app_auth._rate_limit_state(request)
-        body = app_auth._login_error_payload(error=f"Try again in {retry}s", attempts=st["n"], retry_after=retry)
+        body = app_auth._login_error_payload(error=f"Try again in {retry}s", attempts=st["n"], retry_after=retry, code="rate_limited")
         body["requires_2fa"] = True
         body["state"] = state
         app_auth._audit(request, "2fa_failed", actor=user, status="failed", message="Plex SSO two-factor verification was rate limited", target_type="user", target_id=user_id, fields={"attempts": st["n"], "retry_after": retry})
@@ -102,7 +102,7 @@ def _plex_totp_response(request: Request, cfg: dict[str, Any], state: str, rec: 
         st = app_auth._rate_limit_fail(request)
         status = 429 if st["retry_after"] > 0 else 401
         msg = f"Too many failed attempts. Try again in {st['retry_after']}s" if st["retry_after"] > 0 else "Invalid verification code"
-        body = app_auth._login_error_payload(error=msg, attempts=st["n"], retry_after=st["retry_after"])
+        body = app_auth._login_error_payload(error=msg, attempts=st["n"], retry_after=st["retry_after"], code="too_many_attempts" if st["retry_after"] > 0 else "invalid_verification_code")
         body["requires_2fa"] = True
         body["state"] = state
         app_auth._audit(request, "2fa_failed", actor=user, status="failed", message="Plex SSO two-factor verification failed", target_type="user", target_id=user_id, fields={"attempts": st["n"], "retry_after": st["retry_after"]})
@@ -122,7 +122,7 @@ def _finish_login(request: Request, cfg: dict[str, Any], res: dict[str, Any], id
         cfg, result = app_auth._update_config(_mutate)
         user, token, exp = result
     except KeyError:
-        resp = JSONResponse({"ok": False, "error": "This Plex account is not linked for CrossWatch sign-in"}, status_code=403, headers={"Cache-Control": "no-store"})
+        resp = JSONResponse({"ok": False, "error": "This Plex account is not linked for CrossWatch sign-in", "code": "plex_account_not_linked"}, status_code=403, headers={"Cache-Control": "no-store"})
         _del_flow_cookie(resp, request)
         return resp
     app_auth._audit(request, "login", actor=user, message=f"{user.get('username') or 'User'} logged in with Plex SSO", target_type="user", target_id=user.get("id"), fields={"plex_username": identity.get("username"), "remember_me": bool(res.get("remember_me"))})
@@ -152,9 +152,9 @@ def _unauthorized() -> JSONResponse:
     return JSONResponse({"ok": False, "error": "Unauthorized"}, status_code=401, headers={"Cache-Control": "no-store"})
 
 
-def _temporary_json_error(message: str, status_code: int, retry_after: int) -> JSONResponse:
+def _temporary_json_error(message: str, status_code: int, retry_after: int, code: str = "") -> JSONResponse:
     return JSONResponse(
-        {"ok": False, "error": message, "retry_after": max(1, int(retry_after or 1))},
+        {"ok": False, "error": message, **({"code": code} if code else {}), "retry_after": max(1, int(retry_after or 1))},
         status_code=status_code,
         headers={"Cache-Control": "no-store", "Retry-After": str(max(1, int(retry_after or 1)))},
     )
@@ -262,7 +262,7 @@ def api_plex_start(request: Request, payload: dict[str, Any] | None = Body(None)
             headers={"Cache-Control": "no-store"},
         )
     if not authPlex.login_available(cfg):
-        return JSONResponse({"ok": False, "error": "Plex sign-in is not linked yet"}, status_code=400, headers={"Cache-Control": "no-store"})
+        return JSONResponse({"ok": False, "error": "Plex sign-in is not linked yet", "code": "plex_not_linked"}, status_code=400, headers={"Cache-Control": "no-store"})
 
     remember_me = bool((payload or {}).get("remember_me"))
     flow_nonce = secrets.token_urlsafe(24)
@@ -282,7 +282,7 @@ def api_plex_start(request: Request, payload: dict[str, Any] | None = Body(None)
             headers={"Cache-Control": "no-store"},
         )
     except ValueError:
-        return JSONResponse({"ok": False, "error": "Plex sign-in is not linked yet"}, status_code=400, headers={"Cache-Control": "no-store"})
+        return JSONResponse({"ok": False, "error": "Plex sign-in is not linked yet", "code": "plex_not_linked"}, status_code=400, headers={"Cache-Control": "no-store"})
 
     try:
         data = authPlex.start_flow(
@@ -298,12 +298,12 @@ def api_plex_start(request: Request, payload: dict[str, Any] | None = Body(None)
         _set_flow_cookie(resp, flow_nonce, request)
         return resp
     except authPlex.PlexStartRateLimited as exc:
-        return _temporary_json_error("Too many Plex sign-in starts. Try again shortly.", 429, exc.retry_after)
+        return _temporary_json_error("Too many Plex sign-in starts. Try again shortly.", 429, exc.retry_after, "plex_busy")
     except authPlex.PlexPendingCapacityError as exc:
-        return _temporary_json_error("Too many Plex sign-in flows are pending. Try again shortly.", 503, exc.retry_after)
+        return _temporary_json_error("Too many Plex sign-in flows are pending. Try again shortly.", 503, exc.retry_after, "plex_busy")
     except Exception as exc:
         _log(f"Plex sign-in could not start: {exc}", level="ERROR")
-        return JSONResponse({"ok": False, "error": "Plex sign-in could not start. Please try again."}, status_code=502, headers={"Cache-Control": "no-store"})
+        return JSONResponse({"ok": False, "error": "Plex sign-in could not start. Please try again.", "code": "plex_start_failed"}, status_code=502, headers={"Cache-Control": "no-store"})
 
 
 @router.post("/check")
@@ -316,7 +316,7 @@ def api_plex_check(request: Request, payload: dict[str, Any] = Body(...)) -> JSO
             headers={"Cache-Control": "no-store"},
         )
     if not authPlex.login_available(cfg):
-        return JSONResponse({"ok": False, "error": "Plex sign-in is not linked yet"}, status_code=400, headers={"Cache-Control": "no-store"})
+        return JSONResponse({"ok": False, "error": "Plex sign-in is not linked yet", "code": "plex_not_linked"}, status_code=400, headers={"Cache-Control": "no-store"})
 
     _prune_pending_2fa()
     state = str(payload.get("state") or "").strip()
@@ -336,7 +336,7 @@ def api_plex_check(request: Request, payload: dict[str, Any] = Body(...)) -> JSO
             res = dict(authPlex.check_flow(cfg, state=state, intent="login"))
         except Exception as exc:
             _log(f"Plex sign-in failed: {exc}", level="ERROR")
-            return JSONResponse({"ok": False, "error": "Plex sign-in failed. Please try again."}, status_code=502, headers={"Cache-Control": "no-store"})
+            return JSONResponse({"ok": False, "error": "Plex sign-in failed. Please try again.", "code": "plex_failed"}, status_code=502, headers={"Cache-Control": "no-store"})
 
         if not res.get("ok"):
             return JSONResponse({"ok": False, "error": str(res.get("error") or "Plex sign-in failed")}, status_code=int(res.get("status_code") or 400), headers={"Cache-Control": "no-store"})
@@ -346,14 +346,14 @@ def api_plex_check(request: Request, payload: dict[str, Any] = Body(...)) -> JSO
         identity = _identity_dict(res.get("identity"))
 
     if not _flow_nonce_matches(request, res):
-        resp = JSONResponse({"ok": False, "error": "Plex sign-in expired. Start again."}, status_code=400, headers={"Cache-Control": "no-store"})
+        resp = JSONResponse({"ok": False, "error": "Plex sign-in expired. Start again.", "code": "plex_expired"}, status_code=400, headers={"Cache-Control": "no-store"})
         _del_flow_cookie(resp, request)
         _PENDING_2FA.pop(state, None)
         return resp
 
     user = _resolve_plex_user(cfg, identity)
     if user is None:
-        resp = JSONResponse({"ok": False, "error": "This Plex account is not linked for CrossWatch sign-in"}, status_code=403, headers={"Cache-Control": "no-store"})
+        resp = JSONResponse({"ok": False, "error": "This Plex account is not linked for CrossWatch sign-in", "code": "plex_account_not_linked"}, status_code=403, headers={"Cache-Control": "no-store"})
         _del_flow_cookie(resp, request)
         _PENDING_2FA.pop(state, None)
         return resp
@@ -417,7 +417,7 @@ def api_plex_link_start(request: Request, payload: dict[str, Any] | None = Body(
     except PermissionError:
         return _unauthorized()
     except authPlex.PlexPendingCapacityError as exc:
-        return _temporary_json_error("Too many Plex sign-in flows are pending. Try again shortly.", 503, exc.retry_after)
+        return _temporary_json_error("Too many Plex sign-in flows are pending. Try again shortly.", 503, exc.retry_after, "plex_busy")
     except Exception as exc:
         _log(f"Plex link could not start: {exc}", level="ERROR")
         return JSONResponse({"ok": False, "error": "Plex link could not start. Please try again."}, status_code=502, headers={"Cache-Control": "no-store"})
@@ -448,7 +448,7 @@ def api_plex_link_check(request: Request, payload: dict[str, Any] = Body(...)) -
         return JSONResponse({"ok": True, "pending": True}, headers={"Cache-Control": "no-store"})
 
     if not _flow_nonce_matches(request, res):
-        resp = JSONResponse({"ok": False, "error": "Plex sign-in expired. Start again."}, status_code=400, headers={"Cache-Control": "no-store"})
+        resp = JSONResponse({"ok": False, "error": "Plex sign-in expired. Start again.", "code": "plex_expired"}, status_code=400, headers={"Cache-Control": "no-store"})
         _del_flow_cookie(resp, request)
         return resp
 
@@ -512,11 +512,10 @@ def api_plex_unlink(request: Request, payload: dict[str, Any] | None = Body(None
 
 
 @router.get("/callback")
-def api_plex_callback() -> HTMLResponse:
-    return HTMLResponse(
-        """<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Plex sign-in complete</title></head><body style="font-family:Segoe UI,Arial,sans-serif;background:#08111d;color:#eef5ff;display:grid;place-items:center;min-height:100vh;margin:0"><div style="text-align:center"><div style="font-size:28px;margin-bottom:8px">Done</div><div style="opacity:.8">You can close this window.</div></div><script>try{window.close()}catch(e){}</script></body></html>""",
-        headers={"Cache-Control": "no-store"},
-    )
+def api_plex_callback(request: Request) -> HTMLResponse:
+    from cw_platform import i18n
+
+    return HTMLResponse(i18n.done_page(i18n.cookie_language(request), "auth.popup.plexComplete"), headers={"Cache-Control": "no-store"})
 
 
 def register_auth_plex(app) -> None:

@@ -3,6 +3,8 @@
 (function () {
   const NS = (window.CW ||= {});
   const Editor = (NS.Editor ||= {});
+  const T = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.t?.(key, vars) ?? key;
+  const TH = (key, vars) => (window.CW?.I18n || window.__cwI18n)?.html?.(key, vars) ?? key;
 
   function stateOf(ctx) {
     return (ctx && ctx.state) || {};
@@ -44,7 +46,7 @@
         })
         .join("");
 
-      ctx.importProviderSel.innerHTML = opts || `<option value="">No configured providers</option>`;
+      ctx.importProviderSel.innerHTML = opts || `<option value="">${TH("editor.importers.noProviders")}</option>`;
 
       const names = list.map(p => String(p.name));
       let next = current;
@@ -72,7 +74,7 @@
           return { id, label: String(x.label || x.display_label || id) };
         }
         const id = String(x || "default");
-        return { id, label: id === "default" ? "Default" : id };
+        return { id, label: id === "default" ? T("editor.importers.default") : id };
       });
       const nextInst = ctx.renderInstanceOptions?.(ctx.importInstanceSel, instObjs, state.importProviderInstance);
       if (nextInst !== state.importProviderInstance) {
@@ -137,11 +139,11 @@
     const mode = (ctx.importModeSel ? ctx.importModeSel.value : state.importMode) || "replace";
 
     if (!provider) {
-      ctx.setStatusSticky?.("Pick a provider first", 3000);
+      ctx.setStatusSticky?.(T("editor.importers.pickProvider"), 3000);
       return;
     }
     if (!features.length) {
-      ctx.setStatusSticky?.("Pick at least one dataset", 3000);
+      ctx.setStatusSticky?.(T("editor.importers.pickDataset"), 3000);
       return;
     }
 
@@ -156,9 +158,9 @@
     };
 
     try {
-      const msg = `Importing ${features.join(", ")} from ${provider}...`;
+      const msg = T("editor.importers.importingFrom", {features: features.join(", "), provider});
       setImportBusy(true, msg, ctx);
-      ctx.setTag?.("warn", "Importing...");
+      ctx.setTag?.("warn", T("editor.importers.importing"));
       ctx.setStatus?.(msg);
 
       const res = await ctx.fetchJSON("/api/editor/state/import", {
@@ -178,10 +180,10 @@
         if (typeof r.elapsed_ms === "number") totalMs += r.elapsed_ms;
       }
 
-      let done = "Imported " + (bits.length ? bits.join(" - ") : "done");
+      let done = T("editor.importers.importedWhat", {what: bits.length ? bits.join(" - ") : T("editor.importers.done")});
       if (totalMs) done += ` (${(totalMs / 1000).toFixed(1)}s)`;
 
-      ctx.setTag?.("loaded", "Imported");
+      ctx.setTag?.("loaded", T("editor.importers.imported"));
       ctx.setStatusSticky?.(done, 6000);
       if (window.cxToast) window.cxToast(done);
 
@@ -192,7 +194,7 @@
       await ctx.loadState?.();
     } catch (e) {
       console.error(e);
-      ctx.setTag?.("error", "Import failed");
+      ctx.setTag?.("error", T("editor.importers.failed"));
       ctx.setStatus?.(String(e));
     } finally {
       setImportBusy(false, "", ctx);

@@ -8,6 +8,7 @@ import vm from "node:vm";
 import { readFileSync } from "node:fs";
 import { parse } from "acorn";
 import { statusMappingPayload } from "../assets/js/modals/pair-config/status-mapping.js";
+import './i18n-vm-setup.mjs';
 
 const index = readFileSync(new URL("../assets/js/modals/pair-config/index.js", import.meta.url), "utf8");
 const librarySource = readFileSync(new URL("../assets/js/modals/pair-config/libraries.js", import.meta.url), "utf8");
