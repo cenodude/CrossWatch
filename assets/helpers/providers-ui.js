@@ -114,6 +114,23 @@
     return !profileConfigured("stremio", source, cfg);
   }
 
+  function kodiAddonIds(cfg) {
+    const ids = cfg?.security?.webhook_ids;
+    if (!ids || typeof ids !== "object") return [];
+    return Object.keys(ids)
+      .filter((key) => key.startsWith("kodiwatcher:") && hasConfiguredValue(ids[key]))
+      .map((key) => key.slice("kodiwatcher:".length) || "default");
+  }
+
+  function kodiAddonOnly(cfg, provider, id) {
+    if (String(provider || "").toLowerCase() !== "kodi") return false;
+    const raw = String(id || "default");
+    if (!kodiAddonIds(cfg).some((item) => item === raw)) return false;
+    const block = providerConfigBlock(cfg, "kodi");
+    const source = raw.toLowerCase() === "default" ? block : block?.instances?.[raw];
+    return !profileConfigured("kodi", source, cfg);
+  }
+
   let managedInstances = {};
 
   function managedUser() {
@@ -149,6 +166,7 @@
       }
     } catch {}
     if (stremioAddonIds(cfg).length) set.add("STREMIO");
+    if (kodiAddonIds(cfg).length) set.add("KODI");
     return set;
   }
 
@@ -208,7 +226,7 @@
   }
 
   function authProfileState(cfg, provider, id, data = statusProviderData(provider), connected = false) {
-    if (stremioAddonOnly(cfg, provider, id)) return "ok";
+    if (stremioAddonOnly(cfg, provider, id) || kodiAddonOnly(cfg, provider, id)) return "ok";
     const entry = profileStatusEntry(data, id);
     const entryConnected = profileStatusEntryConnected(entry);
     if (entryConnected === true) return "ok";
@@ -243,6 +261,9 @@
     }
     if (String(key || "").toUpperCase() === "STREMIO" && data?.connected !== true && stremioAddonIds(cfg).some((id) => stremioAddonOnly(cfg, "stremio", id))) {
       return { text: "Scrobble add-on", ok: true };
+    }
+    if (String(key || "").toUpperCase() === "KODI" && data?.connected !== true && kodiAddonIds(cfg).some((id) => kodiAddonOnly(cfg, "kodi", id))) {
+      return { text: "Kodi add-on", ok: true };
     }
     if (data && typeof data.connected === "boolean") {
       return data.connected ? { text: "Connected", ok: true } : { text: "Check connection", ok: false, failed: true };
@@ -322,6 +343,7 @@
       });
     }
     if (String(provider || "").toLowerCase() === "stremio") out.push(...stremioAddonIds(cfg));
+    if (String(provider || "").toLowerCase() === "kodi") out.push(...kodiAddonIds(cfg));
     if (!out.length && connected) out.push("default");
     return scopedProfileIds(provider, sortProfileIds(out));
   }
@@ -936,8 +958,8 @@
     },
     KODI: {
       provider: "kodi", logo: "KODI", help: window.CW.HelpLinks.url("kodi"), deleteSelector: "#kodi_disconnect",
-      tabs: { auth: ["lock", "Authentication", "Connect over HTTP JSON-RPC"], whitelist: ["verified_user", "Whitelisting", "Choose libraries and content to sync"] },
-      copy: { auth: ["Kodi Authentication", "Connect a Kodi media client over HTTP JSON-RPC."], whitelist: ["Kodi Whitelisting", "Choose which Kodi video sources CrossWatch can use for history, ratings, progress, collections and scrobbling."] },
+      tabs: { auth: ["lock", "Authentication", "Connect with the add-on or JSON-RPC"], whitelist: ["verified_user", "Whitelisting", "Choose libraries and content to sync"] },
+      copy: { auth: ["Kodi Authentication", "Connect Kodi with the CrossWatch add-on, or over HTTP JSON-RPC."], whitelist: ["Kodi Whitelisting", "Choose which Kodi video sources CrossWatch can use for history, ratings, progress, collections and scrobbling."] },
       journey: ["Connect to Kodi", "Enter your Kodi server URL and optional HTTP Basic Auth credentials. Make sure Kodi's web server and JSON RPC access are enabled before connecting.", "23,181,209", "20,150,200", "KODI"],
       steps: [["1", "Enable JSON-RPC", "Allow control of Kodi via HTTP"], ["2", "Enter server", "Add the Kodi web server URL"], ["3", "Verify", "CrossWatch checks Kodi and JSON-RPC versions"]],
       order: [".kodi-method-row", "#kodi_addon_block", ".grid2", ".inline"],

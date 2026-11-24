@@ -383,6 +383,14 @@ def html() -> str:
     #sec-kodi .kodi-qc-meta{display:flex;justify-content:space-between;gap:12px;margin-top:6px;flex-wrap:wrap}
     #sec-kodi .kodi-addon-status{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
     #sec-kodi .kodi-addon summary{cursor:pointer}
+    #sec-kodi .kodi-sync{display:flex;flex-direction:column;gap:10px;padding:12px 14px;border-radius:12px;border:1px solid rgba(255,255,255,.10)}
+    #sec-kodi .kodi-sync[hidden]{display:none !important}
+    #sec-kodi .kodi-sync-head{display:flex;flex-direction:column;gap:2px}
+    #sec-kodi .kodi-sync-rows{display:flex;flex-direction:column;gap:8px}
+    #sec-kodi .kodi-sync-row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+    #sec-kodi .kodi-sync-name{font-weight:600;min-width:110px}
+    #sec-kodi .kodi-sync-state{flex:1 1 160px;min-width:0}
+    #sec-kodi .kodi-sync-row select{flex:0 1 220px;min-width:0}
     #sec-kodi .kodi-addon-alt{margin-top:10px}
   </style>
 
@@ -396,7 +404,7 @@ def html() -> str:
         <div class="cw-panel-head">
           <div>
             <div class="cw-panel-title">Kodi</div>
-            <div class="muted">Connect a Kodi media client over HTTP JSON-RPC.</div>
+            <div class="muted">Connect Kodi with the CrossWatch add-on, or over HTTP JSON-RPC.</div>
           </div>
         </div>
 
@@ -409,11 +417,11 @@ def html() -> str:
           <div class="cw-subpanel active" data-sub="auth">
             <div class="kodi-method-row" hidden>
               <div class="kodi-methods" role="tablist" aria-label="Connection method">
-                <button type="button" class="kodi-method active" data-method="jsonrpc" role="tab" aria-selected="true">
-                  JSON-RPC
+                <button type="button" class="kodi-method active" data-method="addon" role="tab" aria-selected="true">
+                  Add-on <span class="badge">Recommended</span>
                 </button>
-                <button type="button" class="kodi-method" data-method="addon" role="tab" aria-selected="false">
-                  Add-on <span class="badge">Scrobbling</span>
+                <button type="button" class="kodi-method" data-method="jsonrpc" role="tab" aria-selected="false">
+                  JSON-RPC
                 </button>
               </div>
             </div>

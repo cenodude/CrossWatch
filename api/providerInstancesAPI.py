@@ -81,7 +81,7 @@ def _max_generated_profiles(cfg: Mapping[str, Any] | None = None) -> int:
 
 
 _DEFAULT_MAX_SYNC_USERS = 25
-_SYNC_USER_PROVIDERS = frozenset({"plex", "emby", "jellyfin", "silo", "tofa"})
+_SYNC_USER_PROVIDERS = frozenset({"plex", "emby", "jellyfin", "silo", "tofa", "kodi"})
 
 
 def _max_sync_users_per_connection(cfg: Mapping[str, Any] | None = None) -> int:

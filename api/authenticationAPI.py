@@ -1458,6 +1458,148 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
         kodi_ensure_whitelist_defaults(cfg, instance_id=inst)
         return {"libraries": kodi_fetch_libraries_from_cfg(cfg, instance_id=inst), "instance": inst}
 
+    _KODI_SETUP_FEATURES = {
+        "history": {"enable": True, "add": True, "remove": False, "rewatches": False, "include_specials": True},
+        "ratings": {"enable": True, "add": True, "remove": False, "types": ["movies", "shows", "seasons", "episodes"],
+                    "mode": "all", "from_date": "", "include_specials": True},
+    }
+
+    def _kodi_pair_other(pair: Any, kodi_inst: str) -> tuple[str, str] | None:
+        if not hasattr(pair, "get"):
+            return None
+        for side, other in (("source", "target"), ("target", "source")):
+            if str(pair.get(side) or "").strip().upper() == "KODI" and normalize_instance_id(pair.get(f"{side}_instance")) == kodi_inst:
+                return str(pair.get(other) or "").strip().upper(), normalize_instance_id(pair.get(f"{other}_instance"))
+        return None
+
+    def _kodi_sync_targets(cfg: dict[str, Any]) -> list[dict[str, Any]]:
+        from api.providerInstancesAPI import _instances_map_for
+        from cw_platform.orchestrator._providers import load_sync_providers
+
+        out: list[dict[str, Any]] = []
+        for name, ops in sorted(load_sync_providers().items()):
+            if name == "KODI":
+                continue
+            try:
+                if not dict(ops.features() or {}).get("history"):
+                    continue
+                label = str(ops.label() or name.title())
+                rows = _instances_map_for(cfg, name, configured_only=True)
+            except Exception:
+                continue
+            for row in rows:
+                inst = normalize_instance_id(row.get("id"))
+                extra = str(row.get("display_label") or "").strip() if len(rows) > 1 or inst != "default" else ""
+                out.append({"provider": name, "instance": inst, "label": f"{label} ({extra})" if extra else label})
+        return out
+
+    def _kodi_sync_view(cfg: dict[str, Any], inst: str) -> dict[str, Any]:
+        from cw_platform.orchestrator._pairs import expand_sync_user_pairs
+        from providers.sync.kodi import _addon_sync as addon_sync
+
+        targets = _kodi_sync_targets(cfg)
+        labels = {(t["provider"], t["instance"]): t["label"] for t in targets}
+        pairs = expand_sync_user_pairs(cfg)
+        viewers: list[dict[str, Any]] = []
+        for row in addon_sync.device_info(inst).get("viewers") or []:
+            vid = str((row or {}).get("viewer_id") or "").strip() if isinstance(row, dict) else ""
+            if not vid:
+                continue
+            kodi_inst = addon_sync.viewer_instance(cfg, inst, vid) or ""
+            linked: list[dict[str, Any]] = []
+            seen: set[str] = set()
+            for pair in pairs if kodi_inst else []:
+                other = _kodi_pair_other(pair, kodi_inst)
+                pid = str(pair.get("id") or "")
+                if other is None or pid in seen:
+                    continue
+                seen.add(pid)
+                linked.append({"id": pid, "provider": other[0], "instance": other[1], "enabled": pair.get("enabled") is not False,
+                               "label": labels.get(other) or other[0].title()})
+            viewers.append({"viewer_id": vid, "name": str(row.get("name") or vid), "instance": kodi_inst,
+                            "ready": bool(kodi_inst) and addon_sync.addon_ready(cfg, kodi_inst), "pairs": linked})
+        return {"ok": True, "instance": inst, "jsonrpc": addon_sync.uses_jsonrpc(cfg, inst),
+                "sync_on": addon_sync.device_active(cfg, inst), "viewers": viewers, "targets": targets}
+
+    @app.get("/api/kodi/addon/sync", tags=["media providers"], response_model=None)
+    def api_kodi_addon_sync(instance: str | None = Query(None)) -> Any:
+        inst = normalize_instance_id(instance)
+        return _kodi_sync_view(load_config(), inst)
+
+    @app.post("/api/kodi/addon/sync-setup", tags=["media providers"], response_model=None)
+    def api_kodi_addon_sync_setup(request: Request, payload: dict[str, Any] = Body(default={}), instance: str | None = Query(None)) -> Any:
+        from api.providerInstancesAPI import api_provider_sync_users_update
+        from api.syncAPI import PairIn, api_pairs_add
+        from cw_platform.orchestrator._pairs import expand_sync_user_pairs
+        from cw_platform.provider_instances import split_sync_user_id, sync_user_instance_id
+        from providers.scrobble.kodi import addon as kodi_addon
+        from providers.sync.kodi import _addon_sync as addon_sync
+
+        inst = normalize_instance_id(instance)
+        body = payload if isinstance(payload, dict) else {}
+
+        def fail(message: str, status: int = 400) -> JSONResponse:
+            return JSONResponse({"ok": False, "error": message, "instance": inst}, status)
+
+        cfg = load_config()
+        if split_sync_user_id(inst) is not None or not kodi_addon.instance_enabled(cfg, inst):
+            return fail("Connect the Kodi add-on first")
+        if addon_sync.uses_jsonrpc(cfg, inst):
+            return fail("This Kodi syncs over JSON-RPC")
+        names = {str(r.get("viewer_id")): str(r.get("name") or r.get("viewer_id"))
+                 for r in addon_sync.device_info(inst).get("viewers") or [] if isinstance(r, dict) and r.get("viewer_id")}
+        vid = str(body.get("viewer_id") or "").strip()
+        if vid not in names:
+            return fail("Unknown viewer", 404)
+        target = str(body.get("target") or "").strip().upper()
+        target_inst = normalize_instance_id(body.get("target_instance"))
+        if not any(t["provider"] == target and t["instance"] == target_inst for t in _kodi_sync_targets(cfg)):
+            return fail("Pick a connected service to sync with")
+        kodi_inst = addon_sync.viewer_instance(cfg, inst, vid)
+        if kodi_inst is None:
+            parent = cfg.get("kodi") if inst == "default" else ((cfg.get("kodi") or {}).get("instances") or {}).get(inst)
+            current = (parent or {}).get("sync_users") if isinstance(parent, dict) else None
+            users = [{"key": str(k), "username": str((v or {}).get("username") or k)} for k, v in (current or {}).items() if isinstance(v, dict)]
+            users.append({"key": vid, "username": names[vid]})
+            saved = api_provider_sync_users_update("kodi", inst, {"users": users}, request)
+            if isinstance(saved, JSONResponse):
+                return saved
+            if not (isinstance(saved, dict) and saved.get("ok")):
+                code = str((saved or {}).get("error") or "")
+                return fail("The sync user limit is reached" if code == "sync_user_limit_reached" else "Could not add the viewer as a sync user")
+            cfg = load_config()
+            kodi_inst = sync_user_instance_id(inst, vid)
+            if addon_sync.viewer_instance(cfg, inst, vid) != kodi_inst:
+                return fail("Could not add the viewer as a sync user")
+        exists = any(_kodi_pair_other(p, kodi_inst) == (target, target_inst) for p in expand_sync_user_pairs(cfg))
+        if not exists:
+            made = api_pairs_add(PairIn(source="KODI", source_instance=kodi_inst, target=target, target_instance=target_inst,
+                                        mode="two-way", enabled=True, features=copy.deepcopy(_KODI_SETUP_FEATURES)), request)
+            if not (isinstance(made, dict) and made.get("ok")):
+                return fail(str((made or {}).get("error") or "Could not create the sync pair"))
+            cfg = load_config()
+            if addon_sync.addon_ready(cfg, kodi_inst):
+                addon_sync.trigger_pair_runs(cfg, kodi_inst)
+        return _kodi_sync_view(cfg, inst)
+
+    def _kodi_addon_viewers(inst: str) -> list[dict[str, Any]]:
+        from providers.scrobble.kodi import addon as kodi_addon
+        from providers.sync.kodi import _addon_sync as addon_sync
+
+        out: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for row in addon_sync.device_info(inst).get("viewers") or []:
+            vid = str((row or {}).get("viewer_id") or "").strip() if isinstance(row, dict) else ""
+            name = str((row or {}).get("name") or "").strip() if isinstance(row, dict) else ""
+            if vid and name and name not in seen:
+                seen.add(name)
+                out.append({"id": vid, "name": name, "username": name, "current": False, "source": "addon"})
+        for name in kodi_addon.known_viewers(inst):
+            if name not in seen:
+                seen.add(name)
+                out.append({"id": name, "name": name, "username": name, "current": False, "source": "addon"})
+        return out
+
     @app.get("/api/kodi/users", tags=["media providers"], response_model=None)
     def api_kodi_users(instance: str | None = Query(None), server: str | None = Query(None), verify_ssl: bool | None = Query(None)) -> Any:
         inst = normalize_instance_id(instance)
@@ -1467,7 +1609,7 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
         from providers.scrobble.kodi import addon as kodi_addon
 
         addon_on = kodi_addon.instance_enabled(cfg, inst)
-        viewers = [{"id": name, "name": name, "current": False, "source": "addon"} for name in kodi_addon.known_viewers(inst)] if addon_on else []
+        viewers = _kodi_addon_viewers(inst) if addon_on else []
         if not (kcfg.server and kcfg.connection_verified):
             if addon_on:
                 return {"users": viewers, "instance": inst}
