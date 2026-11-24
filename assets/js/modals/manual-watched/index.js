@@ -5,6 +5,7 @@ const I18N = () => globalThis.window?.CW?.I18n || globalThis.window?.__cwI18n;
 const T = (key, vars) => I18N()?.t?.(key, vars) ?? key;
 const TH = (key, vars) => I18N()?.html?.(key, vars) ?? key;
 const STORAGE_KEY = "cw.manualWatched.providers";
+const ACTIONS_KEY = "cw.manualWatched.actions";
 const MEDIA_SERVER_PROVIDERS = new Set(["PLEX", "JELLYFIN", "EMBY", "SILO", "TOFA"]);
 const ACTIONS = [
   ["history", T("library.quickAdd.history"), "history", T("library.quickAdd.historyHint"), "history_enabled"],
@@ -22,6 +23,23 @@ const fjson = async (url, opts = {}) => {
     throw new Error(data?.error || (opts.method && opts.method !== "GET" ? T("library.quickAdd.notSaved") : T("library.quickAdd.notLoaded")));
   }
   return data || {};
+};
+
+const loadActionMemory = () => {
+  try {
+    const raw = JSON.parse(localStorage.getItem(ACTIONS_KEY) || "null");
+    if (!raw || typeof raw !== "object" || Array.isArray(raw) || !raw.actions || typeof raw.actions !== "object") return null;
+    const actions = Object.fromEntries(ACTIONS.map(([key]) => [key, raw.actions[key] === true]));
+    if (!Object.values(actions).some(Boolean)) return null;
+    return { actions, dateMode: raw.date_mode === "release" ? "release" : "today" };
+  } catch {
+    return null;
+  }
+};
+const saveActionMemory = (actions, dateMode) => {
+  try {
+    localStorage.setItem(ACTIONS_KEY, JSON.stringify({ actions: Object.fromEntries(ACTIONS.map(([key]) => [key, !!actions[key]])), date_mode: dateMode === "release" ? "release" : "today" }));
+  } catch {}
 };
 
 const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (m) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m]));
@@ -174,6 +192,7 @@ export default {
       watchedOn: todayLocal(),
       actions: { history: true, watchlist: false, rating: false, collection: false },
       rating: 8,
+      ratingUnset: false,
       scope: "show",
       listSource: "tmdb",
       lists: new Map(),
@@ -187,8 +206,17 @@ export default {
       status: "",
       statusTone: "",
     };
-    if (ACTIONS.some(([key]) => key === props?.action)) {
-      state.actions = { history: false, watchlist: false, rating: false, collection: false, [props.action]: true };
+    const askedAction = ACTIONS.some(([key]) => key === props?.action) ? props.action : "";
+    const recalled = state.only ? null : loadActionMemory();
+    if (recalled && (!askedAction || recalled.actions[askedAction])) {
+      state.actions = { ...recalled.actions };
+      state.dateMode = recalled.dateMode;
+      if (state.actions.rating) {
+        state.rating = null;
+        state.ratingUnset = true;
+      }
+    } else if (askedAction) {
+      state.actions = { history: false, watchlist: false, rating: false, collection: false, [askedAction]: true };
     }
 
     const PM = window.CW?.ProviderMeta;
@@ -266,8 +294,10 @@ export default {
         const item = state.providers.find((p) => providerKey(p) === key);
         if (!item || !providerCompatible(item)) state.selectedProviders.delete(key);
       }
-      if (!state.actions.rating) state.rating = 8;
-      else {
+      if (!state.actions.rating) {
+        state.rating = 8;
+        state.ratingUnset = false;
+      } else if (!state.ratingUnset) {
         const scale = ratingScale();
         if (!scale.unavailable && !scale.values.includes(state.rating)) {
           const band = scale.bands?.find(band => state.rating >= band.min && state.rating < band.max);
@@ -327,6 +357,7 @@ export default {
       }
       if (state.actions.rating && ratingScale().unavailable) return T("library.quickAdd.ratingUnavailable");
       if (state.actions.rating && !ratingScale().values.length) return T("library.quickAdd.noSharedShort");
+      if (state.actions.rating && state.rating == null) return T("library.quickAdd.chooseRating");
       if (state.actions.rating && !ratingScale().values.includes(Number(state.rating))) return T("library.quickAdd.chooseSupported");
       return "";
     };
@@ -338,7 +369,7 @@ export default {
     const sendLabel = () => {
       if (state.saving) return T("library.quickAdd.sending");
       const keys = selectedActionKeys();
-      const verb = keys.length === 1
+      const verb = keys.length === 1 && !(keys[0] === "rating" && state.rating == null)
         ? { history: T("library.quickAdd.markWatched"), watchlist: T("library.quickAdd.addWatchlist"), rating: T("library.quickAdd.rate", {value: String(ratingLabel(state.rating))}), collection: T("library.quickAdd.addCollection") }[keys[0]]
         : T("library.quickAdd.save");
       const count = selectedCompatibleTargets().length;
@@ -776,6 +807,7 @@ export default {
           }),
         });
         saveSelection();
+        if (!state.only) saveActionMemory(state.actions, state.dateMode);
         state.saving = false;
         setStatus(T("library.quickAdd.savedTo", {count: providers.length}), "success");
         window.dispatchEvent(new CustomEvent("cw:manual-watched-saved", { detail: data }));
@@ -933,6 +965,7 @@ export default {
         const value = Number(scoreBtn.getAttribute("data-rating"));
         if (!ratingScale().values.includes(value)) return;
         state.rating = value;
+        state.ratingUnset = false;
         render();
         root.querySelector(`[data-rating="${value}"]`)?.focus({preventScroll: true});
         return true;
