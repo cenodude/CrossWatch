@@ -443,7 +443,7 @@ const ImportExport = {
     try {
       [importOptions,exportOptions]=await Promise.all([json("/api/import/options",{signal:lifetime.signal}),json("/api/export/options",{signal:lifetime.signal})]);
       if (lifetime.signal.aborted) return;
-      $("#ie-source").innerHTML=importOptions.sources.map(source=>option(source.id,source.label)).join("");
+      $("#ie-source").innerHTML=importOptions.sources.map(source=>option(source.id,source.id === "auto" ? T("importExport.page.autoDetect") : source.label)).join("");
       $("#ie-target").innerHTML=trackerOptions(importOptions.targets, option);
       const wanted=new URLSearchParams(window.location.hash.split("?")[1] || "").get("target");
       const connected=importOptions.targets.find(target=>target.id===wanted) || importOptions.targets.find(target=>target.connected);

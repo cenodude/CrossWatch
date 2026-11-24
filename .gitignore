@@ -13,6 +13,7 @@ dist/
 build/
 *.log
 settings.*
+!assets/locales/*/settings.json
 .claude/
 
 # Virtual environments

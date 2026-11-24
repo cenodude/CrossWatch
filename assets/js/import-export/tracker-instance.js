@@ -10,7 +10,7 @@ export const NEW_TRACKER = "new";
 export const canCreateTracker = () => document.documentElement?.dataset?.cwRole !== "user";
 
 export function trackerOptions(targets, option) {
-  const rows = targets.map(target => option(target.id, `${target.label}${target.connected ? "" : " (not connected)"}`));
+  const rows = targets.map(target => option(target.id, (name => target.connected ? name : T("importExport.tracker.notConnected", {name}))(target.id === "default" && target.label === "Default" ? T("common.labels.default") : target.label)));
   if (canCreateTracker()) rows.push(option(NEW_TRACKER, T("importExport.tracker.newInstance")));
   return rows.join("");
 }

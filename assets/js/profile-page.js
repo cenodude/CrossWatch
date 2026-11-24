@@ -3649,8 +3649,9 @@
         const [icon, label] = timelineMethod(item);
         return `<span class="cw-hist-badge"><span class="material-symbols-rounded" aria-hidden="true">${esc(icon)}</span>${esc(label)}</span>`;
       }
-      if (mode === "ratings" && item?.rating != null) {
-        return `<span class="cw-media-card-score" title="Rated ${esc(item.rating)}"><span>${esc(item.rating)}</span></span>`;
+      const score = mode === "ratings" ? item?.rating : item?.user_rating;
+      if (score != null) {
+        return `<span class="cw-media-card-score" title="${esc(T("tracker.detail.ratedOutOf", { value: String(score) }))}"><span>${esc(score)}</span></span>`;
       }
       return "";
     }

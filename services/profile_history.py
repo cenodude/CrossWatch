@@ -452,6 +452,7 @@ def build_history_payload(
 
 
 _LOOKUP_KEY = "_tmdb_lookup"
+_RATING_LOOKUP_KEY = "_rating_lookup"
 
 
 def _tmdb_tokens(*values: Any) -> set[str]:
@@ -483,6 +484,44 @@ def rows_for_tmdb(index: dict[str, Any], media: str, tmdb: Any) -> list[dict[str
         index[_LOOKUP_KEY] = lookup
     wanted = "movie" if str(media or "").strip().lower() == "movie" else "show"
     return list(lookup.get(f"{wanted}:{str(tmdb or '').strip()}") or [])
+
+
+def _rating_lookup(index: dict[str, Any]) -> dict[str, Any]:
+    lookup = index.get(_RATING_LOOKUP_KEY)
+    if not isinstance(lookup, dict):
+        lookup = {}
+        for row in index.get("rows") or []:
+            if row.get("rating") is None:
+                continue
+            for alias in dw._rating_aliases(row):
+                lookup.setdefault(alias, row["rating"])
+        index[_RATING_LOOKUP_KEY] = lookup
+    return lookup
+
+
+def _show_rating_row(item: Mapping[str, Any]) -> dict[str, Any]:
+    raw_ids = item.get("ids")
+    ids: Mapping[str, Any] = raw_ids if isinstance(raw_ids, Mapping) else {}
+    raw_show = ids.get("show_ids")
+    show_ids: Mapping[str, Any] = raw_show if isinstance(raw_show, Mapping) else {}
+    return {"type": "show", "title": item.get("title"), "ids": dict(show_ids)}
+
+
+def attach_user_ratings(items: Any, ratings_index: dict[str, Any]) -> None:
+    lookup = _rating_lookup(ratings_index)
+    if not lookup:
+        return
+    for item in items or []:
+        if not isinstance(item, dict):
+            continue
+        candidates = [item]
+        if str(item.get("type") or "").lower() in {"episode", "season"}:
+            candidates.append(_show_rating_row(item))
+        for row in candidates:
+            found = next((lookup[alias] for alias in dw._rating_aliases(row) if alias in lookup), None)
+            if found is not None:
+                item["user_rating"] = found
+                break
 
 
 def title_presence(index: dict[str, Any], media: str, tmdb: Any) -> dict[str, Any] | None:
