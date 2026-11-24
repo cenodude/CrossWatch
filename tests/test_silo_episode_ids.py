@@ -14,7 +14,7 @@ from providers.sync.silo import _common as silo
 SHOW = {"tmdb": "1429", "tvdb": "267440", "imdb": "tt2560140"}
 EPISODE_IDS = {
     "ep-102": {"tmdb_id": "65490", "tvdb_id": "4520243"},
-    "ep-201": {"tmdb_id": "1265623", "tvdb_id": "5978808"},
+    "ep-201": {"tmdb_id": "1265623", "tvdb_id": "5978808", "imdb_id": "tt1234567"},
 }
 
 
@@ -29,16 +29,12 @@ def library(*, listed_ids: bool = False) -> silo.Library:
     return lib
 
 
-@pytest.fixture
-def episodes_call(monkeypatch):
-    calls: list[str] = []
+@pytest.fixture(autouse=True)
+def no_episode_requests(monkeypatch):
+    def unexpected_request(*args, **kwargs):
+        pytest.fail("Episode matching must use the loaded catalog without extra requests")
 
-    def pages(adapter, path, *, feature, params=None, allow_disabled=False):
-        calls.append(path)
-        return [{"content_id": cid, **ids} for cid, ids in EPISODE_IDS.items()]
-
-    monkeypatch.setattr(silo, "pages", pages)
-    return calls
+    monkeypatch.setattr(silo, "silo_request", unexpected_request)
 
 
 def item(ids: dict[str, str], s: int = 1, e: int = 2) -> dict[str, Any]:
@@ -48,61 +44,55 @@ def item(ids: dict[str, str], s: int = 1, e: int = 2) -> dict[str, Any]:
 ADAPTER = SimpleNamespace()
 
 
-def test_episode_id_beats_coordinates(episodes_call):
-    lib = library()
-
-    assert silo.resolve_item(ADAPTER, lib, item({"tvdb": "5978808"}), feature="history") == ("ep-201", "episode")
-    assert episodes_call == ["/catalog/items/series-aot/episodes"]
-
-
-def test_episode_ids_are_fetched_once_per_series(episodes_call):
-    lib = library()
-    silo.resolve_item(ADAPTER, lib, item({"tvdb": "5978808"}), feature="history")
-    silo.resolve_item(ADAPTER, lib, item({"tmdb": "65490"}), feature="history")
-
-    assert len(episodes_call) == 1
-
-
-def test_listed_episode_ids_need_no_extra_call(episodes_call):
+@pytest.mark.parametrize("provider,value", [("tvdb", "5978808"), ("tmdb", "1265623"), ("imdb", "tt1234567")])
+def test_episode_id_beats_coordinates(provider, value):
     lib = library(listed_ids=True)
 
-    assert silo.resolve_item(ADAPTER, lib, item({"tvdb": "5978808"}), feature="history") == ("ep-201", "episode")
-    assert episodes_call == []
+    assert silo.resolve_item(ADAPTER, lib, item({provider: value}), feature="history") == ("ep-201", "episode")
 
 
-def test_conflicting_coordinate_hit_is_not_used(episodes_call):
-    lib = library()
+def test_partial_catalog_ids_match_on_first_and_repeated_lookups():
+    lib = library(listed_ids=True)
+    lib.episodes["ep-102"]["ids"] = {}
+
+    for _ in range(2):
+        assert silo.resolve_item(ADAPTER, lib, item({"tvdb": "5978808"}), feature="history") == ("ep-201", "episode")
+        assert silo.resolve_item(ADAPTER, lib, item({"tmdb": "65490"}), feature="history") == ("ep-102", "episode")
+
+
+def test_ambiguous_episode_ids_do_not_fall_back_to_coordinates():
+    lib = library(listed_ids=True)
+    lib.episodes["ep-102"]["ids"]["tvdb"] = "5978808"
+
+    assert silo.resolve_item(ADAPTER, lib, item({"tvdb": "5978808"}), feature="history") == ("", "episode")
+
+
+@pytest.mark.parametrize("partial", [False, True])
+def test_conflicting_coordinate_hit_is_not_used(partial):
+    lib = library(listed_ids=True)
+    if partial:
+        lib.episodes["ep-201"]["ids"] = {}
 
     assert silo.resolve_item(ADAPTER, lib, item({"tvdb": "9999999"}), feature="history") == ("", "episode")
 
 
-def test_item_without_episode_ids_keeps_coordinates_and_makes_no_call(episodes_call):
+def test_item_without_episode_ids_keeps_coordinates_and_makes_no_call():
     lib = library()
 
     assert silo.resolve_item(ADAPTER, lib, item({}), feature="history") == ("ep-102", "episode")
-    assert episodes_call == []
 
 
-def test_show_id_in_episode_slot_is_not_an_episode_id(episodes_call):
+def test_show_id_in_episode_slot_is_not_an_episode_id():
     lib = library()
 
     assert silo.resolve_item(ADAPTER, lib, item({"tvdb": "267440"}), feature="history") == ("ep-102", "episode")
-    assert episodes_call == []
 
 
-def test_failed_episode_list_falls_back_to_coordinates_and_is_not_retried(monkeypatch):
-    calls: list[str] = []
-
-    def broken(_adapter, path, **_k):
-        calls.append(path)
-        raise silo.SiloSyncError("silo_history_http_500")
-
-    monkeypatch.setattr(silo, "pages", broken)
+def test_missing_catalog_ids_fall_back_to_coordinates_without_requests():
     lib = library()
 
     assert silo.resolve_item(ADAPTER, lib, item({"tvdb": "5978808"}), feature="history") == ("ep-102", "episode")
     assert silo.resolve_item(ADAPTER, lib, item({"tvdb": "5978808"}), feature="history") == ("ep-102", "episode")
-    assert len(calls) == 1
 
 
 def test_episode_reads_stay_without_episode_ids():

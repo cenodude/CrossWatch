@@ -242,6 +242,30 @@ def test_history_add_dated_writes_and_reports_server_ignored(silo: Any) -> None:
     assert {u["key"]: u["status"] for u in res["unresolved"]} == {"tvdb:300": "unsupported_type", "tvdb:300#s01e01": "ignored_by_server"}
 
 
+def test_history_add_uses_partial_catalog_episode_ids_without_extra_reads(silo: Any) -> None:
+    adapter, server = silo
+    catalog = {"movie": MOVIES, "series": SERIES, "episode": [EPISODES[0], {**EPISODES[1], "tvdb_id": "999"}]}
+    server.on("GET", "/catalog", lambda kw: _page(catalog[kw["params"]["type"]]))
+    after: list[dict[str, Any]] = []
+
+    def write(kw: dict[str, Any]) -> ResponseStub:
+        after.extend({"media_item_id": row["media_item_id"], "completed": True, "updated_at": row["updated_at"]} for row in kw["json"]["items"])
+        return ResponseStub(200, {"items": [{"media_item_id": row["media_item_id"], "status": "success"} for row in kw["json"]["items"]]})
+
+    server.on("POST", "/sync/progress", write)
+    server.on("GET", "/progress", lambda kw: _page(after))
+
+    res = adapter.add("history", [
+        {"type": "episode", "ids": {"tvdb": "999"}, "show_ids": {"tvdb": "300"}, "season": 2, "episode": 1, "watched_at": "2024-06-01T20:00:00Z"},
+        {"type": "episode", "ids": {"tvdb": "998"}, "show_ids": {"tvdb": "300"}, "season": 1, "episode": 1, "watched_at": "2024-06-02T20:00:00Z"},
+    ])
+
+    assert res["confirmed_keys"] == ["tvdb:300#s02e01", "tvdb:300#s01e01"]
+    assert res["unresolved_keys"] == []
+    assert [row["media_item_id"] for row in after] == [EPISODES[1]["content_id"], EPISODES[0]["content_id"]]
+    assert not [call for call in server.calls if call["path"].startswith("/catalog/items/")]
+
+
 def test_history_add_without_duration_is_unresolved_and_remove_unmarks(silo: Any) -> None:
     from providers.sync.silo import _common
 

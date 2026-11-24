@@ -11,10 +11,14 @@
   const coverAction = target => {
     if (!(target instanceof Element) || !target.closest('#page-tracker,.cw-profile-shell')) return null;
     if (target.closest('input,select,textarea,label,.cw-card-actions,[data-provider-overflow]')) return null;
+    const overview = target.closest('#profile-progress .cw-cw-card');
+    if (overview && target.closest('.cw-cw-art')) {
+      return {card:overview,button:overview,open:() => overview.dispatchEvent(new CustomEvent('cw:card-hold', {bubbles:true}))};
+    }
     const cover = target.closest('.trk-grid-art,.trk-overview-art,.cw-hist-art,.cw-collection-poster');
     const card = cover?.closest('.trk-grid-card,.trk-overview-card,.cw-hist-card,.cw-collection-card');
     const button = card?.querySelector('button.cw-card-actions');
-    return button && !button.disabled && button.checkVisibility() ? {card,button} : null;
+    return button && !button.disabled && button.checkVisibility() ? {card,button,open:() => button.click()} : null;
   };
   document.addEventListener('pointerdown', event => {
     cancelPress();
@@ -29,7 +33,7 @@
       if (!gesture.card.isConnected || gesture.button.disabled || !gesture.button.checkVisibility() || document.hidden) return;
       held = {...gesture, until:performance.now()+10000};
       openingFromHold = true;
-      try { gesture.button.click(); } finally { openingFromHold = false; }
+      try { gesture.open(); } finally { openingFromHold = false; }
       window.CW?.MobileUI?.feedback?.();
     }, 400);
   }, {capture:true,passive:true});

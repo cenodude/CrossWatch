@@ -1975,7 +1975,6 @@ body.cw-profile-page .cw-profile-tabs button{display:inline-flex;align-items:cen
 .cw-hub-secondary>.cw-hub-section>.cw-hub-section-head{min-height:36px}
 .cw-hub-secondary :is(#profile-watchlist,#profile-activity){flex:1}
 .cw-profile-activity-icon{vertical-align:middle;margin-right:8px}
-@media(min-width:1201px){#profile-watchlist .cw-hub-poster-art{flex:1;min-height:0}}
 #profile-progress{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:20px}
 .cw-cw-card{display:flex;flex-direction:column;min-width:0;padding:0;overflow:hidden;text-align:left;cursor:pointer}
 .cw-cw-art{position:relative;display:block;width:100%;aspect-ratio:16/9;overflow:hidden}
@@ -2001,7 +2000,7 @@ body.cw-profile-page :is(.cw-cw-providers,.cw-hub-providers) :is(.cw-profile-pro
 .cw-cw-track i{display:block;height:100%}
 #profile-watchlist{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px}
 .cw-hub-poster{display:flex;flex-direction:column;align-items:stretch;gap:5px;min-width:0;padding:0;text-align:left;cursor:pointer}
-.cw-hub-poster-art{display:block;aspect-ratio:2/3;width:100%;overflow:hidden;margin-bottom:5px}
+.cw-hub-poster-art{display:block;flex:none;aspect-ratio:2/3;width:100%;overflow:hidden;margin-bottom:5px}
 .cw-hub-poster-art img{display:block;width:100%;height:100%;object-fit:cover}
 .cw-hub-poster-title{display:-webkit-box;-webkit-line-clamp:2;line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .cw-hub-providers{margin-top:4px}
