@@ -72,6 +72,19 @@ def _iso_noon_utc(date_str: str) -> str:
     return datetime(d.year, d.month, d.day, 12, 0, 0, tzinfo=timezone.utc).isoformat().replace("+00:00", "Z")
 
 
+def _manual_range_times(start: Any, end: Any, count: int) -> list[str] | None:
+    first = _parse_manual_date(start)
+    last = _parse_manual_date(end)
+    if not first or not last or last < first or count < 1:
+        return None
+    begin = datetime.fromisoformat(first).replace(hour=12, tzinfo=timezone.utc)
+    finish = datetime.fromisoformat(last).replace(hour=12, tzinfo=timezone.utc)
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    step = (finish - begin) / max(1, count - 1)
+    stamps = [min(begin + step * index, now).replace(microsecond=0) for index in range(count)]
+    return [stamp.isoformat().replace("+00:00", "Z") for stamp in stamps]
+
+
 def _tmdb_release_date(cfg: dict[str, Any], media_type: str, tmdb_id: Any) -> str | None:
     api_key = _tmdb_api_key(cfg)
     if not api_key:
@@ -558,13 +571,20 @@ def api_manual_watched(payload: dict[str, Any] = Body(...), request: Request = c
             return JSONResponse({"ok": False, "error": "episode_source_mismatch"}, status_code=400)
 
     date_mode = str(payload.get("date_mode") or "today").strip().lower()
-    watched_at, dt_error = _manual_watched_at(
-        cfg,
-        media_type,
-        tmdb_id,
-        payload.get("date_mode"),
-        payload.get("watched_on"),
-    )
+    range_times: list[str] | None = None
+    if date_mode == "range":
+        range_times = _manual_range_times(payload.get("watched_on"), payload.get("watched_until"), len(episodes)) if episodes else None
+        if not range_times:
+            return JSONResponse({"ok": False, "error": "invalid_date_range"}, status_code=400)
+        watched_at, dt_error = range_times[0], None
+    else:
+        watched_at, dt_error = _manual_watched_at(
+            cfg,
+            media_type,
+            tmdb_id,
+            payload.get("date_mode"),
+            payload.get("watched_on"),
+        )
     if not watched_at and episodes and dt_error == "release_date_unavailable" and all(row["air_date"] for row in episodes):
         watched_at = _iso_noon_utc(min(row["air_date"] for row in episodes))
     if not watched_at:
@@ -621,9 +641,9 @@ def api_manual_watched(payload: dict[str, Any] = Body(...), request: Request = c
         _manual_episode_item(
             item_payload,
             row,
-            _iso_noon_utc(row["air_date"]) if date_mode == "release" and row["air_date"] else watched_at,
+            range_times[index] if range_times else _iso_noon_utc(row["air_date"]) if date_mode == "release" and row["air_date"] else watched_at,
         )
-        for row in episodes
+        for index, row in enumerate(episodes)
     ] or [item_payload]
 
     collection_payload = dict(item_payload)

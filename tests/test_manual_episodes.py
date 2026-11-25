@@ -335,3 +335,42 @@ def test_episode_list_route_uses_tmdb_or_an_allowed_provider(calls, monkeypatch)
     assert simkl["seasons"][0]["episodes"][0]["episode"] == 1
     assert trakt.status_code == 400
     assert _body(trakt)["error"] == "episode_list_not_available"
+
+
+THREE_EPISODES = [{"season": 1, "episode": n, "air_date": None} for n in (3, 1, 2)]
+
+
+def test_a_date_range_spreads_the_picked_episodes_in_order(calls) -> None:
+    body = _send_episodes(date_mode="range", watched_on="2024-03-01", watched_until="2024-03-05", episodes=THREE_EPISODES)
+
+    assert body["ok"] is True
+    items = calls[0][2]
+    assert [(row["episode"], row["watched_at"]) for row in items] == [
+        (1, "2024-03-01T12:00:00Z"),
+        (2, "2024-03-03T12:00:00Z"),
+        (3, "2024-03-05T12:00:00Z"),
+    ]
+
+
+def test_a_date_range_on_one_day_keeps_every_episode_on_that_day(calls) -> None:
+    _send_episodes(date_mode="range", watched_on="2024-03-01", watched_until="2024-03-01")
+
+    assert {row["watched_at"] for row in calls[0][2]} == {"2024-03-01T12:00:00Z"}
+
+
+def test_a_date_range_never_lands_in_the_future(calls) -> None:
+    _send_episodes(date_mode="range", watched_on="2024-03-01", watched_until="2999-01-01")
+
+    assert calls[0][2][-1]["watched_at"] < "2999"
+
+
+@pytest.mark.parametrize("extra", [
+    {"watched_on": "2024-03-05", "watched_until": "2024-03-01"},
+    {"watched_on": "2024-03-01"},
+    {"watched_on": "2024-03-01", "watched_until": "2024-03-05", "episodes": []},
+])
+def test_a_bad_date_range_is_refused(calls, extra) -> None:
+    body = _send_episodes(date_mode="range", **extra)
+
+    assert body["error"] == "invalid_date_range"
+    assert calls == []
