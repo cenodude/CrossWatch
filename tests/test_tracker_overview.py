@@ -256,6 +256,108 @@ def test_episode_snapshot_uses_bulk_inputs_and_excludes_dropped_titles(app, monk
     assert "6" not in {call[0] for call in meta.calls}
     assert client.get("/api/tracker/overview/shows?day=2026-99-01").status_code == 400
 
+def test_imdb_only_shows_get_continue_and_airing_rows(app, monkeypatch):
+    from providers.scrobble import _show_tmdb
+
+    client, store, _, meta = app
+    body = {"tv_results": [{"id": 95396}]}
+
+    def get(url, params=None, **_):
+        found = url.endswith("/find/tt35309276")
+        return SimpleNamespace(status_code=200, headers={}, json=lambda: body if found else {}, raise_for_status=lambda: None)
+
+    _show_tmdb._CACHE.clear()
+    monkeypatch.setattr(_show_tmdb.requests, "get", get)
+    ids = {"imdb": "tt35309276"}
+    store.write_state("history", {"imdb:tt35309276#s01e01": {**episode(), "series_title": "Devil", "ids": dict(ids), "show_ids": dict(ids)},
+                                  "imdb:tt1#s01e01": {**episode(), "series_title": "Unknown", "ids": {"imdb": "tt1"}, "show_ids": {"imdb": "tt1"}}})
+    data = client.get("/api/tracker/overview/shows?day=2026-11-10").json()
+    assert (data["total"], data["unavailable"]) == (2, 1)
+    row = data["continue"][0]
+    assert (row["season"], row["episode"], row["title"]) == (1, 2, "Devil")
+    assert row["ref"] == {"show": "title:devil"}
+    assert row["art"] == {"kind": "tv", "tmdb": "95396"}
+    assert data["airing"] and all(item["ref"] == {"show": "title:devil"} for item in data["airing"])
+    assert {call[0] for call in meta.calls} == {"95396"}
+
+
+def test_imdb_only_show_merges_with_its_tmdb_show_and_mixed_titles_stay_apart(app, monkeypatch):
+    from providers.scrobble import _show_tmdb
+
+    client, store, _, meta = app
+    finds = {"tt35309276": {"tv_results": [{"id": 95396}]}, "tt2": {"tv_results": [{"id": 7}]}, "tt3": {"tv_results": [{"id": 8}]}}
+
+    def get(url, params=None, **_):
+        body = finds.get(url.rsplit("/", 1)[-1], {})
+        return SimpleNamespace(status_code=200, headers={}, json=lambda: body, raise_for_status=lambda: None)
+
+    _show_tmdb._CACHE.clear()
+    monkeypatch.setattr(_show_tmdb.requests, "get", get)
+    imdb = {"imdb": "tt35309276"}
+    store.write_state("history", {
+        "tmdb:95396#s01e01": episode("95396", 1, 2),
+        "imdb:tt35309276#s01e01": {**episode("x", 1, 3), "series_title": "Show 95396 (US)", "ids": dict(imdb), "show_ids": dict(imdb)},
+        "imdb:tt35309276#s01e02": {**episode("x", 2, 4), "series_title": "Show 95396 (US)", "ids": dict(imdb), "show_ids": dict(imdb)},
+        "imdb:tt2#s01e05": {**episode("x", 5, 5), "series_title": "Doctor", "ids": {"imdb": "tt2"}, "show_ids": {"imdb": "tt2"}},
+        "imdb:tt3#s01e01": {**episode("x", 1, 6), "series_title": "Doctor", "ids": {"imdb": "tt3"}, "show_ids": {"imdb": "tt3"}},
+    })
+    data = client.get("/api/tracker/overview/shows?day=2026-11-10").json()
+    assert (data["total"], data["unavailable"]) == (2, 1)
+    assert [(row["ref"], row["season"], row["episode"]) for row in data["continue"]] == [({"show": "tmdb:95396"}, 1, 3)]
+    assert data["continue"][0]["date"] == "2026-11-04T12:00:00Z"
+    assert {call[0] for call in meta.calls} == {"95396"}
+    store.write_state("history", {**store.read_current("history")["items"],
+                                  "title-only": {**episode("x", 9, 7), "series_title": "Show 95396 (US)", "ids": {}, "show_ids": {}}})
+    mixed = client.get("/api/tracker/overview/shows?day=2026-11-10").json()
+    assert {row["ref"]["show"] for row in mixed["continue"]} == {"tmdb:95396"}
+    assert mixed["unavailable"] == 2
+    store.save_note("show:tmdb:95396", {"type": "show", "title": "Show 95396", "status": "dropped"})
+    dropped = client.get("/api/tracker/overview/shows?day=2026-11-10").json()
+    assert dropped["continue"] == [] and dropped["total"] == 2
+
+
+def test_dropped_aliases_do_not_stop_overview_paging(app, monkeypatch):
+    from providers.scrobble import _show_tmdb
+
+    client, store, _, meta = app
+
+    def get(url, params=None, **_):
+        imdb = url.rsplit("/", 1)[-1]
+        body = {"tv_results": [{"id": 1000 + int(imdb[2:])}]}
+        return SimpleNamespace(status_code=200, headers={}, json=lambda: body, raise_for_status=lambda: None)
+
+    _show_tmdb._CACHE.clear()
+    monkeypatch.setattr(_show_tmdb.requests, "get", get)
+    history = {}
+    for n in range(40):
+        ids = {"imdb": f"tt{n}"}
+        history[f"imdb:tt{n}#s01e01"] = {**episode("x"), "series_title": f"Alias {n}", "ids": dict(ids), "show_ids": dict(ids),
+                                         "watched_at": f"2026-11-09T{n // 2:02d}:{n % 2 * 30:02d}:00Z"}
+        store.save_note(f"show:tmdb:{1000 + n}", {"type": "show", "title": f"Alias {n}", "status": "dropped"})
+    for n in range(3):
+        history[f"tmdb:{50 + n}#s01e01"] = {**episode(str(50 + n)), "watched_at": f"2026-10-0{n + 1}T12:00:00Z"}
+    store.write_state("history", history)
+    data = client.get("/api/tracker/overview/shows?day=2026-11-10").json()
+    assert data["total"] == 3
+    assert {call[0] for call in meta.calls} == {"50", "51", "52"}
+
+
+def test_imdb_only_show_lookup_failure_counts_as_unavailable(app, monkeypatch):
+    from providers.scrobble import _show_tmdb
+
+    client, store, _, meta = app
+
+    def get(url, params=None, **_):
+        raise _show_tmdb.requests.exceptions.ConnectionError("down")
+
+    _show_tmdb._CACHE.clear()
+    monkeypatch.setattr(_show_tmdb.requests, "get", get)
+    store.write_state("history", {"imdb:tt9#s01e01": {**episode("x"), "series_title": "Gone", "ids": {"imdb": "tt9"}, "show_ids": {"imdb": "tt9"}}})
+    data = client.get("/api/tracker/overview/shows?day=2026-11-10").json()
+    assert (data["ok"], data["unavailable"]) == (True, 1)
+    assert not meta.calls
+
+
 def test_missing_metadata_and_failed_lookups_are_explicit(app):
     client, store, cfg, meta = app
     store.write_state("history", {"one": episode()})

@@ -104,12 +104,12 @@ def tmdb_configured(cfg: Mapping[str, Any] | None) -> bool:
     return bool(_api_key(cfg or {}))
 
 
-def movie_tmdb_id(cfg: Mapping[str, Any], ids: Mapping[str, Any] | None) -> int | None:
+def movie_tmdb_id(cfg: Mapping[str, Any], ids: Mapping[str, Any] | None, *, strict: bool = False) -> int | None:
     api_key = _api_key(cfg or {})
     imdb = _clean("imdb", (ids or {}).get("imdb"))
     if not api_key or not imdb:
         return None
-    return _find(api_key, "imdb_id", imdb, "movie_results", "id")
+    return _find(api_key, "imdb_id", imdb, "movie_results", "id", strict=strict)
 
 
 def fill_display_tmdb(cfg: Mapping[str, Any], media_type: str, ids: dict[str, Any], show_ids: dict[str, Any]) -> bool:
@@ -153,3 +153,22 @@ def tmdb_title(cfg: Mapping[str, Any], media_type: str, tmdb: Any) -> tuple[str,
     title = str(data.get("title" if movie else "name") or "").strip()
     year = _positive_int(str(data.get("release_date" if movie else "first_air_date") or "")[:4])
     return title, year
+
+
+def tmdb_imdb(cfg: Mapping[str, Any], media_type: str, tmdb: Any) -> str:
+    api_key = _api_key(cfg or {})
+    ident = _positive_int(tmdb)
+    if not api_key or not ident:
+        return ""
+    from providers.metadata._meta_TMDB import TmdbProvider
+
+    movie = str(media_type or "").strip().lower() == "movie"
+    provider = TmdbProvider(lambda: {"tmdb": {"api_key": api_key}}, lambda _: None)
+    try:
+        data = provider.get_response(f"https://api.themoviedb.org/3/{'movie' if movie else 'tv'}/{ident}/external_ids", None,
+                                     quiet_404=True, timeout=5, max_retries=0, copy=False).data
+    except Exception:
+        return ""
+    if not isinstance(data, Mapping):
+        return ""
+    return _clean("imdb", data.get("imdb_id"))

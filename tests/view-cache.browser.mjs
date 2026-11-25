@@ -564,7 +564,7 @@ for (const initial of ["failed", "empty", "summary-failed"]) test(`Tracker timel
     phase = "fresh";
     await retry.click();
   } else {
-    await page.locator('[data-trk-slot="main"] .cw-empty').waitFor();
+    await page.locator('[data-trk-slot="main"] .cw-page-empty').waitFor();
     assert.equal(await status.isHidden(), true);
     phase = "fresh";
   }

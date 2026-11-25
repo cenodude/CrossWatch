@@ -704,7 +704,7 @@
     }).join("");
     const notice = !data.metadata_available || !rows.length ? message : data.checking ? `${T("tracker.ui.checkingShows")}${data.total ? ` · ${T("tracker.ui.nOfTotal", {n: num(data.checked), total: num(data.total)})}` : ""}…` : "";
     const problem = data.calendar_error ? T("tracker.overview.calendarError") : data.unavailable ? T("tracker.overview.datesUnavailable", { shows: plural(data.unavailable, "show", "shows") }) : "";
-    return `<section class="trk-overview-section" aria-labelledby="trk-overview-airing"><div class="trk-overview-section-head"><div><h2 id="trk-overview-airing">${TH("profile.overview.airingSoon")}</h2></div><div class="trk-calendar-actions"><button type="button" class="cw-btn" data-trk-calendar="today">${TH("common.time.today")}</button><button type="button" class="cw-btn" data-trk-calendar="previous" aria-label="${TH("profile.overview.previousDays")}">${icon("chevron_left")}</button><button type="button" class="cw-btn" data-trk-calendar="next" aria-label="${TH("profile.overview.nextDays")}">${icon("chevron_right")}</button></div></div><div class="trk-calendar" role="region" aria-label="${TH("profile.overview.upcoming30")}" tabindex="0">${days}</div>${notice ? `<p class="trk-overview-notice${!rows.length ? " trk-overview-empty" : ""}" role="status">${esc(notice)}</p>` : ""}${problem ? `<p class="trk-overview-notice" role="status">${esc(problem)}</p>` : ""}</section>`;
+    return `<section class="trk-overview-section" aria-labelledby="trk-overview-airing"><div class="trk-overview-section-head"><div><h2 id="trk-overview-airing">${TH("profile.overview.airingSoon")}</h2></div><div class="trk-calendar-actions"><button type="button" class="cw-btn" data-trk-calendar="today">${TH("common.time.today")}</button><button type="button" class="cw-btn" data-trk-calendar="previous" aria-label="${TH("profile.overview.previousDays")}">${icon("chevron_left")}</button><button type="button" class="cw-btn" data-trk-calendar="next" aria-label="${TH("profile.overview.nextDays")}">${icon("chevron_right")}</button></div></div><div class="trk-calendar" role="region" aria-label="${TH("profile.overview.upcoming30")}" tabindex="0">${days}</div>${notice ? rows.length ? `<p class="trk-overview-notice" role="status">${esc(notice)}</p>` : emptyState(notice, "event", true) : ""}${problem ? `<p class="trk-overview-notice" role="status">${esc(problem)}</p>` : ""}</section>`;
   }
 
   function renderOverview(kinds = ["continue", "airing", "recent"]) {
@@ -722,7 +722,7 @@
       const message = kind === "airing" ? !data.metadata_available ? T("profile.airing.needsTmdb") : data.checking ? T("tracker.overview.lookingUpcoming") : data.unavailable ? T("tracker.overview.noUpcoming") : T("profile.airing.none") : kind === "continue" ? data.checking ? T("tracker.overview.findingNext") : T("tracker.overview.caughtUp") : T("tracker.overview.recentEmpty");
       if (kind === "airing") return renderAiringTimeline(rows, data, message);
       const more = rows.length > step ? `<button type="button" class="cw-btn trk-overview-more" data-trk-overview-more="${kind}" aria-expanded="${limit > step}">${rows.length > limit ? mobile() ? TH("tracker.overview.showNMore", { count: Math.min(step, rows.length - limit) }) : TH("tracker.overview.showMore") : TH("tracker.overview.showLess")}</button>` : "";
-      return `<section class="trk-overview-section" aria-labelledby="trk-overview-${kind}"><div class="trk-overview-section-head"><div class="trk-overview-heading"><h2 id="trk-overview-${kind}">${title}</h2>${kind === "recent" ? `<button type="button" class="trk-overview-log" data-trk-action="log">${icon("add")}<span>${TH("tracker.actions.logWatch")}</span></button>` : ""}</div>${view ? `<button type="button" class="cw-btn" data-trk-view="${view}">${link}${icon("arrow_forward")}</button>` : ""}</div>${rows.length ? kind === "recent" ? renderGrid(rows.slice(0, limit)) : `<div class="trk-overview-grid">${rows.slice(0, limit).map((row, index) => overviewCard(row, kind, index)).join("")}</div>` : `<p class="trk-overview-empty">${esc(message)}</p>`}${more}</section>`;
+      return `<section class="trk-overview-section" aria-labelledby="trk-overview-${kind}"><div class="trk-overview-section-head"><div class="trk-overview-heading"><h2 id="trk-overview-${kind}">${title}</h2>${kind === "recent" ? `<button type="button" class="trk-overview-log" data-trk-action="log">${icon("add")}<span>${TH("tracker.actions.logWatch")}</span></button>` : ""}</div>${view ? `<button type="button" class="cw-btn" data-trk-view="${view}">${link}${icon("arrow_forward")}</button>` : ""}</div>${rows.length ? kind === "recent" ? renderGrid(rows.slice(0, limit)) : `<div class="trk-overview-grid">${rows.slice(0, limit).map((row, index) => overviewCard(row, kind, index)).join("")}</div>` : `${emptyState(message, kind === "continue" ? "play_circle" : "history", true)}`}${more}</section>`;
     }).join("")}</div>`;
   }
 
@@ -1173,9 +1173,9 @@
     state.root.querySelector(".cw-root").appendChild(menu);
   }
 
-  function emptyState(text, symbolName = "table_rows") {
+  function emptyState(text, symbolName = "table_rows", compact = false, extra = "") {
     if (symbolName === "hourglass_empty") return `<div class="cw-empty cw-page-loading" role="status"><div class="cw-empty-text">${esc(text)}</div></div>`;
-    return `<div class="cw-empty" role="status">${icon(symbolName)}<div class="cw-empty-text">${esc(text)}</div></div>`;
+    return `<div class="cw-page-empty${compact ? " is-compact" : ""}" role="status"><span class="cw-page-empty-art" aria-hidden="true">${icon(symbolName)}</span><span class="cw-page-empty-text">${esc(text)}</span>${extra}</div>`;
   }
 
   function tableWrap(head, body, cls, cols) {
@@ -1689,7 +1689,7 @@
       const move = state.migration;
       const total = Number(move?.files_total || 0);
       const pct = total ? Math.round((Number(move.files_done || 0) / total) * 100) : 0;
-      return `<div class="cw-empty" role="status">${icon("database")}<div class="cw-empty-text">${esc(state.error)}</div>${total ? `<div class="trk-meter" aria-hidden="true"><i style="width:${pct}%"></i></div><div class="cw-status-text">${esc(num(move.files_done))} of ${esc(num(total))} files</div>` : ""}</div>`;
+      return emptyState(state.error, "database", false, total ? `<div class="trk-meter" aria-hidden="true"><i style="width:${pct}%"></i></div><div class="cw-status-text">${esc(num(move.files_done))} of ${esc(num(total))} files</div>` : "");
     }
     if (state.error) return emptyState(state.error, "error");
     if (state.view === "overview") return renderOverview();

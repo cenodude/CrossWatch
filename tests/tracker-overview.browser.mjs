@@ -849,8 +849,8 @@ for (const theme of ["original","flat-dark","flat-light"]) test(`${theme}: overv
   assert.equal(await page.locator('[data-trk-overview-open^="recent:"]').count(),10);
   app.fail(false); app.empty(true); app.metadata(false);
   await page.locator('[data-trk-action="refresh"]').click();
-  await page.locator(".trk-overview-empty").filter({hasText:"TMDB API key"}).waitFor();
-  assert.equal(await page.locator(".trk-overview-empty").count(),3);
+  await page.locator(".trk-overview .cw-page-empty").filter({hasText:"TMDB API key"}).waitFor();
+  assert.equal(await page.locator(".trk-overview .cw-page-empty").count(),3);
 });
 
 for (const theme of ["original","flat-dark","flat-light"]) test(`${theme}: cover menus and real media cards`, async t => {

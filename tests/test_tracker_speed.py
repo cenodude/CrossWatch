@@ -152,7 +152,8 @@ def test_show_summaries_and_stats(store):
     total, shows = store.show_summaries(limit=2)
     assert total == 5
     assert shows[0] == {"key": "tmdb:5", "title": "Show 5", "year": 2005, "episodes": 12, "plays": 12,
-                        "last_watched": "2025-12-05T20:00:00.000Z", "last_season": 1, "last_episode": 12}
+                        "last_watched": "2025-12-05T20:00:00.000Z", "last_season": 1, "last_episode": 12,
+                        "show_ids": {"tmdb": "5"}}
     assert store.show_summaries(text="show 2")[0] == 1
     stats = store.history_stats()
     assert (stats["total"], stats["movies"], stats["episodes"]) == (121, 61, 60)

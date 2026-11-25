@@ -609,7 +609,7 @@ for(const width of [390,980,1440]) test(`Hub Progress keeps provider actions, fi
   assert.equal(await page.evaluate(()=>JSON.parse(localStorage.getItem('cw.profile.playback')).zoom),saved.zoom);
   state.empty=true;
   await clickRecordControl(panel,'#profile-playback-refresh');
-  await panel.locator('.cw-profile-empty').waitFor();
+  await panel.locator('.cw-page-empty').waitFor();
   await snapshot(page,`hub-progress-empty-${width}`);
 });
 
@@ -703,7 +703,7 @@ for(const width of [390,1440]) test(`Hub History preserves filters, provider act
   assert.equal(await page.evaluate(()=>JSON.parse(localStorage.getItem('cw.profile.history')).zoom),saved.zoom);
   state.empty=true;
   await clickRecordControl(panel,'#profile-history-refresh');
-  await panel.locator('.cw-profile-empty').waitFor();
+  await panel.locator('.cw-page-empty').waitFor();
   assert.equal(await page.locator('#profile-history-timeline').isVisible(),false);
 });
 
@@ -769,7 +769,7 @@ for(const width of [390,1440]) test(`Hub library pages preserve filters, sorting
     assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
     state.empty=true;
     await clickRecordControl(panel,`#profile-${key}-refresh`);
-    await panel.locator('.cw-profile-empty').waitFor();
+    await panel.locator('.cw-page-empty').waitFor();
   }
 });
 
@@ -894,7 +894,7 @@ for(const theme of ['original','flat-dark','flat-light']) {
       if(width<=760) await page.locator('[data-profile-tab="watchlist"]').click();
       else await page.locator('[data-profile-tab="watchlist"]').click();
       await clickRecordControl(page.locator('#profile-panel-watchlist'),'#profile-watchlist-refresh');
-      await page.locator('#profile-watchlist-list .cw-profile-empty').waitFor();
+      await page.locator('#profile-watchlist-list .cw-page-empty').waitFor();
       await snapshot(page,`${theme}-${width}-empty`);
     });
   }
@@ -970,7 +970,7 @@ for (const width of [390,1440,2250]) test(`Hub Overview keeps provider actions a
   state.empty=true;
   await page.evaluate(()=>{localStorage.clear();sessionStorage.clear();});
   await page.reload();
-  await page.locator('#profile-watchlist .cw-profile-empty').waitFor();
+  await page.locator('#profile-watchlist .cw-page-empty').waitFor();
   assert.equal(await page.locator('#profile-progress .cw-cw-card').count(),0);
   assert.equal(await page.locator('#profile-activity .cw-profile-activity-row').count(),0);
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);

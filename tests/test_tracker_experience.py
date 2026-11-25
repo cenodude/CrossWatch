@@ -207,6 +207,61 @@ def test_show_progress_finds_the_next_episode(client):
     assert [s["season"] for s in seasons] == [0, 1, 2]
 
 
+def test_imdb_only_show_gets_art_and_progress(client, base, monkeypatch):
+    from providers.scrobble import _show_tmdb
+
+    bodies = {"find/tt35309276": {"tv_results": [{"id": 95396}]}, "tv/95396/external_ids": {"id": 95396, "imdb_id": "tt35309276"},
+              "find/tt2": {"tv_results": [{"id": 7}]}}
+
+    def get(url, params=None, **_):
+        body = bodies.get(url.split("/3/", 1)[1], {})
+        return SimpleNamespace(status_code=200, headers={}, json=lambda: body, raise_for_status=lambda: None)
+
+    _show_tmdb._CACHE.clear()
+    monkeypatch.setattr(_show_tmdb.requests, "get", get)
+    monkeypatch.setattr(trackerAPI, "_cfg", lambda: client.cfg)
+    ids = {"imdb": "tt35309276"}
+    TrackerStore(base).write_state("history", {
+        **{f"imdb:tt35309276#s01e0{n}": {"type": "episode", "title": f"S01E0{n}", "series_title": "Severance (US)", "season": 1, "episode": n,
+                                         "ids": dict(ids), "show_ids": dict(ids), "watched_at": _at(500 - n)}
+           for n in (1, 2, 3)},
+        "tmdb:95396#s01e05": _ep(1, 5, 600),
+        "imdb:tt2#s01e01": {"type": "episode", "title": "S01E01", "series_title": "Other", "season": 1, "episode": 1,
+                            "ids": {"imdb": "tt2"}, "show_ids": {"imdb": "tt2"}, "watched_at": _at(700)},
+    })
+    show = client.get("/api/tracker/history/titles").json()["items"][0]
+    assert (show["type"], show["plays"]) == ("show", 3)
+    assert show["art"] == {"kind": "tv", "tmdb": "95396"}
+    assert show["ids"] == ids
+    page = client.get("/api/tracker/title", params={"key": show["key"]}).json()
+    assert page["title"]["art"] == {"kind": "tv", "tmdb": "95396"}
+    assert page["title"]["ids"] == {"imdb": "tt35309276", "tmdb": "95396"}
+    assert page["show_key"] == "title:severance (us)"
+    assert [e["episode"] for e in page["seasons"][0]["episodes"]] == [1, 2, 3, 5]
+    assert len(page["plays"]) == 4
+    tmdb_page = client.get("/api/tracker/title", params={"show": "tmdb:95396"}).json()
+    assert [e["episode"] for e in tmdb_page["seasons"][0]["episodes"]] == [1, 2, 3, 5]
+    progress = client.get("/api/tracker/show-progress", params={"tmdb": "95396"}).json()
+    assert progress["watched"] == 4
+    assert progress["next"] == {"season": 1, "episode": 6}
+    shows = client.get("/api/tracker/shows").json()["shows"]
+    assert [(row["key"], row["episodes"], row["plays"]) for row in shows] == [("tmdb:95396", 4, 4), ("title:other", 1, 1)]
+    assert shows[0]["art"] == {"kind": "tv", "tmdb": "95396"}
+    assert shows[1]["art"] == {"kind": "tv", "tmdb": "7"}
+    assert all("show_ids" not in row for row in shows)
+    store = TrackerStore(base)
+    store.save_note("show:title:severance (us)", {"type": "show", "title": "Severance (US)", "status": "watching", "tags": ["Stremio"]})
+    assert client.get("/api/tracker/shows", params={"status": "watching"}).json()["shows"] == []
+    unset = client.get("/api/tracker/shows", params={"status": "none"}).json()["shows"]
+    assert [(row["key"], row["status"]) for row in unset if row["key"] == "tmdb:95396"] == [("tmdb:95396", None)]
+    store.save_note("show:tmdb:95396", {"type": "show", "title": "Severance", "status": "completed"})
+    assert [row["key"] for row in client.get("/api/tracker/shows", params={"status": "watching"}).json()["shows"]] == []
+    assert [row["key"] for row in client.get("/api/tracker/shows", params={"status": "completed"}).json()["shows"]] == ["tmdb:95396"]
+    store.save_note("show:tmdb:7", {"type": "show", "title": "Other", "status": "dropped"})
+    visible = client.get("/api/tracker/shows", params={"hide_dropped": True}).json()["shows"]
+    assert [row["key"] for row in visible] == ["tmdb:95396"]
+
+
 def test_show_progress_without_a_key_stays_quiet(client):
     client.cfg.pop("tmdb")
     assert client.get("/api/tracker/show-progress", params={"tmdb": "95396"}).json() == {"ok": True, "available": False}

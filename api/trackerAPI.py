@@ -7,9 +7,11 @@ from api.view_cache import background_view
 
 import math
 import re
+import threading
 import time
 import uuid
 from collections.abc import Mapping
+from concurrent.futures import Future, ThreadPoolExecutor, wait
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
@@ -47,6 +49,12 @@ _DATE_FIELDS = ("watched_at", "rated_at", "progress_at", "collected_at", "listed
 _EDIT_DATE = {"history": "watched_at", "ratings": "rated_at", "progress": "progress_at", "collection": "collected_at"}
 _EDIT_IDS = ("imdb", "tmdb", "tvdb", "trakt", "simkl", "mal", "anilist", "kitsu", "anidb")
 _ANIME_ALIASES: dict[str, Any] = {"at": float("-inf"), "context": ("", None)}
+_ALIAS_POOL = ThreadPoolExecutor(max_workers=6, thread_name_prefix="tracker-alias")
+_ALIAS_LOCK = threading.Lock()
+_ALIAS_INFLIGHT: dict[str, Future] = {}
+_ALIAS_FAILED: dict[str, float] = {}
+_ALIAS_RETRY_SECONDS = 120.0
+_ALIAS_MAPS: dict[str, dict[str, str]] = {}
 _IDENTITY = ("ids", "show_ids", "title", "year")
 _IMDB = re.compile(r"^tt\d{5,10}$")
 _NUMERIC = re.compile(r"^\d{1,12}$")
@@ -156,8 +164,6 @@ def _tmdb_provider() -> Any:
 
 
 def _fill_display_tmdb(rows: list[dict[str, Any]]) -> None:
-    from concurrent.futures import ThreadPoolExecutor
-
     from providers.scrobble._show_tmdb import fill_display_tmdb, tmdb_configured, tmdb_title
 
     cfg = _cfg()
@@ -851,6 +857,7 @@ def tracker_history_titles(
                 items.append(row)
     except TrackerUnreadable:
         return _unreadable()
+    _fill_display_tmdb(items)
     return {"ok": True, "provider_instance": inst, "total": total, "offset": offset, "items": items}
 
 
@@ -1473,7 +1480,7 @@ def tracker_title(
     show: str = Query("", max_length=600),
     note: str = Query("", max_length=600),
 ) -> Any:
-    _, inst, store = _store(provider_instance, request)
+    cfg, inst, store = _store(provider_instance, request)
     if note and not _NOTE_KEY.match(note):
         return _error("invalid_note_key", 400)
     if not show and not note and feature not in FEATURES:
@@ -1503,13 +1510,6 @@ def tracker_title(
         return _unreadable()
     if note and not related and saved is None:
         return _error("not_found", 404)
-    rows: dict[str, list[dict[str, Any]]] = {name: [] for name in FEATURES}
-    for name, item_key, data in related:
-        row = _row(item_key, data, name)
-        row["feature"] = name
-        row["status"] = saved.get("status") if saved else None
-        row["check"] = _check_row(checks.get(name, {}).get(item_key))
-        rows[name].append(row)
     head_source = anchor or next((data for _, _, data in related), {})
     head = _row(key or show or note, head_source, feature)
     if not head_source and saved is not None:
@@ -1522,6 +1522,29 @@ def tracker_title(
             head["ids"] = {**head.get("show_ids", {}), "tmdb": ident["tmdb"]}
         else:
             head["ids"] = head.get("show_ids") or head.get("ids") or {}
+    if not head.get("art"):
+        _fill_display_tmdb([head])
+    complete = len(related) < 5000
+    if is_show:
+        try:
+            extra, capped = _same_show_rows(cfg, store, ident, head, {(f, k) for f, k, _ in related})
+            complete = complete and not capped
+            if extra:
+                with store.session():
+                    for name in FEATURES:
+                        keys = [k for f, k, _ in extra if f == name]
+                        if keys:
+                            checks.setdefault(name, {}).update(store.checks_for(name, keys))
+                related = [*related, *extra]
+        except TrackerUnreadable:
+            return _unreadable()
+    rows: dict[str, list[dict[str, Any]]] = {name: [] for name in FEATURES}
+    for name, item_key, data in related:
+        row = _row(item_key, data, name)
+        row["feature"] = name
+        row["status"] = saved.get("status") if saved else None
+        row["check"] = _check_row(checks.get(name, {}).get(item_key))
+        rows[name].append(row)
     plays = sorted(rows["history"], key=_when, reverse=True)
     seasons: dict[int, dict[int, str]] = {}
     for row in plays:
@@ -1535,7 +1558,7 @@ def tracker_title(
         "show_key": (f"tmdb:{ident['tmdb']}" if ident.get("tmdb") else f"title:{str(ident.get('title') or '').lower()}") if is_show else None,
         "title": head,
         "plays": plays,
-        "history_complete": len(related) < 5000,
+        "history_complete": complete,
         "ratings": rows["ratings"],
         "watchlist": rows["watchlist"],
         "collection": rows["collection"],
@@ -1562,11 +1585,13 @@ def tracker_shows(
 ) -> Any:
     if status and status not in (*NOTE_STATUSES, "none"):
         return _error("invalid_status", 400)
-    _, inst, store = _store(provider_instance, request)
+    cfg, inst, store = _store(provider_instance, request)
     try:
+        aliases = _title_aliases(cfg, store)
         with store.session():
             hidden = {k[5:] for k in store.status_keys("dropped") if k.startswith("show:")} if hide_dropped and not status else set()
-            total, shows = store.show_summaries(text=q, offset=offset, limit=limit, exclude=hidden, status=status, tag=tag)
+            hidden |= {alias for alias, target in aliases.items() if target in hidden}
+            total, shows = store.show_summaries(text=q, offset=offset, limit=limit, exclude=hidden, status=status, tag=tag, aliases=aliases)
             notes = store.notes_for(f"show:{show['key']}" for show in shows)
     except TrackerUnreadable:
         return _unreadable()
@@ -1577,7 +1602,70 @@ def tracker_shows(
         saved = notes.get(f"show:{show['key']}")
         show["status"] = saved.get("status") if saved else None
         show["tags"] = saved.get("tags") if saved else []
+    _fill_show_art(shows)
     return {"ok": True, "provider_instance": inst, "total": total, "offset": offset, "shows": shows}
+
+
+def _alias_recently_failed(imdb: Any) -> bool:
+    with _ALIAS_LOCK:
+        return time.time() - _ALIAS_FAILED.get(str(imdb or ""), 0.0) < _ALIAS_RETRY_SECONDS
+
+
+def _alias_lookup(cfg: Mapping[str, Any], imdb: str) -> Future | None:
+    from providers.scrobble._show_tmdb import show_tmdb_id
+
+    def lookup() -> int | None:
+        try:
+            return show_tmdb_id(cfg, {"imdb": imdb}, {}, strict=True)
+        except Exception:
+            with _ALIAS_LOCK:
+                _ALIAS_FAILED[imdb] = time.time()
+                if len(_ALIAS_FAILED) > 4096:
+                    _ALIAS_FAILED.clear()
+            return None
+
+    if _alias_recently_failed(imdb):
+        return None
+    with _ALIAS_LOCK:
+        running = _ALIAS_INFLIGHT.get(imdb)
+        if running is not None and not running.done():
+            return running
+        future = _ALIAS_POOL.submit(lookup)
+        _ALIAS_INFLIGHT[imdb] = future
+        if len(_ALIAS_INFLIGHT) > 4096:
+            for done in [key for key, value in _ALIAS_INFLIGHT.items() if value.done()]:
+                _ALIAS_INFLIGHT.pop(done, None)
+        return future
+
+
+def _title_aliases(cfg: Mapping[str, Any], store: TrackerStore, budget: float = 3.0) -> dict[str, str]:
+    from providers.scrobble._show_tmdb import tmdb_configured
+
+    if not tmdb_configured(cfg) or not store.has_title_shows():
+        return {}
+    single = [(key, imdb) for key, imdbs in store.title_show_imdbs().items() if len(imdbs) == 1 and (imdb := next(iter(imdbs)))]
+    futures = [(key, future) for key, imdb in single if (future := _alias_lookup(cfg, imdb)) is not None]
+    wait([future for _, future in futures], timeout=budget)
+    out = {}
+    for key, future in futures:
+        if future.done() and future.result():
+            out[key] = f"tmdb:{future.result()}"
+    slot = str(store.db_path)
+    with _ALIAS_LOCK:
+        known = {**_ALIAS_MAPS.get(slot, {}), **out}
+        if all(future.done() for _, future in futures):
+            _ALIAS_MAPS[slot] = known
+        return known
+
+
+def _fill_show_art(shows: list[dict[str, Any]]) -> None:
+    missing = [show for show in shows if show["art"] is None and not _alias_recently_failed(_map(show.get("show_ids")).get("imdb"))]
+    rows = [{"type": "show", "title": show.get("title"), "ids": dict(show.get("show_ids") or {}), "show_ids": {}, "art": None} for show in missing]
+    for show in shows:
+        show.pop("show_ids", None)
+    _fill_display_tmdb(rows)
+    for show, row in zip(missing, rows):
+        show["art"] = row["art"]
 
 
 def _user_rating(store: TrackerStore, item: Mapping[str, Any], key: str) -> Any:
@@ -1697,7 +1785,7 @@ def tracker_overview_shows(request: Request, provider_instance: str | None = Que
         return _error("invalid_date", 400)
     if not _tmdb_key(cfg):
         return {"ok": True, "provider_instance": inst, "continue": [], "airing": [], "done": True, "total": 0, "unavailable": 0, "metadata_available": False}
-    return {**overview_payload(store, _tmdb_provider(), today), "provider_instance": inst}
+    return {**overview_payload(store, _tmdb_provider(), today, cfg), "provider_instance": inst}
 
 
 @router.get("/notes", dependencies=_READY)
@@ -1852,6 +1940,33 @@ def _show_detail(cfg: Mapping[str, Any], tmdb: str) -> Mapping[str, Any] | None:
     return found.data if isinstance(found.data, Mapping) else None
 
 
+def _imdb_only_show_rows(cfg: Mapping[str, Any], store: TrackerStore, tmdb: str) -> list[tuple[str, str, Any]]:
+    from providers.scrobble._show_tmdb import tmdb_imdb
+
+    if not store.has_title_shows():
+        return []
+    imdb = tmdb_imdb(cfg, "show", tmdb)
+    if not imdb:
+        return []
+    return [(feature, key, data) for feature, key, data in store.title_show_rows(imdb) if not _text(_map(data.get("show_ids")).get("tmdb"))]
+
+
+def _same_show_rows(
+    cfg: Mapping[str, Any], store: TrackerStore, ident: Mapping[str, Any], head: dict[str, Any], seen: set[tuple[str, str]],
+) -> tuple[list[tuple[str, str, Any]], bool]:
+    if ident.get("tmdb"):
+        found = _imdb_only_show_rows(cfg, store, str(ident["tmdb"]))
+    else:
+        tmdb = _text(_map(head.get("art")).get("tmdb"))
+        title_key = f"title:{str(ident.get('title') or '').lower()}"
+        imdbs = store.title_show_imdbs([title_key]).get(title_key) or set()
+        if not tmdb or len(imdbs) != 1 or "" in imdbs:
+            return [], False
+        head["ids"] = {**head.get("ids", {}), "tmdb": tmdb}
+        found = store.related(show=True, tmdb=tmdb)
+    return [(name, key, data) for name, key, data in found if (name, key) not in seen], not ident.get("tmdb") and len(found) >= 5000
+
+
 def _season_counts(detail: Mapping[str, Any], *, specials: bool = False) -> list[tuple[int, int, str]]:
     out = []
     for row in detail.get("seasons") or []:
@@ -1871,7 +1986,7 @@ def tracker_show_progress(request: Request, provider_instance: str | None = Quer
     if detail is None:
         return {"ok": True, "available": False}
     try:
-        related = store.related(show=True, tmdb=tmdb.strip())
+        related = store.related(show=True, tmdb=tmdb.strip()) + _imdb_only_show_rows(cfg, store, tmdb.strip())
     except TrackerUnreadable:
         return _unreadable()
     counts = {season: count for season, count, _ in _season_counts(detail)}

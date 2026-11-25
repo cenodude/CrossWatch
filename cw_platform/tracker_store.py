@@ -1878,6 +1878,57 @@ class TrackerStore(TrackerAutomation):
             out.append((feature, key, value))
         return out
 
+    _TITLE_SHOWS = "scope='' AND feature='history' AND kind='episode' AND show_key >= 'title:' AND show_key < 'title;'"
+
+    def has_title_shows(self) -> bool:
+        with self._db() as conn:
+            if conn is None:
+                return False
+            try:
+                return conn.execute(f"SELECT 1 FROM items WHERE {self._TITLE_SHOWS} LIMIT 1").fetchone() is not None
+            except sqlite3.Error as exc:
+                raise TrackerUnreadable("history", [DB_NAME]) from exc
+
+    def title_show_rows(self, imdb: str) -> list[tuple[str, str, Any]]:
+        with self._db() as conn:
+            if conn is None:
+                return []
+            try:
+                rows = conn.execute(
+                    f"SELECT feature, item_key, data FROM items WHERE {self._TITLE_SHOWS} AND json_extract(data, '$.show_ids.imdb')=?", (imdb,),
+                ).fetchall()
+            except sqlite3.Error as exc:
+                raise TrackerUnreadable("history", [DB_NAME]) from exc
+        out = []
+        for feature, key, data in rows:
+            value = _safe_loads(data)
+            if isinstance(value, Mapping):
+                out.append((str(feature), str(key), value))
+        return out
+
+    def title_show_imdbs(self, show_keys: Iterable[str] | None = None) -> dict[str, set[str]]:
+        found: dict[str, set[str]] = {}
+        with self._db() as conn:
+            if conn is None:
+                return found
+            try:
+                if show_keys is None:
+                    for key, imdb in conn.execute(f"SELECT DISTINCT show_key, json_extract(data, '$.show_ids.imdb') FROM items WHERE {self._TITLE_SHOWS}"):
+                        found.setdefault(key, set()).add(str(imdb or ""))
+                    return found
+                keys = [key for key in dict.fromkeys(show_keys) if key.startswith("title:")]
+                for offset in range(0, len(keys), 200):
+                    batch = keys[offset:offset + 200]
+                    marks = ",".join("?" for _ in batch)
+                    rows = conn.execute(
+                        f"SELECT DISTINCT show_key, json_extract(data, '$.show_ids.imdb') FROM items WHERE {self._TITLE_SHOWS} AND show_key IN ({marks})", batch,
+                    )
+                    for key, imdb in rows:
+                        found.setdefault(key, set()).add(str(imdb or ""))
+            except sqlite3.Error as exc:
+                raise TrackerUnreadable("history", [DB_NAME]) from exc
+        return found
+
     def watched_episodes(self, show_keys: Iterable[str]) -> dict[str, set[tuple[int, int]]]:
         keys = list(dict.fromkeys(show_keys))
         found: dict[str, set[tuple[int, int]]] = {}
@@ -1904,8 +1955,12 @@ class TrackerStore(TrackerAutomation):
                 return set()
             return {str(k) for (k,) in conn.execute("SELECT title_key FROM notes WHERE status=?", (status,)).fetchall()}
 
-    def show_summaries(self, *, text: str = "", offset: int = 0, limit: int = 50, exclude: Iterable[str] = (), status: str = "", tag: str = "") -> tuple[int, list[dict[str, Any]]]:
+    def show_summaries(
+        self, *, text: str = "", offset: int = 0, limit: int = 50, exclude: Iterable[str] = (), status: str = "", tag: str = "",
+        aliases: Mapping[str, str] | None = None,
+    ) -> tuple[int, list[dict[str, Any]]]:
         skip = {str(k) for k in exclude}
+        merge = tuple(sorted((str(k), str(v)) for k, v in (aliases or {}).items() if k != v))
         needle = text.strip().lower()
         clause = "scope='' AND feature='history' AND show_key IS NOT NULL AND kind='episode'"
         search = []
@@ -1942,10 +1997,17 @@ class TrackerStore(TrackerAutomation):
                         row[1] += 1
                         if when > row[2]:
                             row[2:5] = [when, season, episode]
+                    for alias, target in merge:
+                        if alias in shows and target in shows:
+                            source, kept = shows.pop(alias), shows[target]
+                            kept[0] |= source[0]
+                            kept[1] += source[1]
+                            if source[2] > kept[2]:
+                                kept[2:5] = source[2:5]
                     ordered = sorted(shows.items(), key=lambda kv: (kv[1][2], kv[0]), reverse=True)
                     return tuple((k, len(v[0]), v[1], v[2], v[3], v[4]) for k, v in ordered)
 
-                summary = self._cached(conn, "shows", (needle,), compute)
+                summary = self._cached(conn, "shows", (needle, merge), compute)
                 note_where, note_args = self._note_filters(status=status, tag=tag, key="'show:' || show_key")
                 if note_where:
                     matched = {str(key) for (key,) in conn.execute(
@@ -1962,10 +2024,12 @@ class TrackerStore(TrackerAutomation):
                     ).fetchone()
                     data = _safe_loads(head[0]) if head else None
                     data = data if isinstance(data, Mapping) else {}
+                    show_ids = data.get("show_ids")
                     out.append({
                         "key": str(show_key), "title": data.get("series_title"), "year": data.get("series_year"),
                         "episodes": int(episodes), "plays": int(plays), "last_watched": last or None,
                         "last_season": season, "last_episode": episode,
+                        "show_ids": dict(show_ids) if isinstance(show_ids, Mapping) else {},
                     })
                 return len(summary), out
             except sqlite3.Error as exc:
