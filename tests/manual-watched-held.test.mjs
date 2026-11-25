@@ -306,7 +306,7 @@ test("Quick add shows the watch date each picked episode gets from a date range"
   typeDate(root, "range-end", "2024-03-05");
   for (const key of ["1:6", "1:1", "1:3"]) tap(root, "data-ep", key);
   const shown = [...root.innerHTML.matchAll(/data-ep="(1:\d)"[\s\S]*?cw-mw-ep-date([^"]*)"[^>]*>([\s\S]*?)<\/span>\s*<\/button>/g)]
-    .map(([, key, planned, html]) => [key, planned.trim(), html.replace(/<[^>]+>[^<]*<\/span>/, "").trim()]);
+    .map(([, key, planned, html]) => [key, planned.trim(), html.slice(html.lastIndexOf(">") + 1).trim()]);
   assert.deepEqual(shown, [
     ["1:1", "is-planned", "Watched 2024-03-01"],
     ["1:2", "", "2002-06-02"],
