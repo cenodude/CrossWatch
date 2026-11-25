@@ -791,7 +791,7 @@ def _shelf_filter(items: list[dict[str, Any]], mode: str, watched: Any = None) -
                 continue
             ids = item.get("ids") if isinstance(item.get("ids"), dict) else {}
             media = "movie" if _collection_media_type(item) == "movie" else "show"
-            if not watched(media, str((ids or {}).get("tmdb") or "")):
+            if not watched(media, str((ids or {}).get("tmdb") or ""), str((ids or {}).get("imdb") or "")):
                 out.append(item)
         return out
     return items
@@ -994,7 +994,8 @@ def api_profile_collection(
     if str(shelf or "").strip().lower() == "unwatched":
         try:
             history_index, _version = _profile_history_index(cfg, profile_id, "synced")
-            watched = lambda media, tmdb: bool(tmdb) and bool(profile_history.rows_for_tmdb(history_index, media, tmdb))
+            _resolve_imdb_rows(cfg, history_index)
+            watched = lambda media, tmdb, imdb="": bool(tmdb or imdb) and bool(profile_history.rows_for_tmdb(history_index, media, tmdb, imdb))
         except Exception:
             watched = None
     payload = build_profile_collection_payload(
@@ -1294,6 +1295,17 @@ def _collection_presence(items: list[dict[str, Any]]) -> dict[str, Any] | None:
     return {"count": len(items), "present": present}
 
 
+def _title_imdb(cfg: dict[str, Any], media: str, tmdb: Any, indices: list[dict[str, Any]]) -> str:
+    from providers.scrobble._show_tmdb import tmdb_imdb
+
+    try:
+        if not any(profile_history.has_imdb_only_rows(index, media) for index in indices):
+            return ""
+        return tmdb_imdb(cfg, media, tmdb)
+    except Exception:
+        return ""
+
+
 def build_profile_title_payload(
     cfg: dict[str, Any],
     *,
@@ -1306,15 +1318,21 @@ def build_profile_title_payload(
     out: dict[str, Any] = {"ok": True, "type": media, "tmdb": str(tmdb)}
     history_indices: list[dict[str, Any]] = []
     sources = ["synced", "scrobble", "ratings"] + (["watchlist"] if watchlist else [])
+    indices: dict[str, dict[str, Any] | None] = {}
     for source in sources:
         try:
-            index, _version = _profile_history_index(cfg, profile_id, source)
-            out[source] = profile_history.title_presence(index, media, tmdb)
-            if source in {"synced", "scrobble"}:
+            indices[source] = _profile_history_index(cfg, profile_id, source)[0]
+        except Exception:
+            indices[source] = None
+    imdb = _title_imdb(cfg, media, tmdb, [index for index in indices.values() if index is not None])
+    for source, index in indices.items():
+        try:
+            out[source] = profile_history.title_presence(index, media, tmdb, imdb) if index is not None else None
+            if index is not None and source in {"synced", "scrobble"}:
                 history_indices.append(index)
         except Exception:
             out[source] = None
-    out["plays"] = profile_history.title_watch_history(history_indices, media, tmdb) if history_indices else None
+    out["plays"] = profile_history.title_watch_history(history_indices, media, tmdb, imdb) if history_indices else None
     try:
         lookup = _collection_lookup(cfg, profile_id, collection_cache_fingerprint())
         out["collection"] = _collection_presence(lookup.get(f"{media}:{str(tmdb).strip()}") or [])
@@ -1348,19 +1366,37 @@ def api_profile_title_plays(request: Request, tmdb: int = Query(..., ge=1), user
     cfg, _a, _uid, _raw, _user, token = ctx
     profile_id = str(effective_user_profile_id(cfg, token, user_profile) or "").strip()
     media_scope = MediaScope(cfg)
+    try:
+        index: dict[str, Any] | None = _profile_history_index(cfg, profile_id, "synced")[0]
+        endpoints = [{"provider": endpoint[0], "instance": endpoint[1]} for endpoint in index.get("endpoints") or []]
+    except Exception:
+        index, endpoints = None, []
     summary = profile_history.title_play_summary(
         lambda: media_scope.state(_history_state()),
         lambda: media_scope.tracker(_tracker_feature_items("history"), "history"),
         _history_user_filter(cfg, profile_id),
         tmdb,
+        _title_imdb(cfg, "movie", tmdb, [index] if index is not None else []),
     )
-    try:
-        index, _version = _profile_history_index(cfg, profile_id, "synced")
-        endpoints = [{"provider": endpoint[0], "instance": endpoint[1]} for endpoint in index.get("endpoints") or []]
-    except Exception:
-        endpoints = []
     return JSONResponse({"ok": True, "tmdb": str(tmdb), **summary, "endpoints": endpoints}, headers={"Cache-Control": "no-store"})
 
+
+
+def _resolve_imdb_rows(cfg: dict[str, Any], index: dict[str, Any], media: str | None = None) -> None:
+    from providers.scrobble._show_tmdb import movie_tmdb_id, show_tmdb_id, tmdb_configured
+
+    if not tmdb_configured(cfg):
+        return
+
+    def resolve(media: str, imdb: str) -> Any:
+        if media == "movie":
+            return movie_tmdb_id(cfg, {"imdb": imdb}, strict=True)
+        return show_tmdb_id(cfg, {"imdb": imdb}, {}, strict=True)
+
+    try:
+        profile_history.resolve_imdb_rows(index, resolve, media=media)
+    except Exception:
+        return
 
 
 def build_movie_watch_status(cfg: dict[str, Any], profile_id: str, ids: list[int]) -> dict[str, bool | None]:
@@ -1368,13 +1404,18 @@ def build_movie_watch_status(cfg: dict[str, Any], profile_id: str, ids: list[int
     for source in ("synced", "scrobble"):
         try:
             index, _version = _profile_history_index(cfg, profile_id, source)
+            _resolve_imdb_rows(cfg, index, "movie")
             indices.append(index)
         except Exception:
             indices.append(None)
+    from providers.scrobble._show_tmdb import tmdb_configured
+
+    resolving = tmdb_configured(cfg)
+    unknown = any(index is None or (resolving and profile_history.imdb_resolving(index, "movie")) for index in indices)
     out = {}
     for tmdb in ids:
         watched = any(index is not None and bool(profile_history.title_presence(index, "movie", tmdb)) for index in indices)
-        out[str(tmdb)] = True if watched else (None if any(index is None for index in indices) else False)
+        out[str(tmdb)] = True if watched else (None if unknown else False)
     return out
 
 

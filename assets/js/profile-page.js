@@ -562,7 +562,8 @@
     clearTimeout(el.__timer);
     el.__timer = setTimeout(() => el.classList.add("hidden"), 3200);
   };
-  const empty = (text) => `<div class="cw-profile-empty">${esc(text)}</div>`;
+  const empty = (text, symbolName = "inbox", compact = false) => `<div class="cw-page-empty${compact ? " is-compact" : ""}" role="status"><span class="cw-page-empty-art" aria-hidden="true"><span class="material-symbols-rounded">${esc(symbolName)}</span></span><span class="cw-page-empty-text">${esc(text)}</span></div>`;
+  const EMPTY_ICONS = { history: "history", synced: "history", scrobble: "sensors", ratings: "star", watchlist: "bookmark" };
   const SETTINGS_CONFIRM_MS = 4200;
   const armConfirm = (btn, label) => {
     if (!btn) return false;
@@ -803,7 +804,7 @@
     const cached = readCache(cacheKey);
     const render = payload => {
       const rows = (payload.items || []).slice().sort((a, b) => Number(b?.created_at || 0) - Number(a?.created_at || 0));
-      const html = (rows.length ? rows.slice(0, ACTIVITY_LIMIT).map(profileActivityRow).join("") : empty(T("profile.activity.none"))) + (schedulerActivityHtml(payload.scheduler) || "");
+      const html = (rows.length ? rows.slice(0, ACTIVITY_LIMIT).map(profileActivityRow).join("") : empty(T("profile.activity.none"), "history", true)) + (schedulerActivityHtml(payload.scheduler) || "");
       if (host.innerHTML !== html) host.innerHTML = html;
     };
     if (cached) render(cached);
@@ -844,7 +845,7 @@
     window.addEventListener("cw:overview-profile-changed", () => {
       loadProfileActivity().catch(() => {
         const host = $("#profile-activity");
-        if (host) host.innerHTML = empty(T("profile.activity.loadFailed"));
+        if (host) host.innerHTML = empty(T("profile.activity.loadFailed"), "error", true);
       });
     });
   }
@@ -1111,7 +1112,7 @@
       const badge = row.current ? `<em class="cw-set-badge">${TH("profile.devices.thisDevice")}</em>` : "";
       const action = row.current ? "" : `<button class="cw-set-btn cw-set-btn--danger cw-danger-confirm" type="button" data-session-kill="${esc(row.id)}"><span class="material-symbols-rounded" aria-hidden="true">logout</span><span>${TH("profile.devices.signOut")}</span></button>`;
       return `<div class="cw-set-session${row.current ? " is-current" : ""}"><span class="cw-set-device material-symbols-rounded" aria-hidden="true">${esc(agent.icon)}</span><span class="cw-set-copy"><strong title="${esc(row.ua || "")}"><span>${esc(agent.name)}</span>${badge}</strong><small>${esc(meta)}</small></span>${action}</div>`;
-    }).join("") : empty(T("profile.devices.none"));
+    }).join("") : empty(T("profile.devices.none"), "devices", true);
   }
 
   function overlayItem(item) {
@@ -1516,7 +1517,7 @@
     }
   }
 
-  function renderOverviewCards(host, items, card, message) {
+  function renderOverviewCards(host, items, card, message, symbolName = "inbox") {
     const existing = new Map([...host.children].map(node => [node.dataset.overviewKey, node]));
     const seen = new Map();
     const keep = new Set();
@@ -1544,13 +1545,13 @@
     }
     for (const node of [...host.children]) if (!keep.has(node)) { posterItems.delete(node.dataset.profilePosterKey); node.remove(); }
     if (!items.length) {
-      const html = empty(message);
+      const html = empty(message, symbolName, true);
       if (host.innerHTML !== html) host.innerHTML = html;
     }
   }
 
   function renderProgressItems(progressItems) {
-    renderOverviewCards($("#profile-progress"), progressItems.slice(0, mobilePaging.matches ? 3 : 4), progressCard, T("profile.overview.noProgress"));
+    renderOverviewCards($("#profile-progress"), progressItems.slice(0, mobilePaging.matches ? 3 : 4), progressCard, T("profile.overview.noProgress"), "play_circle");
   }
 
   let airingRequest = 0;
@@ -1652,7 +1653,7 @@
       services: connectedServices(status),
     });
     if (payload.progress || payload.widgets) renderProgressItems(progressItems);
-    if (payload.wall) renderOverviewCards($("#profile-watchlist"), watchlistItems.slice(0, 4), watchlistCard, T("profile.overview.noWatchlist"));
+    if (payload.wall) renderOverviewCards($("#profile-watchlist"), watchlistItems.slice(0, 4), watchlistCard, T("profile.overview.noWatchlist"), "bookmark");
   }
 
   async function loadOverview({force = false, reuse = false} = {}) {
@@ -2500,7 +2501,7 @@
     }
     grid.classList.remove("is-grouped");
     if (!collectionState.items.length) {
-      grid.innerHTML = empty(!collectionState.search && COLLECTION_SHELF_EMPTY[collectionState.shelf] || T("profile.collection.noMatch"));
+      grid.innerHTML = empty(!collectionState.search && COLLECTION_SHELF_EMPTY[collectionState.shelf] || T("profile.collection.noMatch"), collectionState.search ? "search_off" : "video_library");
       syncCollectionSelection();
       return;
     }
@@ -2688,7 +2689,7 @@
     } catch (e) {
       if (e?.name === "AbortError") return;
       const grid = $("#profile-collection-grid");
-      if (grid && !snapshot.restored && snapshot.current()) grid.innerHTML = empty(T("profile.collection.loadFailed"));
+      if (grid && !snapshot.restored && snapshot.current()) grid.innerHTML = empty(T("profile.collection.loadFailed"), "error");
       renderCollectionPager({ total: collectionState.total, page: collectionState.page, page_size: collectionState.pageSize });
       toast(e.message || T("profile.collection.loadFailedToast"), true);
     } finally {
@@ -3876,7 +3877,7 @@
       const list = state.view === "list";
       host.dataset.view = list ? "list" : "grid";
       if (!state.items.length) {
-        host.innerHTML = empty(meta().empty);
+        host.innerHTML = empty(meta().empty, EMPTY_ICONS[state.source] || EMPTY_ICONS[cfg.key] || "inbox");
         syncSelection();
         return;
       }
@@ -4136,7 +4137,7 @@
       } catch (e) {
         if (e?.name === "AbortError") return;
         if (seq !== state.seq || !snapshot.current()) return;
-        if (host && !snapshot.restored) host.innerHTML = empty(`${meta().title} could not be loaded.`);
+        if (host && !snapshot.restored) host.innerHTML = empty(`${meta().title} could not be loaded.`, "error");
         renderPager({ total: state.total, page: state.page, page_size: state.pageSize });
         toast(e.message || `${meta().title} could not be loaded`, true);
       }
@@ -4678,7 +4679,7 @@
       const list = state.view === "list";
       host.dataset.view = list ? "list" : "grid";
       if (!state.items.length) {
-        host.innerHTML = empty(emptyMessage());
+        host.innerHTML = empty(emptyMessage(), "play_circle");
         playbackPaint = {signature, node:host.firstChild};
         syncSelection();
         return;
@@ -5032,7 +5033,7 @@
       if (data.ok === false) {
         state.errors = [{provider:"", provider_label:T("profile.playback.label"), message:data.message || data.error || T("profile.playback.requestFailedDot"), retryable:true}];
         state.failed = true;
-        if (host) host.innerHTML = empty(T("profile.playback.loadFailed"));
+        if (host) host.innerHTML = empty(T("profile.playback.loadFailed"), "error");
         renderErrors();
       } else {
         snapshot.update(data);
@@ -5290,7 +5291,7 @@
       const data = await request("/api/playback_progress/settings");
       if (!dialog.open) return;
       if (data.ok === false) {
-        list.innerHTML = empty(T("profile.playback.settingsLoadFailed"));
+        list.innerHTML = empty(T("profile.playback.settingsLoadFailed"), "error", true);
         return;
       }
       settingsProfiles = Array.isArray(data.profiles) ? data.profiles : [];

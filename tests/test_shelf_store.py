@@ -180,7 +180,7 @@ def test_collection_shelf_filters() -> None:
     assert titles("not_on_server") == ["Disc Only", "Tracker Only"]
     assert titles("not_on_shelf") == ["Server Only"]
     assert titles("not_on_shelf", shelf_filter="lent") == ["Server Only"]
-    assert titles("unwatched", watched=lambda media, tmdb: tmdb == "3") == ["Disc Only", "Ripped"]
+    assert titles("unwatched", watched=lambda media, tmdb, imdb="": tmdb == "3") == ["Disc Only", "Ripped"]
     ripped = next(item for item in profileAPI.build_profile_collection_payload(state, {}, shelf="shelf")["items"] if item["title"] == "Ripped")
     assert ripped["shelf"]["on_server"] is True
     assert "on_server" not in shelf_store.summaries(ADMIN)["movie:1"]

@@ -1802,6 +1802,9 @@ body.cw-profile-page .cw-profile-last{display:block;text-align:right;width:auto;
 .cw-hub-records-tiles[hidden],#profile-playback-sync[hidden],[data-timeline-refresh][hidden],[data-collection-refresh][hidden],[data-playback-retry][hidden],#profile-hub-issues[hidden]{display:none}
 #profile-hub-refresh.is-spinning .material-symbols-rounded{animation:cwRefreshSpin .9s linear infinite}
 body.cw-profile-page #profile-now{grid-column:1/-1;justify-self:end;width:min(420px,100%)}
+body.cw-profile-page .cw-profile-hero.is-playing .cw-hub-summary{display:none}
+body.cw-profile-page .cw-profile-hero.is-playing #profile-now{grid-column:auto;width:420px;max-width:40vw}
+@media(max-width:1100px){body.cw-profile-page .cw-profile-hero.is-playing #profile-now{width:min(420px,100%);max-width:100%}}
 @media(max-width:1100px){body.cw-profile-page .cw-profile-hero{grid-template-columns:minmax(0,1fr)}.cw-hub-summary{justify-self:stretch}.cw-hub-summary-metrics{flex:1}.cw-hub-summary .cw-hub-records-stat{flex:1;min-width:0}}
 @media(max-width:760px){.cw-hub-summary{display:none}body.cw-profile-page .cw-media-hero-topbar{flex-wrap:wrap}body.cw-profile-page .cw-profile-last{max-width:100%;flex-basis:100%;text-align:left}}
 .cw-hub-pull-refresh{position:fixed;z-index:1000;top:calc(var(--cw-mobile-header-height,56px) + 10px);left:50%;transform:translateX(-50%);width:40px;height:40px;display:grid;place-items:center;pointer-events:none}
@@ -1894,7 +1897,15 @@ body.cw-profile-page .cw-profile-tabs button{display:inline-flex;align-items:cen
 .cw-play-progress{flex-wrap:wrap}
 .cw-hub-records .cw-play-filters .cw-play-filterpanel{width:280px;max-width:calc(100vw - 56px);box-sizing:border-box}
 .cw-hub-records .cw-play-card .cw-hist-info{padding:12px 14px;gap:6px}
-.cw-profile-empty{padding:20px}
+.cw-page-empty{position:relative;isolation:isolate;grid-column:1/-1;display:grid;justify-items:center;align-content:center;gap:22px;min-height:280px;padding:56px 24px 48px;overflow:hidden;text-align:center}
+.cw-page-empty::before{content:"";position:absolute;inset:0;z-index:-1;pointer-events:none}
+.cw-page-empty-art{display:grid;place-items:center;width:76px;height:76px;margin-bottom:12px}
+.cw-page-empty .cw-page-empty-art>.material-symbols-rounded{font-size:36px;line-height:1}
+.cw-page-empty-text{max-width:48ch;line-height:1.5}
+.cw-page-empty.is-compact{grid-auto-flow:column;justify-content:center;gap:12px;min-height:0;padding:16px 18px;text-align:left}
+.cw-page-empty.is-compact .cw-page-empty-art{width:34px;height:34px;margin:0}
+.cw-page-empty.is-compact .cw-page-empty-art>.material-symbols-rounded{font-size:19px}
+@media (max-width:640px){.cw-page-empty{min-height:220px;padding:44px 18px 36px}}
 @media(max-width:1100px){
   .cw-hub-records .cw-play-row{grid-template-columns:88px minmax(0,1fr) minmax(180px,1fr);row-gap:6px}
   .cw-play-row .cw-hist-cell--art{grid-column:1;grid-row:1/4}
@@ -2414,7 +2425,7 @@ html.cw-ia-sheet-open,html.cw-ia-sheet-open body{overflow:hidden}
 #page-tracker .trk-progress i,#page-tracker .trk-meter i{display:block;height:100%}
 #page-tracker .trk-progress-text{font-size:12px;font-weight:500}
 #page-tracker .trk-meter{height:6px;margin:4px 0 2px;border-radius:999px;overflow:hidden}
-#page-tracker .cw-empty .trk-meter{width:min(320px,80%)}
+#page-tracker .cw-page-empty .trk-meter{width:min(320px,80%)}
 #page-tracker .trk-detail-empty{display:flex;flex-direction:column;align-items:center;gap:8px;padding:14px 8px 8px;text-align:center;font-size:13px;line-height:1.4}
 #page-tracker .trk-detail-empty .material-symbol{font-size:28px}
 #page-tracker .trk-detail-top{display:grid;grid-template-columns:96px minmax(0,1fr);gap:14px;align-items:start}
@@ -2559,7 +2570,7 @@ html.cw-ia-sheet-open,html.cw-ia-sheet-open body{overflow:hidden}
 #page-tracker .trk-change-tag{display:inline-flex;align-items:center;gap:3px;font-size:12px;font-weight:500}
 #page-tracker .trk-change-tag .material-symbols-rounded{font-size:15px}
 #page-tracker .trk-change .cw-btn{display:inline-flex;align-items:center;gap:6px;padding:0 12px;cursor:pointer}
-#page-tracker .trk-sheet .cw-empty{min-height:140px}
+#page-tracker .trk-sheet :is(.cw-empty,.cw-page-empty){min-height:140px}
 #page-tracker .trk-sheet .trk-detail .trk-detail-top{grid-template-columns:112px minmax(0,1fr)}
 #page-tracker .trk-detail-kind{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase}
 #page-tracker .trk-detail-kind .material-symbol{font-size:15px}
@@ -2779,7 +2790,6 @@ html.cw-ia-sheet-open,html.cw-ia-sheet-open body{overflow:hidden}
 @media(prefers-reduced-motion:reduce){.cw-airing-turn,.cw-airing-value{transition:none}}
 #page-tracker .trk-overview-progress{position:absolute;z-index:1;left:0;bottom:0;right:0;height:4px}
 #page-tracker .trk-overview-progress i{display:block;height:100%}
-#page-tracker .trk-overview-empty{padding:28px 20px;border-radius:14px;font-size:14px;line-height:1.6;margin:0}
 #page-tracker .trk-overview-more{min-height:44px;padding:0 16px;margin-top:18px;cursor:pointer}
 #page-tracker .trk-overview-notice{font-size:12px;line-height:1.5;margin:12px 0 0}
 #page-tracker .trk-overview-notice:empty{display:none}

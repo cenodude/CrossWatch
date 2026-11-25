@@ -62,8 +62,8 @@ def _airing_lookup(provider: Any, tmdb: str, cached: Any, result: dict[str, Any]
 
 def show_overview(show: dict[str, Any], watched: set[tuple[int, int]], provider: Any, today: date) -> dict[str, Any]:
     result: dict[str, Any] = {"continue": [], "airing": [], "unavailable": 0}
-    tmdb = show["key"].removeprefix("tmdb:")
-    if not show["key"].startswith("tmdb:") or not tmdb.isascii() or not tmdb.isdecimal() or int(tmdb) <= 0:
+    tmdb = str(show.get("tmdb") or (show["key"][5:] if show["key"].startswith("tmdb:") else ""))
+    if not tmdb.isascii() or not tmdb.isdecimal() or int(tmdb) <= 0:
         result["unavailable"] = 1
         return result
     try:

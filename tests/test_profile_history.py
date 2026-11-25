@@ -127,6 +127,64 @@ def test_synced_history_counts_rewatches_once_per_viewing() -> None:
     assert profile_history.title_presence(index, "movie", 20)["count"] == 1
 
 
+def test_title_presence_matches_imdb_only_rows_by_imdb() -> None:
+    def episode(number: int, show_ids: dict[str, Any]) -> dict[str, Any]:
+        return {"type": "episode", "series_title": "Devil in the Family", "season": 1, "episode": number,
+                "ids": dict(show_ids), "show_ids": show_ids, "watched_at": f"2025-03-12T22:1{number}:00Z"}
+
+    stremio = {f"imdb:tt35309276#s01e0{n}": episode(n, {"imdb": "tt35309276"}) for n in (1, 2, 3)}
+    movie = {"imdb:tt33764258": {"type": "movie", "title": "Odyssey", "ids": {"imdb": "tt33764258"}, "watched_at": "2026-01-01T00:00:00Z"}}
+    state = {"providers": {"STREMIO": _history({**stremio, **movie})}}
+    index = profile_history.build_history_index("synced", state=state, tracker_items={})
+
+    assert profile_history.title_presence(index, "show", 271563) is None
+    show = profile_history.title_presence(index, "show", 271563, "tt35309276")
+    assert show is not None
+    assert [(row["season"], row["episode"]) for row in show["episodes"]] == [(1, 1), (1, 2), (1, 3)]
+    assert show["present"] == [{"provider": "STREMIO", "instance": "default"}]
+    assert len(profile_history.title_watch_history([index], "show", 271563, "tt35309276")) == 3
+    assert (profile_history.title_presence(index, "movie", 1368337, "tt33764258") or {})["count"] == 1
+    assert profile_history.title_presence(index, "movie", 271563, "tt35309276") is None
+    assert profile_history.title_presence(index, "movie", 1368337) is None
+
+    asked: list[tuple[str, str]] = []
+    down = {"on": True}
+
+    def resolve(media: str, imdb: str) -> Any:
+        asked.append((media, imdb))
+        if media == "show" and down["on"]:
+            raise TimeoutError()
+        return {"tt33764258": "1368337", "tt35309276": "271563"}.get(imdb)
+
+    assert not profile_history.imdb_resolving(index, "movie")
+    profile_history.resolve_imdb_rows(index, resolve, media="movie", wait=10)
+    assert asked == [("movie", "tt33764258")]
+    assert not profile_history.imdb_resolving(index, "movie")
+    profile_history.resolve_imdb_rows(index, resolve, wait=10)
+    assert sorted(asked) == [("movie", "tt33764258"), ("show", "tt35309276")]
+    assert not profile_history.imdb_resolving(index, "show")
+    assert (profile_history.title_presence(index, "movie", 1368337) or {})["count"] == 1
+    assert (profile_history.title_presence(index, "movie", 1368337, "tt33764258") or {})["count"] == 1
+    assert len(profile_history.rows_for_tmdb(index, "movie", 1368337, "tt33764258")) == 1
+    assert profile_history.title_presence(index, "show", 271563) is None
+    profile_history.resolve_imdb_rows(index, resolve, wait=10)
+    assert len(asked) == 2
+    down["on"] = False
+    profile_history._tmdb_lookup(index)[profile_history._IMDB_STATE_KEY]["retry_at"] = 0.0
+    profile_history.resolve_imdb_rows(index, resolve, wait=10)
+    assert asked[2:] == [("show", "tt35309276")]
+    gate = __import__("threading").Event()
+    slow = lambda media, imdb: gate.wait(10) and None
+    fresh = profile_history.build_history_index("synced", state=state, tracker_items={})
+    profile_history.resolve_imdb_rows(fresh, slow, wait=0)
+    assert profile_history.imdb_resolving(fresh, "movie")
+    gate.set()
+    profile_history.resolve_imdb_rows(fresh, slow, wait=10)
+    assert not profile_history.imdb_resolving(fresh, "movie")
+    assert len((profile_history.title_presence(index, "show", 271563) or {})["episodes"]) == 3
+    assert len(profile_history.rows_for_tmdb(index, "show", 271563, "tt35309276")) == 3
+
+
 def test_synced_history_keeps_same_title_shows_apart() -> None:
     def episode(show_ids: dict[str, Any], watched_at: str) -> dict[str, Any]:
         return {"type": "episode", "series_title": "Doctor Who", "season": 1, "episode": 1,
