@@ -520,7 +520,7 @@
         "personalPlaceholder": "Optional, from your fanart.tv profile",
         "projectKey": "Project API key (not required)",
         "projectPlaceholder": "Optional, replaces the CrossWatch key",
-        "keyNote": "A personal key shows new fanart.tv uploads after 2 days instead of 7, and right away for fanart.tv VIP members. Only add a project key if you have your own fanart.tv project.",
+        "keyNote": "A personal key is optional and does not make new fanart.tv uploads appear sooner. CrossWatch checks fanart.tv for new artwork once a week. Only add a project key if you have your own fanart.tv project.",
         "connect": "Connect fanart.tv",
         "logos": "Logos",
         "logoSource": "Logo source",
