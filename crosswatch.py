@@ -419,10 +419,18 @@ def _compute_next_run_from_cfg(scfg: dict[str, Any] | None, now_ts: int | None =
         return int(target.timestamp())
     return now + 3600
 
+
+class _ArtSkippingGZipMiddleware(GZipMiddleware):
+    async def __call__(self, scope, receive, send) -> None:
+        if scope.get("type") == "http" and str(scope.get("path") or "").startswith("/art/"):
+            await self.app(scope, receive, send)
+            return
+        await super().__call__(scope, receive, send)
+
 # API
 _apply_auth_reset_env_once()
 app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
-app.add_middleware(GZipMiddleware, minimum_size=1000, compresslevel=5)
+app.add_middleware(_ArtSkippingGZipMiddleware, minimum_size=1000, compresslevel=5)
 
 from api.scrobbleAPI import WebhookAuthError
 

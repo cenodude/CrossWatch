@@ -302,7 +302,8 @@
       "dateRange": "Date range",
       "rangeFrom": "From",
       "rangeTo": "To",
-      "rangeNote": "Episodes are spread evenly over these days.",
+      "rangeNote": "Episodes are spread evenly over these days. Each picked episode shows its watch date.",
+      "watchedOnDate": "Watched {{date}}",
       "title": "Quick add",
       "close": "Close",
       "cancel": "Cancel",
@@ -1240,9 +1241,7 @@
       "import": "Import"
     },
     "add": {
-      "moreOptions": "More add options",
-      "menuLabel": "Add to Tracker or providers",
-      "quickAdd": "Quick add…"
+      "quickAdd": "Quick add"
     },
     "paging": {
       "rows": "Rows",

@@ -302,7 +302,8 @@
       "dateRange": "Periode",
       "rangeFrom": "Van",
       "rangeTo": "Tot",
-      "rangeNote": "Afleveringen worden gelijk over deze dagen verdeeld.",
+      "rangeNote": "Afleveringen worden gelijk over deze dagen verdeeld. Elke gekozen aflevering toont de kijkdatum.",
+      "watchedOnDate": "Bekeken {{date}}",
       "title": "Snel toevoegen",
       "close": "Sluiten",
       "cancel": "Annuleren",
@@ -1240,9 +1241,7 @@
       "import": "Importeren"
     },
     "add": {
-      "moreOptions": "Meer toevoegopties",
-      "menuLabel": "Toevoegen aan tracker of diensten",
-      "quickAdd": "Snel toevoegen…"
+      "quickAdd": "Snel toevoegen"
     },
     "paging": {
       "rows": "Rijen",

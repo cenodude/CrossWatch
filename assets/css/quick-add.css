@@ -106,6 +106,10 @@ html[data-cw-theme] .cw-mw .cw-mw-btn.primary { background:var(--mw-accent)!impo
 .cw-mw.cw-mw-compact .cw-mw-where, .cw-mw.cw-mw-compact .cw-mw-when { display:grid; gap:8px; min-width:0; }
 .cw-mw.cw-mw-compact .cw-mw-when > p { margin:0; }
 .cw-mw.cw-mw-compact .cw-mw-range-part { display:inline-flex; align-items:center; gap:8px; }
+.cw-mw.cw-mw-compact .cw-mw-range-part > .cw-mw-label { margin:0!important; }
+.cw-mw.cw-mw-compact .cw-mw-ep-date.is-planned { display:inline-flex; align-items:center; gap:4px; color:var(--mw-text); }
+.cw-mw.cw-mw-compact .cw-mw-ep-date.is-planned .material-symbols-rounded { font-size:15px; color:var(--mw-accent); }
+@media(max-width:720px) { .cw-mw.cw-mw-compact .cw-mw-ep-date.is-planned { grid-column:3; } }
 .cw-mw.cw-mw-compact .cw-mw-provider-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:8px; }
 .cw-mw.cw-mw-compact .cw-mw-provider-chip { justify-content:flex-start!important; min-width:0!important; width:100%; overflow:hidden; }
 .cw-mw.cw-mw-compact .cw-mw-provider-chip > span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }

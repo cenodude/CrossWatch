@@ -21,8 +21,7 @@ API_BASE = "https://webservice.fanart.tv/v3"
 PROJECT_KEY = "4262eb9218c17879b61f5256f76c555f"
 ASSET_HOST = "assets.fanart.tv"
 TTL_FOUND = 7 * 86400
-TTL_FOUND_PERSONAL = 86400
-TTL_MISSING = 86400
+TTL_MISSING = 7 * 86400
 TTL_TVDB = 30 * 86400
 CACHE_MAX_ENTRIES = 1024
 
@@ -333,10 +332,8 @@ class FanartProvider:
         ts, data = record
         if data.get("_missing"):
             ttl = TTL_MISSING
-        elif found_ttl is not None:
-            ttl = found_ttl
         else:
-            ttl = TTL_FOUND_PERSONAL if self._keys()[1] else TTL_FOUND
+            ttl = found_ttl if found_ttl is not None else TTL_FOUND
         return now - ts < ttl
 
     def check_key(self, api_key: str, client_key: str = "") -> tuple[bool, str]:

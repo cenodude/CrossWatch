@@ -8,7 +8,7 @@ import vm from "node:vm";
 import './i18n-vm-setup.mjs';
 
 const source = readFileSync(new URL("../assets/js/tracker.js", import.meta.url), "utf8");
-const selection = source.slice(source.indexOf("  function selectableItems("), source.indexOf("  function setAddMenu("));
+const selection = source.slice(source.indexOf("  function selectableItems("), source.indexOf("  function wire("));
 
 function statusSave(getJSON, view = "history") {
   const state = {instance:"CW-P01",view,offset:50,picked:new Set(["first","second"]),picking:false};
