@@ -25,6 +25,7 @@ from fastapi.responses import (
     JSONResponse,
     PlainTextResponse,
     RedirectResponse,
+    Response,
 )
 from pydantic import BaseModel
 
@@ -43,6 +44,11 @@ from cw_platform.metadata_cache import (
 )
 from cw_platform.orchestrator._state_store import StateStore
 from services import artwork_choices as _artwork
+
+try:
+    from providers.metadata._meta_FANART import TTL_MISSING as _FANART_TTL_MISSING
+except Exception:
+    _FANART_TTL_MISSING = 7 * 86400
 
 try:
     from _logging import log as cw_log
@@ -163,11 +169,13 @@ def _cache_base_path(cache_root: Path, stem: str) -> Path:
     return _ensure_under_root(cache_root, cache_root / safe_stem)
 
 
+_CACHE_FILE_SUFFIXES = (".jpg", ".jpeg", ".png", ".webp", ".json")
+
+
 def _cache_matches(cache_root: Path, stem: str) -> list[Path]:
     safe_stem = _safe_cache_part(stem, default="cache")
-    prefix = f"{safe_stem}."
     try:
-        return [p for p in cache_root.iterdir() if p.name.startswith(prefix)]
+        return [p for p in (cache_root / f"{safe_stem}{suffix}" for suffix in _CACHE_FILE_SUFFIXES) if p.is_file()]
     except Exception:
         return []
 
@@ -302,12 +310,23 @@ def _tmdb_fetch_episode_stills(
     return out
 
 
+_TMDB_SIZED_URL_RE = re.compile(r"^(https://image\.tmdb\.org/t/p/)(w\d{1,4}|original)(/[^?#]+)$")
+
+
 def _tmdb_size_url(img: dict[str, Any], size_tag: str) -> str | None:
     path = img.get("path") or img.get("file_path")
     if path:
         return f"https://image.tmdb.org/t/p/{size_tag}{path}"
     url = img.get("url") or ""
+    sized = _TMDB_SIZED_URL_RE.fullmatch(url)
+    if sized:
+        return f"{sized.group(1)}{size_tag}{sized.group(3)}"
     return url or None
+
+
+def _tmdb_url_size_mismatch(url: Any, size_tag: str) -> bool:
+    sized = _TMDB_SIZED_URL_RE.fullmatch(str(url or ""))
+    return bool(sized) and sized.group(2) != size_tag
 
 _TMBD_SIZE_RE = re.compile(r"^w\d{1,4}$", re.IGNORECASE)
 
@@ -828,10 +847,19 @@ def _cache_download(
     if not dest_path.exists():
         r = requests.get(url, stream=True, timeout=timeout)
         r.raise_for_status()
-        with open(dest_path, "wb") as f:
-            for chunk in r.iter_content(64 * 1024):
-                if chunk:
-                    f.write(chunk)
+        part = dest_path.with_name(f"{dest_path.name}.{os.getpid()}.{threading.get_ident()}.part")
+        try:
+            with open(part, "wb") as f:
+                for chunk in r.iter_content(64 * 1024):
+                    if chunk:
+                        f.write(chunk)
+            try:
+                os.replace(part, dest_path)
+            except OSError:
+                if not dest_path.exists():
+                    raise
+        finally:
+            part.unlink(missing_ok=True)
     ext = dest_path.suffix.lower()
     if ext in (".jpg", ".jpeg"):
         mime = "image/jpeg"
@@ -916,7 +944,7 @@ def get_art_file(
     if art_kind == "logo" and cached_info.get("missing") and time.time() - cached_info.get("ts", 0) < 86400:
         return str(_placeholder_poster()), "image/svg+xml"
     cached_art = None
-    if cached_info.get("url"):
+    if cached_info.get("url") and not _tmdb_url_size_mismatch(cached_info.get("url"), safe_size):
         for f in _cache_matches(cache_root, cache_stem):
             if f.suffix.lower() != ".json" and f.exists():
                 cached_art = f
@@ -1199,23 +1227,29 @@ def api_tmdb_art(
         if rev:
             chosen = _artwork_choice_file(t, tmdb_id, art_kind, size_tag, base)
             if chosen is not None:
-                cache = "no-store" if stale_ov else ("public, max-age=31536000, immutable" if ov == rev else "no-cache")
-                return FileResponse(chosen[0], media_type=chosen[1], headers={"Cache-Control": cache})
+                cache = "no-store" if stale_ov else (_ART_CACHE_KEEP if ov == rev else "no-cache")
+                return _art_conditional(request, FileResponse(chosen[0], media_type=chosen[1], headers={"Cache-Control": cache}))
         stale_av = (isinstance(av, str) and av != _fanart_art_version()) or stale_ov
         fanart_mode = _fanart_mode(art_kind)
         fanart_cache: str | None = None
         if fanart_mode == "fanart":
             fanart_response, fanart_cache = _fanart_tmdb_override(t, tmdb_id, art_kind, eff_locale, title=title, year=year)
             if fanart_response is not None:
-                return _no_store_if(fanart_response, stale_av)
+                return _art_conditional(request, _no_store_if(fanart_response, stale_av))
         if art_kind in {"still", "episode_still"}:
             if t != "tv" or season is None or episode is None:
                 return PlainTextResponse("Episode still requires tv, season and episode", status_code=400)
 
+            chosen_backdrop: tuple[str, str] | None = None
+
             def show_backdrop() -> tuple[str, str]:
-                nonlocal fanart_cache
-                mode = _fanart_mode("backdrop")
+                nonlocal fanart_cache, chosen_backdrop
                 fanart_cache = "no-cache"
+                if _artwork.revision(t, tmdb_id):
+                    chosen_backdrop = _artwork_choice_file(t, tmdb_id, "backdrop", size_tag, base)
+                    if chosen_backdrop is not None:
+                        return chosen_backdrop
+                mode = _fanart_mode("backdrop")
                 if mode == "fanart":
                     response, _ = _fanart_tmdb_override(t, tmdb_id, "backdrop", eff_locale)
                     if response is not None:
@@ -1236,6 +1270,8 @@ def api_tmdb_art(
                 base,
                 backdrop_fallback=show_backdrop,
             )
+            if chosen_backdrop is not None and local_path == chosen_backdrop[0]:
+                return _art_conditional(request, FileResponse(local_path, media_type=mime, headers={"Cache-Control": "no-store" if stale_av else "no-cache"}))
         else:
             local_path, mime = get_art_file(
                 api_key,
@@ -1252,18 +1288,18 @@ def api_tmdb_art(
         if fanart_mode == "tmdb_first" and _is_placeholder_art(safe_path):
             fanart_response, fanart_cache = _fanart_tmdb_override(t, tmdb_id, art_kind, eff_locale, title=title, year=year)
             if fanart_response is not None:
-                return _no_store_if(fanart_response, stale_av)
+                return _art_conditional(request, _no_store_if(fanart_response, stale_av))
         if art_kind == "logo" and _is_placeholder_art(safe_path):
             return PlainTextResponse("Logo not available", status_code=404, headers={"Cache-Control": "public, max-age=3600"})
         if art_kind == "backdrop" and _is_placeholder_art(safe_path):
             return PlainTextResponse("Backdrop not available", status_code=404, headers={"Cache-Control": "no-store"})
-        return FileResponse(
+        return _art_conditional(request, FileResponse(
             safe_path,
             media_type=mime,
             headers={
-                "Cache-Control": "no-store" if stale_av or _is_placeholder_art(safe_path) else (fanart_cache or "public, max-age=31536000, immutable")
+                "Cache-Control": "no-store" if stale_av or _is_placeholder_art(safe_path) else (fanart_cache or _ART_CACHE_KEEP)
             },
-        )
+        ))
     except Exception as e:
         LOG.exception("TMDb art fetch failed")
         return PlainTextResponse("Art not available", status_code=404)
@@ -1411,8 +1447,9 @@ _FANART_DISC_TYPES = {"bluray", "dvd", "3d"}
 _FANART_URL_RE = re.compile(r"^https://assets\.fanart\.tv/fanart/[A-Za-z0-9/_.-]+\.(png|jpg|jpeg)$", re.IGNORECASE)
 _FANART_MASKS = {"••••••••", "********", "**********"}
 _FANART_TMDB_KINDS = {"logo": ("logos", "logo", False), "backdrop": ("backgrounds", "background", True)}
-_FANART_CACHE_DAY = "public, max-age=86400"
+_ART_CACHE_KEEP = "public, max-age=31536000, immutable"
 _FANART_ART_MODES = {"fanart", "tmdb_first", "tmdb"}
+_FANART_CACHE_MISSING = f"public, max-age={_FANART_TTL_MISSING}"
 _FANART_CACHE_UNSURE = "public, max-age=3600"
 
 
@@ -1723,6 +1760,26 @@ def _no_store_if(response: FileResponse, stale: bool) -> FileResponse:
     return response
 
 
+def _art_conditional(request: Request, response: Response) -> Response:
+    if not isinstance(response, FileResponse) or response.headers.get("cache-control") == "no-store":
+        return response
+    try:
+        info = os.stat(response.path)
+    except (OSError, TypeError, ValueError):
+        return response
+    tag = hashlib.sha256(f"{os.fspath(response.path)}:{info.st_mtime_ns}:{info.st_size}".encode("utf-8", errors="ignore")).hexdigest()[:32]
+    etag = f'"{tag}"'
+    response.headers["ETag"] = etag
+    try:
+        sent = str(request.headers.get("if-none-match") or "")
+    except Exception:
+        sent = ""
+    tags = {part.strip().removeprefix("W/") for part in sent.split(",") if part.strip()}
+    if etag in tags or "*" in tags:
+        return Response(status_code=304, headers={"ETag": etag, "Cache-Control": response.headers.get("cache-control", "no-cache")})
+    return response
+
+
 def _fanart_mode(art_kind: str) -> str:
     spec = _FANART_TMDB_KINDS.get(art_kind)
     prov = _fanart_provider() if spec else None
@@ -1756,15 +1813,14 @@ def _fanart_tmdb_override(
         entity = "movie" if resolved == "movie" else "tv"
         ids, ids_certain = _fanart_ids(prov, entity, tmdb_id)
         if not ids:
-            return None, _FANART_CACHE_DAY if ids_certain else _FANART_CACHE_UNSURE
+            return None, _FANART_CACHE_MISSING if ids_certain else _FANART_CACHE_UNSURE
         data, certain = prov.lookup(entity, ids)
-        cache = _FANART_CACHE_DAY if ids_certain and certain else _FANART_CACHE_UNSURE
         row = prov.pick_from(entity, data, fanart_kind, lang=_lang_from_locale(locale) or "", textless=textless)
         found = _fanart_file(row)
         if found:
             path, mime = found
-            return FileResponse(path, media_type=mime, headers={"Cache-Control": cache}), None
-        return None, cache
+            return FileResponse(path, media_type=mime, headers={"Cache-Control": _ART_CACHE_KEEP}), None
+        return None, _FANART_CACHE_MISSING if ids_certain and certain else _FANART_CACHE_UNSURE
     except Exception:
         LOG.warning("fanart.tv art fetch failed, using TMDb")
         return None, _FANART_CACHE_UNSURE
@@ -1793,9 +1849,9 @@ def api_fanart_art(
         _, base, _ = _env()
         chosen = _artwork_choice_file(t, tmdb_id, "disc", "", base)
         if chosen is not None:
-            cache = "public, max-age=31536000, immutable" if ov and ov == rev else "no-cache"
+            cache = _ART_CACHE_KEEP if ov and ov == rev else "no-cache"
             return FileResponse(chosen[0], media_type=chosen[1], headers={"Cache-Control": cache})
-    missing = {"Cache-Control": "public, max-age=3600"}
+    missing = {"Cache-Control": _FANART_CACHE_MISSING}
     prov = _fanart_provider()
     if prov is None or not prov.configured():
         return PlainTextResponse("fanart.tv is off", status_code=404, headers={"Cache-Control": "no-store"})
@@ -1805,13 +1861,12 @@ def api_fanart_art(
             return PlainTextResponse("Art not available", status_code=404, headers=missing if ids_certain else {"Cache-Control": "no-store"})
         lang = _lang_from_locale(locale or _cfg_ui_locale()) or ""
         data, certain = prov.lookup(t, ids)
-        sure = ids_certain and certain
         row = prov.pick_from(t, data, art_kind, lang=lang, disc_type=disc_type, season=season, textless=art_kind == "background")
         found = _fanart_file(row)
         if not found:
-            return PlainTextResponse("Art not available", status_code=404, headers=missing if sure else {"Cache-Control": "no-store"})
+            return PlainTextResponse("Art not available", status_code=404, headers=missing if ids_certain and certain else {"Cache-Control": "no-store"})
         path, mime = found
-        return FileResponse(path, media_type=mime, headers={"Cache-Control": _FANART_CACHE_DAY if sure else _FANART_CACHE_UNSURE})
+        return FileResponse(path, media_type=mime, headers={"Cache-Control": _ART_CACHE_KEEP})
     except Exception:
         LOG.warning("fanart.tv art fetch failed")
         return PlainTextResponse("Art not available", status_code=404, headers={"Cache-Control": "no-store"})

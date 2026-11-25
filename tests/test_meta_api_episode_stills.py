@@ -120,3 +120,74 @@ def test_missing_episode_still_respects_show_background_provider_order(tmp_path,
         assert calls[0] == "backdrop"
     if mode == "tmdb" or (mode == "tmdb_first" and tmdb_hit):
         assert "fanart" not in calls
+
+
+def test_cache_matches_checks_only_known_cache_files(tmp_path) -> None:
+    stem = "tmdb_art_abc"
+    for name in (f"{stem}.json", f"{stem}.png", f"{stem}.tmp", f"{stem}x.jpg", "other.jpg"):
+        (tmp_path / name).write_bytes(b"x")
+    assert sorted(p.name for p in metaAPI._cache_matches(tmp_path, stem)) == [f"{stem}.json", f"{stem}.png"]
+
+
+def test_still_fallback_revalidates_with_not_modified(tmp_path, monkeypatch) -> None:
+    art_dir = tmp_path / "art"
+    art_dir.mkdir()
+    (art_dir / "backdrop.jpg").write_bytes(b"jpg")
+    monkeypatch.setattr(metaAPI, "load_config", lambda: {"tmdb": {"api_key": "key"}})
+    monkeypatch.setattr(metaAPI, "_env", lambda: (None, tmp_path, None))
+    monkeypatch.setattr(metaAPI._artwork, "revision", lambda *_args: "")
+    monkeypatch.setattr(metaAPI, "_fanart_mode", lambda kind: "tmdb")
+    monkeypatch.setattr(metaAPI, "_tmdb_fetch_episode_stills", lambda *_args: [])
+    monkeypatch.setattr(metaAPI, "get_art_file", lambda *_args, **kwargs: (str(art_dir / f"{kwargs['kind']}.jpg"), "image/jpeg"))
+
+    def call(headers):
+        request = SimpleNamespace(headers=headers, client=None, url=SimpleNamespace(path="/art/tmdb/tv/213375"))
+        return metaAPI.api_tmdb_art(request, "tv", 213375, size="w300", kind="still", season=1, episode=2, locale="en-US", title=None, year=None, av=None, ov=None)
+
+    first = call({})
+    assert first.status_code == 200 and first.headers["cache-control"] == "no-cache"
+    again = call({"if-none-match": first.headers["etag"]})
+    assert again.status_code == 304 and again.headers["cache-control"] == "no-cache"
+
+
+def test_interrupted_download_leaves_no_cache_file(tmp_path, monkeypatch) -> None:
+    class Broken:
+        def raise_for_status(self) -> None:
+            return None
+
+        def iter_content(self, size):
+            yield b"half"
+            raise ConnectionError("dropped")
+
+    class Whole(Broken):
+        def iter_content(self, size):
+            yield b"whole"
+
+    dest = tmp_path / "art" / "tmdb_art_x.jpg"
+    monkeypatch.setattr(metaAPI.requests, "get", lambda *a, **k: Broken())
+    with pytest.raises(ConnectionError):
+        metaAPI._cache_download("https://image.tmdb.org/t/p/w300/x.jpg", dest)
+    assert list(dest.parent.iterdir()) == []
+    monkeypatch.setattr(metaAPI.requests, "get", lambda *a, **k: Whole())
+    path, mime = metaAPI._cache_download("https://image.tmdb.org/t/p/w300/x.jpg", dest)
+    assert path.read_bytes() == b"whole" and mime == "image/jpeg"
+    assert [f.name for f in dest.parent.iterdir()] == [dest.name]
+
+
+def test_missing_still_uses_the_chosen_show_backdrop(tmp_path, monkeypatch) -> None:
+    pins = tmp_path / "pins"
+    pins.mkdir()
+    pin = pins / "tv_213375_backdrop.jpg"
+    pin.write_bytes(b"chosen")
+    calls = []
+    monkeypatch.setattr(metaAPI, "load_config", lambda: {"tmdb": {"api_key": "key"}})
+    monkeypatch.setattr(metaAPI, "_env", lambda: (None, tmp_path, None))
+    monkeypatch.setattr(metaAPI._artwork, "revision", lambda *_args: "r1")
+    monkeypatch.setattr(metaAPI, "_artwork_choice_file", lambda t, tmdb_id, kind, size, base: (calls.append(kind), (str(pin), "image/jpeg"))[1])
+    monkeypatch.setattr(metaAPI, "_fanart_mode", lambda kind: "fanart" if kind == "backdrop" else "tmdb")
+    monkeypatch.setattr(metaAPI, "_fanart_tmdb_override", lambda *a, **k: (_ for _ in ()).throw(AssertionError("fanart used")))
+    monkeypatch.setattr(metaAPI, "_tmdb_fetch_episode_stills", lambda *_args: [])
+    request = SimpleNamespace(headers={}, client=None, url=SimpleNamespace(path="/art/tmdb/tv/213375"))
+    response = metaAPI.api_tmdb_art(request, "tv", 213375, size="w780", kind="still", season=1, episode=2, locale="en-US", title=None, year=None, av=None, ov=None)
+    assert response.status_code == 200 and str(response.path) == str(pin)
+    assert response.headers["cache-control"] == "no-cache" and calls == ["backdrop"]

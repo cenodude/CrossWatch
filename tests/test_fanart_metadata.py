@@ -189,7 +189,7 @@ def test_art_route_downloads_picked_asset(tmp_path, monkeypatch) -> None:
     assert downloads == [f"{ASSET}/moviedisc/bd1.png"]
     assert picked[0] == ("movie", {"tmdb": "603"})
     assert picked[1][0] == "disc" and picked[1][1]["lang"] == "nl" and picked[1][1]["disc_type"] == "bluray"
-    assert res.headers["cache-control"] == "public, max-age=86400"
+    assert res.headers["cache-control"] == "public, max-age=31536000, immutable"
 
 
 def test_art_route_rejects_urls_outside_fanart_assets(tmp_path, monkeypatch) -> None:
@@ -271,11 +271,13 @@ def test_clear_memory_caches_includes_fanart(tmp_path, monkeypatch) -> None:
     assert not prov._cache
 
 
-def test_found_cache_is_shorter_with_personal_key(tmp_path) -> None:
+def test_found_cache_is_a_week_for_every_key(tmp_path) -> None:
     now = 1_000_000.0
-    record = (now - 2 * 86400, {"moviebackground": [{"url": "x"}]})
-    assert make_provider(tmp_path, {"fanart": ON})._fresh(record, now)
-    assert not make_provider(tmp_path, {"fanart": {**ON, "personal_api_key": "p"}})._fresh(record, now)
+    fresh = (now - 6 * 86400, {"moviebackground": [{"url": "x"}]})
+    old = (now - 8 * 86400, {"moviebackground": [{"url": "x"}]})
+    for cfg in ({"fanart": ON}, {"fanart": {**ON, "personal_api_key": "p"}}):
+        assert make_provider(tmp_path, cfg)._fresh(fresh, now)
+        assert not make_provider(tmp_path, cfg)._fresh(old, now)
 
 
 def _tmdb_route(monkeypatch, tmp_path, cfg: dict[str, Any], **kw: Any):
@@ -309,7 +311,7 @@ def test_tmdb_route_serves_fanart_background_when_enabled(tmp_path, monkeypatch)
     res = _tmdb_route(monkeypatch, tmp_path, cfg)
     assert downloads == [f"{ASSET}/moviebackground/none.jpg"]
     assert path_of(res).endswith(".jpg") and "tmdb.jpg" not in path_of(res)
-    assert res.headers["cache-control"] == "public, max-age=86400"
+    assert res.headers["cache-control"] == "public, max-age=31536000, immutable"
 
     _tmdb_route(monkeypatch, tmp_path, cfg, size="w185")
     assert downloads[-1] == f"{ASSET}/moviebackground/none.jpg"
@@ -348,7 +350,7 @@ def test_tmdb_first_uses_fanart_only_when_tmdb_has_nothing(tmp_path, monkeypatch
     args = {"typ": "movie", "tmdb_id": 603, "size": "w500", "kind": "logo", "season": None, "episode": None, "locale": "en-US", "title": None, "year": None}
     gap = metaAPI.api_tmdb_art(FAKE_REQUEST, **args)
     assert downloads == [f"{ASSET}/hdmovielogo/a.png"]
-    assert gap.headers["cache-control"] == "public, max-age=86400"
+    assert gap.headers["cache-control"] == "public, max-age=31536000, immutable"
 
 
 def test_tmdb_fallback_is_bounded_when_fanart_has_no_art(tmp_path, monkeypatch) -> None:
@@ -358,7 +360,7 @@ def test_tmdb_fallback_is_bounded_when_fanart_has_no_art(tmp_path, monkeypatch) 
     monkeypatch.setattr(metaAPI, "_fanart_provider", lambda: prov)
     res = _tmdb_route(monkeypatch, tmp_path, cfg)
     assert path_of(res).endswith("tmdb.jpg")
-    assert res.headers["cache-control"] == "public, max-age=86400"
+    assert res.headers["cache-control"] == "public, max-age=604800"
 
 
 def test_tmdb_route_uses_resolved_namespace_for_fanart(tmp_path, monkeypatch) -> None:
@@ -385,7 +387,7 @@ def test_tmdb_route_falls_back_with_short_cache_on_fanart_error(tmp_path, monkey
 
 def test_expired_missing_with_fetch_error_stays_uncertain(tmp_path, monkeypatch) -> None:
     prov = make_provider(tmp_path)
-    prov._disk_write("movie_8", {"_missing": True}, time.time() - 3 * 86400)
+    prov._disk_write("movie_8", {"_missing": True}, time.time() - 8 * 86400)
     monkeypatch.setattr(_meta_FANART.requests, "get", lambda url, **kw: FakeResponse(503))
     assert prov.lookup("movie", {"tmdb": 8}) == ({}, False)
     assert prov.raw("movie", {"tmdb": 8}) is None
@@ -496,7 +498,7 @@ def test_failed_tvdb_lookups_are_shared(tmp_path) -> None:
     assert results == [("", False)] * 3
 
 
-def test_uncertain_lookups_get_short_cache_even_with_art(tmp_path, monkeypatch) -> None:
+def test_found_art_is_kept_even_when_lookup_is_uncertain(tmp_path, monkeypatch) -> None:
     def download(url: str, dest: Path, timeout: float = 15.0):
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_bytes(b"jpg")
@@ -511,7 +513,7 @@ def test_uncertain_lookups_get_short_cache_even_with_art(tmp_path, monkeypatch) 
     monkeypatch.setattr(_meta_FANART.requests, "get", lambda url, **kw: FakeResponse(503))
     stale_art = _tmdb_route(monkeypatch, tmp_path, cfg)
     assert path_of(stale_art).endswith(".jpg") and "tmdb.jpg" not in path_of(stale_art)
-    assert stale_art.headers["cache-control"] == "public, max-age=3600"
+    assert stale_art.headers["cache-control"] == "public, max-age=31536000, immutable"
 
     show = {"showbackground": [{"url": "https://assets.fanart.tv/fanart/got.jpg", "lang": "", "likes": "1"}]}
     prov._disk_write("tv_121361", show, time.time())
@@ -524,7 +526,7 @@ def test_uncertain_lookups_get_short_cache_even_with_art(tmp_path, monkeypatch) 
     monkeypatch.setattr(metaAPI, "_resolve_entity", lambda entity, tmdb_id, **kw: entity)
     stale_map = _tmdb_route(monkeypatch, tmp_path, cfg, typ="tv", tmdb_id=1399)
     assert path_of(stale_map).endswith(".jpg") and "tmdb.jpg" not in path_of(stale_map)
-    assert stale_map.headers["cache-control"] == "public, max-age=3600"
+    assert stale_map.headers["cache-control"] == "public, max-age=31536000, immutable"
 
 
 def test_settings_endpoint_saves_switches(monkeypatch) -> None:
@@ -554,3 +556,29 @@ def test_save_keeps_masked_keys_and_disconnect_clears(monkeypatch) -> None:
     assert checked == [("new", "mine"), ("bad", ""), ("", "")]
     assert metaAPI.api_fanart_disconnect() == {"ok": True}
     assert store["fanart"] == {"enabled": False, "api_key": "", "personal_api_key": ""}
+
+
+def test_missing_fanart_waits_a_week(tmp_path) -> None:
+    prov = make_provider(tmp_path)
+    now = 1_000_000.0
+    assert prov._fresh((now - 6 * 86400, {"_missing": True}), now)
+    assert not prov._fresh((now - 8 * 86400, {"_missing": True}), now)
+
+
+def test_art_route_answers_not_modified_for_matching_etag(tmp_path, monkeypatch) -> None:
+    cfg: dict[str, Any] = {"tmdb": {"api_key": "t"}, "fanart": {"enabled": False}}
+    monkeypatch.setattr(metaAPI, "_fanart_provider", lambda: make_provider(tmp_path, cfg))
+    first = _tmdb_route(monkeypatch, tmp_path, cfg)
+    etag = first.headers["etag"]
+    assert first.status_code == 200 and etag.startswith('"')
+    monkeypatch.setattr(metaAPI, "load_config", lambda: cfg)
+    request: Any = SimpleNamespace(headers={"if-none-match": f"W/{etag}, \"other\""}, client=None, url=SimpleNamespace(path="/art/tmdb"))
+    args = {"typ": "movie", "tmdb_id": 603, "size": "w1280", "kind": "backdrop", "season": None, "episode": None, "locale": "en-US", "title": None, "year": None}
+    again = metaAPI.api_tmdb_art(request, **args)
+    assert again.status_code == 304 and again.body == b""
+    assert again.headers["etag"] == etag and "immutable" in again.headers["cache-control"]
+    (tmp_path / "art" / "tmdb.jpg").write_bytes(b"newer jpg")
+    changed = metaAPI.api_tmdb_art(request, **args)
+    assert changed.status_code == 200 and changed.headers["etag"] != etag
+    stale = _tmdb_route(monkeypatch, tmp_path, cfg, av="fl1b1")
+    assert stale.headers["cache-control"] == "no-store" and "etag" not in stale.headers

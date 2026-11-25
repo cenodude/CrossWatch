@@ -86,3 +86,46 @@ def test_provider_preserves_backdrop_quality_and_separates_posters(monkeypatch):
     result = provider._images("42", "show", "en-US", {"poster": True, "backdrop": True})
     assert result["poster"][0]["url"].endswith("/poster.jpg")
     assert result["backdrop"] == [{"url": "https://image.tmdb.org/t/p/w1280/scene.jpg", "w": 1920, "h": 1080, "lang": None, "vote_average": 8, "vote_count": 12}]
+
+
+def test_backdrop_downloads_the_requested_tmdb_size(artwork, tmp_path):
+    _, downloads = artwork
+    metaAPI.get_art_file("key", "tv", 42, "w300", tmp_path, kind="backdrop")
+    assert downloads == ["https://image.tmdb.org/t/p/w300/scene.jpg"]
+
+
+def test_oversized_cached_backdrop_is_replaced_once(artwork, tmp_path):
+    _, downloads = artwork
+    cache = tmp_path / "art"
+    cache.mkdir()
+    stem = metaAPI._safe_cache_digest_stem("tmdb_art", "tv", "42", "backdrop-v2", metaAPI._locale_tag("en-US"), "w300")
+    old = cache / f"{stem}.jpg"
+    old.write_bytes(b"large w1280 artwork")
+    metaAPI._write_json(old.with_suffix(".json"), {"url": "https://image.tmdb.org/t/p/w1280/scene.jpg"})
+    result = metaAPI.get_art_file("key", "tv", 42, "w300", tmp_path, kind="backdrop")
+    assert downloads == ["https://image.tmdb.org/t/p/w300/scene.jpg"]
+    assert Path(result[0]).read_bytes() == b"image"
+    assert metaAPI.get_art_file("key", "tv", 42, "w300", tmp_path, kind="backdrop") == result
+    assert len(downloads) == 1
+
+
+def test_tmdb_size_url_keeps_other_hosts():
+    assert metaAPI._tmdb_size_url({"url": "https://image.tmdb.org/t/p/original/a.png"}, "w500") == "https://image.tmdb.org/t/p/w500/a.png"
+    assert metaAPI._tmdb_size_url({"url": "https://assets.fanart.tv/fanart/a.jpg"}, "w300") == "https://assets.fanart.tv/fanart/a.jpg"
+
+
+def test_art_responses_skip_gzip():
+    import crosswatch
+    from fastapi import FastAPI
+    from fastapi.responses import Response
+    from fastapi.testclient import TestClient
+
+    app = FastAPI()
+    app.add_middleware(crosswatch._ArtSkippingGZipMiddleware, minimum_size=10)
+    app.get("/art/x")(lambda: Response(b"x" * 5000, media_type="image/jpeg"))
+    app.get("/api/x")(lambda: Response(b"x" * 5000, media_type="application/json"))
+    with TestClient(app) as client:
+        art = client.get("/art/x", headers={"Accept-Encoding": "gzip"})
+        api = client.get("/api/x", headers={"Accept-Encoding": "gzip"})
+    assert "content-encoding" not in art.headers and art.content == b"x" * 5000
+    assert api.headers["content-encoding"] == "gzip"

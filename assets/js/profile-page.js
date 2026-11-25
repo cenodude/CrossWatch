@@ -1298,7 +1298,6 @@
     const title = item ? titleOf(item) : T("profile.hero.tagline");
     const label = host.querySelector("strong");
     const logo = host.querySelector("img");
-    label.textContent = title;
     const key = host.dataset.profilePosterKey;
     if (item && key) posterItems.set(key, overlayItem(item));
     else host.dataset.profilePosterKey = item ? storePosterItem(item) : "";
@@ -1309,26 +1308,45 @@
     const id = item ? tmdbId(item) : "";
     const show = item && (mediaType(item) || isEpisodeItem(item));
     const url = id ? `/art/tmdb/${show ? "tv" : "movie"}/${encodeURIComponent(id)}?kind=logo&av=${document.documentElement.dataset.cwArt || "t"}&size=w500${window.CW?.ArtChoice?.param?.(show ? "tv" : "movie", id) || ""}` : "";
-    if (logo.dataset.url !== url) {
-      logo.dataset.url = url;
-      logo.hidden = true;
-      label.hidden = false;
-      logo.alt = title;
-      logo.onload = () => { if (logo.dataset.url === url) { logo.hidden = false; label.hidden = true; } };
-      logo.onerror = () => { logo.hidden = true; label.hidden = false; };
-      if (url) logo.src = url;
-      else logo.removeAttribute("src");
-    }
     const descriptor = item && id ? {...item, type:show ? "show" : "movie", tmdb:id, ids:{...item.ids, tmdb:id}} : null;
-    const apply = meta => {
-      if (request !== heroMediaRequest) return;
+    let shownMeta = descriptor ? window.CW?.Meta?.peek?.(descriptor) : null;
+    let swapped = host.dataset.heroTitle === title && logo.dataset.url === url;
+    const write = () => {
+      const meta = shownMeta;
       $("#profile-hero-summary").textContent = item ? [meta?.year || yearOf(item), show ? T("profile.hero.tvSeries") : T("common.media.movie"), episodeOf(item)].filter(Boolean).join(" · ") : "";
       const seasons = Number(meta?.detail?.number_of_seasons || 0);
       const runtime = Number(meta?.runtime_minutes || 0);
       const extra = item ? [show ? seasons ? `${seasons} ${seasons === 1 ? "season" : "seasons"}` : "" : runtime ? `${runtime} min` : "", show ? meta?.detail?.status : "", ...(Array.isArray(meta?.genres) ? meta.genres.slice(0, 2) : [])].filter(Boolean).join(" · ") : "";
       $("#profile-hero-extra").textContent = extra ? ` · ${extra}` : "";
     };
-    apply(descriptor ? window.CW?.Meta?.peek?.(descriptor) : null);
+    const apply = meta => {
+      if (request !== heroMediaRequest) return;
+      if (meta) shownMeta = meta;
+      if (swapped) write();
+    };
+    if (swapped) write();
+    else {
+      const swap = window.CW?.HeroSwap;
+      Promise.resolve(swap ? swap.preload(url) : "slow").then((result) => {
+        if (request !== heroMediaRequest) return;
+        const reveal = () => {
+          host.dataset.heroTitle = title;
+          label.textContent = title;
+          logo.dataset.url = url;
+          logo.alt = title;
+          logo.onload = () => { if (logo.dataset.url === url) { logo.hidden = false; label.hidden = true; } };
+          logo.onerror = () => { logo.hidden = true; label.hidden = false; };
+          logo.hidden = result !== "ready";
+          label.hidden = result === "ready";
+          if (url) logo.src = url;
+          else logo.removeAttribute("src");
+          swapped = true;
+          write();
+        };
+        if (swap) swap.fade(host, reveal);
+        else reveal();
+      });
+    }
     if (descriptor) void window.CW?.Meta?.get?.(descriptor, "detail", {seriesInfo:true})?.then(apply).catch(() => {});
   }
 
@@ -1340,7 +1358,15 @@
     const last = $(".cw-profile-last");
     const art = item ? heroBackdrop(item) : "";
     const artHost = $("#profile-hero-art");
-    artHost.style.backgroundImage = art ? `url("${art.replace(/"/g, "%22")}")` : "";
+    if (artHost.dataset.url !== art) {
+      artHost.dataset.url = art;
+      const paint = (result) => {
+        if (artHost.dataset.url !== art) return;
+        artHost.style.backgroundImage = art && result !== "failed" ? `url("${art.replace(/"/g, "%22")}")` : "";
+      };
+      if (art && window.CW?.HeroSwap) window.CW.HeroSwap.preload(art, 4000).then(paint);
+      else paint("none");
+    }
     hero?.classList.toggle("has-last", !!item);
     hero?.classList.toggle("no-last", !item);
     last?.classList.toggle("hidden", !item);
@@ -1562,7 +1588,7 @@
       const rows = byDay.get(iso) || [];
       const cards = rows.map(row => {
         const tmdb = row.show_ids?.tmdb || row.art?.tmdb;
-        const image = tmdb ? `/art/tmdb/tv/${encodeURIComponent(tmdb)}?fallback=2&av=${encodeURIComponent(document.documentElement.dataset.cwArt || "t")}&size=w780&kind=${row.has_still ? `still&season=${encodeURIComponent(row.season)}&episode=${encodeURIComponent(row.episode)}` : "backdrop"}` : "";
+        const image = tmdb ? `/art/tmdb/tv/${encodeURIComponent(tmdb)}?fallback=2&av=${encodeURIComponent(document.documentElement.dataset.cwArt || "t")}&size=w780&kind=${row.has_still ? `still&season=${encodeURIComponent(row.season)}&episode=${encodeURIComponent(row.episode)}` : `backdrop${window.CW?.ArtChoice?.param?.("tv", tmdb) || ""}`}` : "";
         const episode = `S${String(row.season).padStart(2, "0")} · E${String(row.episode).padStart(2, "0")}`;
         const label = offset === 0 ? T("common.time.today") : row.episode === 1 ? T("profile.airing.premiere") : offset === 1 ? T("common.time.tomorrow") : T("profile.airing.inDays", { count: offset });
         const key = storePosterItem({...row, type:"show", tmdb, ids:{tmdb}, episode_label:episode});

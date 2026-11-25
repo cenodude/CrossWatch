@@ -612,7 +612,7 @@
     const tools = state.root?.querySelector('.trk-secondary-actions');
     if (tools) {
       if (mobile()) navigation?.querySelector('.trk-others-menu')?.append(tools);
-      else state.root.querySelector('.trk-add-split')?.before(tools);
+      else state.root.querySelector('.trk-log-btn')?.before(tools);
     }
     const list = navigation?.querySelector(".trk-tabs");
     if (!list?.clientWidth) return;
@@ -696,7 +696,7 @@
       const day = `<time datetime="${iso}"><span>${esc(weekday)}</span><strong>${date.getDate()}</strong></time>`;
       const cards = releases.map(({row, index}) => {
         const title = cardTitle(row), art = row.art;
-        const url = art?.tmdb ? `/art/tmdb/tv/${encodeURIComponent(art.tmdb)}?fallback=2&av=${document.documentElement.dataset.cwArt || "t"}&size=w780&kind=${row.has_still ? `still&season=${encodeURIComponent(row.season)}&episode=${encodeURIComponent(row.episode)}` : "backdrop"}` : "";
+        const url = art?.tmdb ? `/art/tmdb/tv/${encodeURIComponent(art.tmdb)}?fallback=2&av=${document.documentElement.dataset.cwArt || "t"}&size=w780&kind=${row.has_still ? `still&season=${encodeURIComponent(row.season)}&episode=${encodeURIComponent(row.episode)}` : `backdrop${window.CW?.ArtChoice?.param?.("tv", art.tmdb) || ""}`}` : "";
         const label = offset === 0 ? T("common.time.today") : row.episode === 1 ? T("profile.airing.premiere") : offset === 1 ? T("common.time.tomorrow") : T("profile.airing.inDays", { count: offset });
         return window.CW.AiringCard.render(row, {image:url, dateHtml:day, label, title, openAttributes:`data-trk-overview-open="airing:${index}"`, ariaLabel:`${dayText(iso)}: ${title}, ${episodeLabel(row)}`});
       }).join("");
@@ -1089,14 +1089,7 @@
           ${state.view === "history" ? `<button type="button" class="cw-filter-chip trk-icon-btn${state.byDay ? " active" : ""}" data-trk-action="by-day" aria-pressed="${state.byDay}" aria-label="${TH("tracker.layout.groupByDay")}" title="${TH("tracker.layout.byDay")}">${symbol("calendar_view_day", "cw-type-icon")}</button>` : ""}
           <div class="cw-type-filter trk-layout" role="group" aria-label="${TH("tracker.layout.label")}">${[['list', 'view_list', T("tracker.layout.list")], ['grid', 'grid_view', T("tracker.layout.grid")], ...(state.view === "collection" ? [['covers', 'photo_library', T("tracker.layout.covers")], ['shelf', 'shelves', T("tracker.layout.shelf")]] : [])].map(([value, glyph, label]) => `<button type="button" class="cw-filter-chip trk-icon-btn${(state.layouts[layoutView()] || "list") === value ? " active" : ""}" data-trk-layout="${value}" aria-pressed="${(state.layouts[layoutView()] || "list") === value}" aria-label="${label} view" title="${label} view">${symbol(glyph, "cw-type-icon")}</button>`).join("")}</div>
           <div class="trk-secondary-actions">${[['views','bookmarks',T("tracker.secondary.savedViews")],['changes','manage_history',T("tracker.secondary.changes")],['import','download',T("tracker.secondary.import")]].map(([action,glyph,label]) => `<button type="button" class="cw-btn trk-icon-btn" data-trk-action="${action}" title="${label}" aria-label="${label}">${icon(glyph)}<span class="trk-tool-label">${label}</span></button>`).join('')}</div>
-          <div class="trk-add-split">
-            <button type="button" class="cw-btn primary trk-log-btn" data-trk-action="log" aria-label="${TH("tracker.actions.logWatch")}">${icon("add_circle")}<span>${TH("tracker.actions.logWatch")}</span></button>
-            <button type="button" class="cw-btn primary trk-add-toggle" data-trk-action="add-menu" aria-label="${TH("tracker.add.moreOptions")}" aria-haspopup="menu" aria-expanded="false" aria-controls="trk-add-menu" title="${TH("tracker.add.moreOptions")}">${icon("expand_more")}</button>
-            <div id="trk-add-menu" class="trk-add-menu" role="menu" aria-label="${TH("tracker.add.menuLabel")}" hidden>
-              <button type="button" class="trk-add-item" role="menuitem" tabindex="-1" data-trk-action="log">${icon("add_circle")}<span>${TH("tracker.actions.logWatch")}</span></button>
-              <button type="button" class="trk-add-item" role="menuitem" tabindex="-1" data-trk-action="quick-add">${icon("bolt")}<span>${TH("tracker.add.quickAdd")}</span></button>
-            </div>
-          </div>
+          <button type="button" class="cw-btn primary trk-log-btn" data-trk-action="quick-add" aria-label="${TH("tracker.add.quickAdd")}">${icon("add_circle")}<span>${TH("tracker.add.quickAdd")}</span></button>
         </div>
       </div>${window.CW?.MobileUI?.mobile() ? '' : renderExtraFilters()}`;
   }
@@ -1829,6 +1822,7 @@
     } catch {}
   }
 
+  let heroSelectionRequest = 0;
   function updateHeroSelection() {
     const {data, record} = heroContext();
     const head = data?.title || record;
@@ -1836,7 +1830,11 @@
     const selection = state.root?.querySelector('[data-trk-slot="selection"]');
     state.root?.querySelector(".cw-page-hero")?.classList.toggle("has-selection", !!title);
     if (!title) {
-      if (selection) delete selection.dataset.logoSelection;
+      heroSelectionRequest++;
+      if (selection) {
+        delete selection.dataset.logoSelection;
+        delete selection.dataset.heroHeading;
+      }
       setSlot("selection", T("tracker.hero.selection"));
       return;
     }
@@ -1853,17 +1851,37 @@
     const episode = record?.type === "episode" && record.title && record.title !== title && !/^S\d+\s*[·-]?\s*E\d+$/i.test(record.title) ? record.title : "";
     const art = head?.art;
     const logoUrl = art?.tmdb ? `/art/tmdb/${art.kind === "movie" ? "movie" : "tv"}/${encodeURIComponent(art.tmdb)}?kind=logo&av=${document.documentElement.dataset.cwArt || "t"}&size=w500${window.CW?.ArtChoice?.param?.(art.kind, art.tmdb) || ""}` : "";
-    const signature = JSON.stringify([title, summary, detail, episode, logoUrl, status]);
+    const details = `<span class="trk-hero-meta">${esc(summary)}${detail ? `<span class="trk-hero-meta-extra"> · ${esc(detail)}</span>` : ""}</span>${episode ? `<small title="${esc(episode)}">${esc(episode)}</small>` : ""}${status}`;
+    const heading = JSON.stringify([title, logoUrl]);
+    const signature = JSON.stringify([heading, details]);
     if (selection?.dataset.logoSelection === signature) return;
-    setSlot("selection", `<div class="trk-hero-selection"><div class="trk-hero-title-line"><span class="trk-hero-heading"><strong title="${esc(title)}">${esc(title)}</strong>${logoUrl ? `<img class="trk-hero-logo" alt="${esc(title)}" hidden>` : ""}</span><div class="trk-hero-details"><span class="trk-hero-meta">${esc(summary)}${detail ? `<span class="trk-hero-meta-extra"> · ${esc(detail)}</span>` : ""}</span>${episode ? `<small title="${esc(episode)}">${esc(episode)}</small>` : ""}${status}</div></div></div>`);
-    if (selection) selection.dataset.logoSelection = signature;
-    const logo = selection?.querySelector(".trk-hero-logo");
-    const label = selection?.querySelector(".trk-hero-heading strong");
-    if (logo) {
-      logo.onload = () => { logo.hidden = false; label.hidden = true; };
-      logo.onerror = () => { logo.hidden = true; label.hidden = false; };
-      logo.src = logoUrl;
+    const shownDetails = selection?.dataset.heroHeading === heading ? selection.querySelector(".trk-hero-details") : null;
+    if (shownDetails) {
+      heroSelectionRequest++;
+      shownDetails.innerHTML = details;
+      selection.dataset.logoSelection = signature;
+      return;
     }
+    const request = ++heroSelectionRequest;
+    const swap = window.CW?.HeroSwap;
+    Promise.resolve(swap ? swap.preload(logoUrl) : "slow").then((result) => {
+      if (request !== heroSelectionRequest) return;
+      const apply = () => {
+        const ready = result === "ready";
+        setSlot("selection", `<div class="trk-hero-selection"><div class="trk-hero-title-line"><span class="trk-hero-heading"><strong title="${esc(title)}"${ready ? " hidden" : ""}>${esc(title)}</strong>${logoUrl ? `<img class="trk-hero-logo" alt="${esc(title)}"${ready ? "" : " hidden"}>` : ""}</span><div class="trk-hero-details">${details}</div></div></div>`);
+        if (!selection) return;
+        selection.dataset.logoSelection = signature;
+        selection.dataset.heroHeading = heading;
+        const logo = selection.querySelector(".trk-hero-logo");
+        const label = selection.querySelector(".trk-hero-heading strong");
+        if (!logo) return;
+        logo.onload = () => { logo.hidden = false; label.hidden = true; };
+        logo.onerror = () => { logo.hidden = true; label.hidden = false; };
+        logo.src = logoUrl;
+      };
+      if (swap) swap.fade(selection, apply);
+      else apply();
+    });
   }
 
   function updateHeroBackdrop() {
@@ -1876,11 +1894,13 @@
     const url = art?.tmdb ? `/art/tmdb/${kind}/${encodeURIComponent(art.tmdb)}?fallback=2&kind=backdrop&av=${document.documentElement.dataset.cwArt || "t"}&size=w1280${window.CW?.ArtChoice?.param?.(kind, art.tmdb) || ""}` : "";
     if (image.dataset.url === url) return;
     image.dataset.url = url;
-    image.hidden = true;
-    image.onload = () => { image.hidden = image.dataset.url !== url || !url; };
+    image.onload = () => { image.hidden = image.dataset.url !== url; };
     image.onerror = () => { image.hidden = true; };
     if (url) image.src = url;
-    else image.removeAttribute("src");
+    else {
+      image.hidden = true;
+      image.removeAttribute("src");
+    }
   }
 
   function renderTitle() {
@@ -5208,15 +5228,6 @@
     }
   }
 
-  function setAddMenu(open, { focus = true } = {}) {
-    const menu = state.root?.querySelector(".trk-add-menu");
-    const toggle = state.root?.querySelector(".trk-add-toggle");
-    if (!menu || !toggle) return;
-    menu.hidden = !open;
-    toggle.setAttribute("aria-expanded", String(open));
-    if (focus) (open ? menu.querySelector('[role="menuitem"]') : toggle)?.focus();
-  }
-
   function wire(root) {
     if (state.wired) return;
     state.wired = true;
@@ -5227,11 +5238,9 @@
     new MutationObserver(() => { if (root.classList.contains("hidden") || root.hidden) { stopOverview(); closeSheet(false); } }).observe(root, {attributes:true, attributeFilter:["class", "hidden"]});
     wireStatusMenu();
     document.addEventListener("click", (event) => {
-      if (!event.target.closest?.(".trk-add-split")) setAddMenu(false, { focus: false });
       root.querySelectorAll(".trk-nav-menu[open]").forEach(menu => { if (!menu.contains(event.target)) menu.open = false; });
     }, true);
     root.addEventListener("focusout", (event) => {
-      if (event.target.closest?.(".trk-add-split") && !event.relatedTarget?.closest?.(".trk-add-split")) setAddMenu(false, { focus: false });
       const menu = event.target.closest?.(".trk-nav-menu");
       if (event.relatedTarget && menu && !menu.contains(event.relatedTarget)) menu.open = false;
     });
@@ -5393,15 +5402,10 @@
       else if (action === "changes") {
         openSheet("changes", { changes: [], changesTotal: 0, changesAll: 0, changeKind: "", changeQ: "" });
         loadChanges(false);
-      } else if (action === "add-menu") {
-        setAddMenu(state.root.querySelector(".trk-add-menu")?.hidden);
-      } else if (action === "log" || action === "quick-add") {
-        setAddMenu(false, { focus: action === "quick-add" || !!event.target.closest(".trk-add-menu") });
-        if (action === "log") openLog();
-        else if (typeof window.openManualWatchedModal === "function") {
-          const feature = { history: "history", watchlist: "watchlist", ratings: "rating", collection: "collection" }[state.view];
-          window.openManualWatchedModal(feature ? { action: feature } : {});
-        }
+      } else if (action === "log") openLog();
+      else if (action === "quick-add" && typeof window.openManualWatchedModal === "function") {
+        const feature = { history: "history", watchlist: "watchlist", ratings: "rating", collection: "collection" }[state.view];
+        window.openManualWatchedModal(feature ? { action: feature } : {});
       }
       else if (action === "views") openSheet("views", {views:readSavedViews()});
       else if (action === "import") openImport();
@@ -5499,25 +5503,6 @@
         const next = event.key === "Home" ? 0 : event.key === "End" || at < 0 && event.key === "ArrowUp" ? items.length - 1 : (at + (event.key === "ArrowUp" ? -1 : 1) + items.length) % items.length;
         items[next]?.focus();
         return;
-      }
-      const split = event.target.closest?.(".trk-add-split");
-      if (split) {
-        const menu = split.querySelector(".trk-add-menu");
-        const items = Array.from(menu.querySelectorAll('[role="menuitem"]'));
-        if (event.key === "Escape" && !menu.hidden) {
-          event.preventDefault();
-          event.stopPropagation();
-          setAddMenu(false);
-          return;
-        }
-        if ((event.target.closest(".trk-add-toggle") || !menu.hidden) && ["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) {
-          event.preventDefault();
-          const at = items.indexOf(document.activeElement);
-          const next = event.key === "Home" ? 0 : event.key === "End" || (at < 0 && event.key === "ArrowUp") ? items.length - 1 : (at + (event.key === "ArrowUp" ? -1 : 1) + items.length) % items.length;
-          setAddMenu(true, { focus: false });
-          items[next]?.focus();
-          return;
-        }
       }
       const tab = event.target.closest?.('.trk-tabs [role="tab"]');
       if (tab && ["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) {

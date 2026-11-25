@@ -520,7 +520,7 @@
         "personalPlaceholder": "Optioneel, uit je fanart.tv-profiel",
         "projectKey": "Project-API-sleutel (niet vereist)",
         "projectPlaceholder": "Optioneel, vervangt de CrossWatch-sleutel",
-        "keyNote": "Met een persoonlijke sleutel zie je nieuwe uploads op fanart.tv na 2 dagen in plaats van 7, en meteen als je VIP-lid van fanart.tv bent. Voeg alleen een projectsleutel toe als je een eigen fanart.tv-project hebt.",
+        "keyNote": "Een persoonlijke sleutel is optioneel en laat nieuwe uploads op fanart.tv niet eerder verschijnen. CrossWatch kijkt eens per week of er nieuwe afbeeldingen op fanart.tv staan. Voeg alleen een projectsleutel toe als je een eigen fanart.tv-project hebt.",
         "connect": "fanart.tv koppelen",
         "logos": "Logo's",
         "logoSource": "Bron voor logo's",

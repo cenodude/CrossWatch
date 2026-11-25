@@ -338,6 +338,19 @@ export default {
       return row ? row.season : state.activeSeason;
     };
     const pickedRows = () => [...state.picked.values()].sort((a, b) => a.season - b.season || a.episode - b.episode);
+    const rangePlan = () => {
+      if (dateModeNow() !== "range" || !state.watchedOn || !state.watchedUntil || state.watchedUntil < state.watchedOn) return new Map();
+      const begin = Date.parse(`${state.watchedOn}T12:00:00Z`);
+      const end = Date.parse(`${state.watchedUntil}T12:00:00Z`);
+      if (!Number.isFinite(begin) || !Number.isFinite(end)) return new Map();
+      const rows = pickedRows();
+      const step = (end - begin) / Math.max(1, rows.length - 1);
+      const now = Date.now();
+      return new Map(rows.map((row, index) => [epKey(row.season, row.episode), new Date(Math.min(begin + step * index, now)).toISOString().slice(0, 10)]));
+    };
+    const epDateHtml = (planned, airDate) => planned
+      ? `<span class="material-symbols-rounded" aria-hidden="true">history</span>${esc(T("library.quickAdd.watchedOnDate", {date: planned}))}`
+      : esc(airDate || "");
     const resetEpisodes = () => {
       state.scope = "show";
       state.listSource = "tmdb";
@@ -462,13 +475,14 @@ export default {
         </div>`;
     };
 
-    const episodeRow = (season, ep) => {
+    const episodeRow = (season, ep, plan) => {
       const on = state.picked.has(epKey(season, ep.episode));
+      const planned = on ? plan.get(epKey(season, ep.episode)) || "" : "";
       return `<button type="button" class="cw-mw-ep ${on ? "active" : ""}" data-ep="${season}:${ep.episode}" aria-pressed="${on ? "true" : "false"}">
         <span class="cw-mw-ep-check material-symbols-rounded" aria-hidden="true">check</span>
         <span class="cw-mw-ep-num">E${pad2(ep.episode)}</span>
         <span class="cw-mw-ep-name">${esc(ep.name || T("profile.media.episodeN", {n: String(ep.episode)}))}</span>
-        <span class="cw-mw-ep-date">${esc(ep.air_date || "")}</span>
+        <span class="cw-mw-ep-date${planned ? " is-planned" : ""}" data-air-date="${esc(ep.air_date || "")}">${epDateHtml(planned, ep.air_date)}</span>
       </button>`;
     };
 
@@ -491,7 +505,10 @@ export default {
       if (!eps || eps.loading) body = `<div class="cw-mw-eps-state">${TH("library.quickAdd.loadingSeason", {name: active.name || seasonName(active.season)})}</div>`;
       else if (eps.error) body = `<div class="cw-mw-eps-state">${esc(eps.error)}</div>`;
       else if (!episodes.length) body = `<div class="cw-mw-eps-state">${TH("library.quickAdd.noEpisodesSeason")}</div>`;
-      else body = `<div class="cw-mw-eplist">${episodes.map((ep) => episodeRow(active.season, ep)).join("")}</div>`;
+      else {
+        const plan = rangePlan();
+        body = `<div class="cw-mw-eplist">${episodes.map((ep) => episodeRow(active.season, ep, plan)).join("")}</div>`;
+      }
       const all = episodes.length && episodes.every((ep) => state.picked.has(epKey(active.season, ep.episode)));
       const toggle = episodes.length ? `<button type="button" class="cw-mw-link" data-role="eps-season-all">${TH(all ? "library.quickAdd.clearSeason" : "library.quickAdd.selectSeason")}</button>` : "";
       return `<div class="cw-mw-seasons">${tabs}</div>
@@ -561,8 +578,8 @@ export default {
           ${pickingEpisodes() ? `<button type="button" class="cw-mw-chip ${dateModeNow() === "range" ? "active" : ""}" data-date-mode="range">${TH("library.quickAdd.dateRange")}</button>` : ""}
           ${dateModeNow() === "custom" ? `<input type="date" class="cw-mw-date" data-role="custom-date" value="${esc(state.watchedOn || "")}">` : ""}
         </div>${dateModeNow() === "range" ? `<div class="cw-mw-chips">
-          <label class="cw-mw-range-part"><span class="cw-mw-muted">${TH("library.quickAdd.rangeFrom")}</span><input type="date" class="cw-mw-date" data-role="custom-date" value="${esc(state.watchedOn || "")}"></label>
-          <label class="cw-mw-range-part"><span class="cw-mw-muted">${TH("library.quickAdd.rangeTo")}</span><input type="date" class="cw-mw-date" data-role="range-end" value="${esc(state.watchedUntil || "")}"></label>
+          <label class="cw-mw-range-part"><span class="cw-mw-label">${TH("library.quickAdd.rangeFrom")}</span><input type="date" class="cw-mw-date" data-role="custom-date" value="${esc(state.watchedOn || "")}"></label>
+          <label class="cw-mw-range-part"><span class="cw-mw-label">${TH("library.quickAdd.rangeTo")}</span><input type="date" class="cw-mw-date" data-role="range-end" value="${esc(state.watchedUntil || "")}"></label>
         </div><p class="cw-mw-muted">${TH("library.quickAdd.rangeNote")}</p>` : ""}</div></div>` : ""}
         ${state.actions.rating ? `<div class="cw-mw-field"><span class="cw-mw-label">${TH("library.quickAdd.rating")}</span>${ratingChoices()}</div>` : ""}
         ${episodeChoice() ? episodesCard() : ""}
@@ -628,6 +645,14 @@ export default {
 
     const syncDates = () => {
       syncFooter();
+      const plan = rangePlan();
+      root.querySelectorAll(".cw-mw-ep[data-ep]").forEach((row) => {
+        const date = row.querySelector(".cw-mw-ep-date");
+        if (!date) return;
+        const planned = row.classList.contains("active") ? plan.get(row.getAttribute("data-ep") || "") || "" : "";
+        date.classList.toggle("is-planned", !!planned);
+        date.innerHTML = epDateHtml(planned, date.getAttribute("data-air-date"));
+      });
       const send = root.querySelector("[data-role=send]");
       if (send) {
         send.disabled = !!(validation() || state.saving);

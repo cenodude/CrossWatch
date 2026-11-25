@@ -230,6 +230,41 @@
 
   window.CW.ArtChoice = { param: artParam, set: setArtChoice };
 
+  const readyImages = new Map();
+  function preloadImage(url, wait = 600) {
+    if (!url) return Promise.resolve("none");
+    if (readyImages.has(url)) return Promise.resolve(readyImages.get(url));
+    return new Promise((resolve) => {
+      const image = new Image();
+      const timer = setTimeout(() => resolve("slow"), wait);
+      const settle = (result) => {
+        clearTimeout(timer);
+        if (readyImages.size > 300) readyImages.clear();
+        readyImages.set(url, result);
+        resolve(result);
+      };
+      image.onload = () => Promise.resolve(image.decode?.()).catch(() => {}).then(() => settle("ready"));
+      image.onerror = () => settle("failed");
+      image.src = url;
+    });
+  }
+
+  function fadeSwap(node, apply) {
+    if (!node) return apply();
+    clearTimeout(node.cwHeroSwap);
+    if (window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches || !node.getClientRects().length) {
+      node.classList.remove("cw-hero-swap-out");
+      return apply();
+    }
+    node.classList.add("cw-hero-swap-out");
+    node.cwHeroSwap = setTimeout(() => {
+      apply();
+      node.classList.remove("cw-hero-swap-out");
+    }, 150);
+  }
+
+  window.CW.HeroSwap = { preload: preloadImage, fade: fadeSwap };
+
   const SHELF_FORMATS = { "4k_bluray": "4K UHD", bluray: "Blu-ray", hd_dvd: "HD DVD", dvd: "DVD", digital: "Digital", vcd: "VCD", vhs: "VHS", betamax: "Betamax", laserdisc: "LaserDisc" };
   const SHELF_STATUSES = Object.defineProperties({}, Object.fromEntries(["owned", "ordered", "wishlist"].map(key => [key, { enumerable: true, get: () => T(`library.shelf.status.${key}`) }])));
   const SHELF_DISCS = { "4k_bluray": "bluray", bluray: "bluray", dvd: "dvd" };

@@ -88,7 +88,7 @@ async function mountQuickAdd(props, providers, remembered = [], memory = null) {
     localStorage: { getItem: (key) => key === "cw.manualWatched.actions" ? (memory ? JSON.stringify(memory) : null) : JSON.stringify(remembered), setItem() {} },
     URLSearchParams,
     AbortSignal,
-    fetch: async (url) => ({ ok: true, json: async () => (url.includes("/api/manual/providers") ? { providers } : {}) }),
+    fetch: async (url) => ({ ok: true, json: async () => (url.includes("/api/manual/providers") ? { providers } : url.includes("/api/manual/episodes") ? { seasons: [{ season: 1, name: "Season 1", episode_count: 6, episodes: [1, 2, 3, 4, 5, 6].map((episode) => ({ episode, name: `Part ${episode}`, air_date: `2002-06-0${episode}` })) }] } : {}) }),
   };
   vm.runInNewContext(source.replace("export default {", "globalThis.quickAdd = {"), page);
   await page.quickAdd.mount(root, props);
@@ -295,4 +295,24 @@ test("Quick add refuses a date range that ends before it starts", async () => {
   assert.equal(send.disabled, true);
   typeDate(root, "range-end", "2024-03-09");
   assert.notEqual(status.textContent, "The end date is before the start date.");
+});
+
+test("Quick add shows the watch date each picked episode gets from a date range", async () => {
+  const root = await mountQuickAdd({ item: trekShow }, [both], ["MDBLIST:default"]);
+  tap(root, "data-scope", "episodes");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  tap(root, "data-date-mode", "range");
+  typeDate(root, "custom-date", "2024-03-01");
+  typeDate(root, "range-end", "2024-03-05");
+  for (const key of ["1:6", "1:1", "1:3"]) tap(root, "data-ep", key);
+  const shown = [...root.innerHTML.matchAll(/data-ep="(1:\d)"[\s\S]*?cw-mw-ep-date([^"]*)"[^>]*>([\s\S]*?)<\/span>\s*<\/button>/g)]
+    .map(([, key, planned, html]) => [key, planned.trim(), html.slice(html.lastIndexOf(">") + 1).trim()]);
+  assert.deepEqual(shown, [
+    ["1:1", "is-planned", "Watched 2024-03-01"],
+    ["1:2", "", "2002-06-02"],
+    ["1:3", "is-planned", "Watched 2024-03-03"],
+    ["1:4", "", "2002-06-04"],
+    ["1:5", "", "2002-06-05"],
+    ["1:6", "is-planned", "Watched 2024-03-05"],
+  ]);
 });
