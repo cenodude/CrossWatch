@@ -811,6 +811,9 @@
     },
     "account": {
       "yourProfile": "Je profiel",
+      "kicker": "Mijn account",
+      "summary": "Accountoverzicht",
+      "twoStepTile": "Tweestaps",
       "changePicture": "Profielfoto wijzigen",
       "removePicture": "Foto verwijderen",
       "uploadingPicture": "Foto uploaden",
