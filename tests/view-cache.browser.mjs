@@ -261,7 +261,7 @@ for (const theme of ["original", "flat-dark", "flat-light"]) for (const width of
       return route.fulfill({contentType:"text/html", body:`<!doctype html><html ${attrs} data-tab="tracker"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">${css.map(file => `<link rel="stylesheet" href="/assets/${file}.css">`).join("")}</head><body><main id="layout" class="full"><section id="page-tracker" class="card tab-page cw-themed-page"></section></main><script>window.CW={AuthState:{read:()=>({isAdmin:true})}};</script><script src="/assets/helpers/view-cache.js"></script><script src="/assets/helpers/icon-select.js"></script><script src="/assets/helpers/selection-bar.js"></script><script src="/assets/helpers/airing-card.js"></script><script src="/assets/js/tracker.js"></script><script>TrackerPage.mount(document.querySelector('#page-tracker'));</script></body></html>`});
     });
     await page.goto("https://view-cache.test/");
-    const loading = page.locator('[data-trk-slot="main"] .cw-page-loading');
+    const loading = page.locator('[data-trk-slot="main"] .cw-page-empty.is-loading');
     await loading.waitFor();
     await page.locator("#page-tracker[data-view-loading]").waitFor();
     assert.equal(await page.locator(".cw-page-progress").count(), 0);

@@ -946,7 +946,12 @@
       "refresh": "Refresh tracker",
       "selection": "Everything you watched, rated and want to watch",
       "showPlayback": "Show playback",
-      "stats": "Watching stats"
+      "stats": "Watching stats",
+      "last7Days": "last 7 days",
+      "last30Days": "last 30 days",
+      "thisYear": "this year",
+      "hours": "hours",
+      "dayStreak": "day streak"
     },
     "month": {
       "open": "Month in review",

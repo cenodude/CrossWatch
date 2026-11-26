@@ -533,11 +533,11 @@
     const s = state.stats || {};
     const hours = s.timed ? num(Math.round((s.minutes || 0) / 60)) : "–";
     return `
-      <div class="cw-editor-hero-seg cw-editor-hero-count"><strong>${esc(num(s.week))}</strong><span>last 7 days</span></div>
-      <div class="cw-editor-hero-seg cw-editor-hero-count"><strong>${esc(num(s.month))}</strong><span>last 30 days</span></div>
-      <div class="cw-editor-hero-seg cw-editor-hero-count"><strong>${esc(num(s.year))}</strong><span>this year</span></div>
-      <div class="cw-editor-hero-seg cw-editor-hero-count" title="${esc(s.timed ? T("tracker.ui.runtimeKnown", {known: num(s.timed), total: num(s.total)}) : T("tracker.ui.runtimeHint"))}"><strong>${esc(hours)}</strong><span>hours</span></div>
-      <div class="cw-editor-hero-seg cw-editor-hero-count"><strong>${esc(num(s.streak))}</strong><span>day streak</span></div>
+      <div class="cw-editor-hero-seg cw-editor-hero-count"><strong>${esc(num(s.week))}</strong><span>${TH("tracker.hero.last7Days")}</span></div>
+      <div class="cw-editor-hero-seg cw-editor-hero-count"><strong>${esc(num(s.month))}</strong><span>${TH("tracker.hero.last30Days")}</span></div>
+      <div class="cw-editor-hero-seg cw-editor-hero-count"><strong>${esc(num(s.year))}</strong><span>${TH("tracker.hero.thisYear")}</span></div>
+      <div class="cw-editor-hero-seg cw-editor-hero-count" title="${esc(s.timed ? T("tracker.ui.runtimeKnown", {known: num(s.timed), total: num(s.total)}) : T("tracker.ui.runtimeHint"))}"><strong>${esc(hours)}</strong><span>${TH("tracker.hero.hours")}</span></div>
+      <div class="cw-editor-hero-seg cw-editor-hero-count"><strong>${esc(num(s.streak))}</strong><span>${TH("tracker.hero.dayStreak")}</span></div>
       <button class="cw-editor-refresh" type="button" data-trk-action="refresh" title="${TH("tracker.hero.refresh")}" aria-label="${TH("tracker.hero.refresh")}">${icon("refresh")}</button>`;
   }
 
@@ -714,7 +714,7 @@
 
   function renderOverview(kinds = ["continue", "airing", "recent"]) {
     const data = state.overview;
-    if (!data) return emptyState(state.loading ? T("tracker.overview.loading") : T("tracker.overview.unavailable"), state.loading ? "hourglass_empty" : "info");
+    if (!data) return emptyState(state.loading ? T("tracker.overview.loading") : T("tracker.overview.unavailable"), state.loading ? "space_dashboard" : "info", false, "", state.loading);
     const playback = data.continue.length > 0;
     const sections = [["continue", T("profile.overview.continueWatching"), playback ? "progress" : "shows", playback ? T("dashboard.activity.playbackProgress") : T("tracker.overview.viewShows")], ["airing", T("profile.overview.airingSoon"), "", ""], ["recent", T("tracker.overview.recentlyWatched"), "history", T("tracker.overview.viewHistory")]];
     const reviewMonth = data.review_month || "";
@@ -1178,9 +1178,8 @@
     state.root.querySelector(".cw-root").appendChild(menu);
   }
 
-  function emptyState(text, symbolName = "table_rows", compact = false, extra = "") {
-    if (symbolName === "hourglass_empty") return `<div class="cw-empty cw-page-loading" role="status"><div class="cw-empty-text">${esc(text)}</div></div>`;
-    return `<div class="cw-page-empty${compact ? " is-compact" : ""}" role="status"><span class="cw-page-empty-art" aria-hidden="true">${icon(symbolName)}</span><span class="cw-page-empty-text">${esc(text)}</span>${extra}</div>`;
+  function emptyState(text, symbolName = "table_rows", compact = false, extra = "", loading = false) {
+    return `<div class="cw-page-empty${compact ? " is-compact" : ""}${loading ? " is-loading" : ""}" role="status"${loading ? ' aria-busy="true"' : ""}><span class="cw-page-empty-art" aria-hidden="true">${icon(symbolName)}</span><span class="cw-page-empty-text">${esc(text)}</span>${extra}</div>`;
   }
 
   function tableWrap(head, body, cls, cols) {
@@ -1232,7 +1231,7 @@
 
   function renderTimeline() {
     if (!state.items.length) {
-      return emptyState(state.loading ? T("tracker.empty.loadingHistory") : state.q || state.media || state.noteStatus || state.noteTag || state.duplicates ? T("tracker.empty.noPlays") : T("tracker.empty.nothingWatched"), state.loading ? "hourglass_empty" : "history");
+      return emptyState(state.loading ? T("tracker.empty.loadingHistory") : state.q || state.media || state.noteStatus || state.noteTag || state.duplicates ? T("tracker.empty.noPlays") : T("tracker.empty.nothingWatched"), "history", false, "", state.loading);
     }
     const body = timelineGroups().map((day) => {
       const header = `<tr class="trk-day"><td colspan="4"><span>${esc(day.label)}</span><small>${esc(plural(day.plays, "play", "plays"))}</small></td></tr>`;
@@ -1286,7 +1285,7 @@
   }
 
   function renderShows() {
-    if (!state.shows.length) return emptyState(state.loading ? T("tracker.empty.loadingShows") : state.q || state.noteStatus || state.noteTag || state.hideDropped ? T("tracker.empty.noShows") : T("tracker.empty.noEpisodes"), state.loading ? "hourglass_empty" : "tv");
+    if (!state.shows.length) return emptyState(state.loading ? T("tracker.empty.loadingShows") : state.q || state.noteStatus || state.noteTag || state.hideDropped ? T("tracker.empty.noShows") : T("tracker.empty.noEpisodes"), "tv", false, "", state.loading);
     const body = state.shows.map((show, index) => {
       const selected = state.ref?.show === show.key;
       const last = show.last_season != null ? se(show.last_season, show.last_episode) : "";
@@ -1304,7 +1303,7 @@
 
   function renderGroupedHistory() {
     const label = state.view === "movies" ? "movies" : "titles";
-    if (!state.items.length) return emptyState(state.loading ? T("tracker.empty.loadingNamed", { name: label }) : state.q || state.noteStatus || state.noteTag ? T("tracker.empty.noNamedMatch", { name: label }) : state.view === "movies" ? T("tracker.empty.noMovies") : T("tracker.empty.noWatches"), state.loading ? "hourglass_empty" : "movie");
+    if (!state.items.length) return emptyState(state.loading ? T("tracker.empty.loadingNamed", { name: label }) : state.q || state.noteStatus || state.noteTag ? T("tracker.empty.noNamedMatch", { name: label }) : state.view === "movies" ? T("tracker.empty.noMovies") : T("tracker.empty.noWatches"), "movie", false, "", state.loading);
     const body = state.items.map((item, index) => {
       const selected = state.ref?.key === item.key && state.ref?.feature === "history";
       return `<tr class="trk-play${selected ? " is-selected" : ""}${state.picked.has(item.key) ? " is-picked" : ""}" data-trk-ref-key="${esc(item.key)}" tabindex="0" aria-selected="${selected}">
@@ -1325,7 +1324,7 @@
       const text = state.loading ? T("common.status.loading") : filtered
         ? T("tracker.empty.noTitles")
         : T("tracker.empty.titlesHint");
-      return emptyState(text, state.loading ? "hourglass_empty" : "bookmarks");
+      return emptyState(text, "bookmarks", false, "", state.loading);
     }
     const allPicked = state.noteRows.every((n) => state.picked.has(n.key));
     const body = state.noteRows.map((n, index) => {
@@ -1617,7 +1616,7 @@
     const clean = state.view === "cleanup";
     if (!state.items.length) {
       const text = state.loading ? T("common.status.loading") : state.noteStatus || state.noteTag || (state.view === "history" && state.duplicates) ? T("tracker.empty.noRecordsFilters") : clean ? (state.healthFilter === "attention" ? T("tracker.empty.nothingAttention", { feature: f.label.toLowerCase() }) : T("tracker.empty.noRecordsFilter")) : state.q || state.media ? T("tracker.empty.noRecordsFilters") : T("tracker.empty.featureEmpty", { feature: f.label.toLowerCase() });
-      return emptyState(text, state.loading ? "hourglass_empty" : clean ? "verified" : f.icon);
+      return emptyState(text, clean ? "verified" : f.icon, false, "", state.loading);
     }
     const allPicked = state.items.every((i) => state.picked.has(i.key));
     const body = state.items.map((item, index) => {
@@ -3076,7 +3075,7 @@
 
   function renderTitleEdit() {
     const data = state.title;
-    if (!data) return `${sheetHead("edit", T("tracker.ui.editTitle"), "")}<div class="trk-form">${emptyState(T("common.status.loading"), "hourglass_empty")}</div>`;
+    if (!data) return `${sheetHead("edit", T("tracker.ui.editTitle"), "")}<div class="trk-form">${emptyState(T("common.status.loading"), "hourglass_top", false, "", true)}</div>`;
     const head = data.title || {};
     const n = recordCount(data);
     return `
@@ -3601,7 +3600,7 @@
     const list = days.map((d) => `<h3 class="trk-change-day">${esc(d.label)}</h3><ul class="trk-changes">${d.rows.map(row => row.group ? `<li class="trk-auto-changes"><details data-trk-auto-group="${esc(row.group)}"${expanded.has(row.group) ? " open" : ""}><summary>${icon("autorenew")}<span>Automatic status updates · ${num(row.changes.length)} shown</span>${icon("expand_more")}</summary><ul class="trk-changes">${row.changes.map(changeRow).join("")}</ul></details></li>` : row.changes.map(changeRow).join("")).join("")}</ul>`).join("");
     const chips = CHANGE_KINDS.map((k) => chip(`data-trk-change-kind="${k.id}"`, k.label, { active: sheet.changeKind === k.id, iconName: k.icon || "" })).join("");
     const empty = sheet.busy && !sheet.changes.length
-      ? emptyState(T("common.status.loading"), "hourglass_empty")
+      ? emptyState(T("common.status.loading"), "hourglass_top", false, "", true)
       : emptyState(filtered ? T("tracker.changes.noMatch") : T("tracker.changes.none"), filtered ? "search_off" : "history_toggle_off");
     const more = sheet.changes.length < sheet.changesTotal
       ? `<div class="trk-changes-more" data-trk-changes-more><button type="button" class="cw-btn" data-trk-sheet="more-changes"${sheet.busy ? " disabled" : ""}>${icon(sheet.busy ? "hourglass_empty" : "expand_more")}<span>${sheet.busy ? T("common.status.loading") : T("tracker.overview.showMore")}</span></button></div>`
