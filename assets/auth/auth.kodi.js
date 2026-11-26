@@ -185,7 +185,7 @@
           <span id="kodi_addon_sync_note" class="muted"></span>
         </div>
         <div id="kodi_addon_sync_rows" class="kodi-sync-rows"></div>
-        <div class="muted">Removals follow the add-on setting Send removals made in Kodi.</div>
+        <div class="muted">${TH("connections.auth.kodi.removalsFollow")}</div>
       </div>
 
       <div id="kodi_addon_link_row" hidden>
