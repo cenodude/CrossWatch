@@ -5638,9 +5638,39 @@
     const pick = () => {
       if (!viewingAs()) input?.click();
     };
-    $("#profile-avatar-replace")?.addEventListener("click", pick);
+    const camera = $("#profile-avatar-replace");
+    const menu = $("#profile-avatar-menu");
+    const closeMenu = () => {
+      if (!menu || menu.hidden) return;
+      menu.hidden = true;
+      camera?.setAttribute("aria-expanded", "false");
+    };
+    camera?.addEventListener("click", () => {
+      if (viewingAs()) return;
+      if (!menu || $("#profile-avatar-remove")?.hidden) {
+        pick();
+        return;
+      }
+      const open = menu.hidden;
+      menu.hidden = !open;
+      camera.setAttribute("aria-expanded", String(open));
+      if (open) menu.querySelector("button")?.focus();
+    });
+    $("#profile-avatar-upload")?.addEventListener("click", () => {
+      closeMenu();
+      pick();
+    });
+    document.addEventListener("click", (event) => {
+      if (!event.target?.closest?.(".cw-account-picture")) closeMenu();
+    });
+    document.addEventListener("keydown", (event) => {
+      if (event.key !== "Escape" || !menu || menu.hidden) return;
+      closeMenu();
+      camera?.focus();
+    });
     $("#profile-avatar-remove")?.addEventListener("click", async (event) => {
       if (!armConfirm(event.currentTarget, T("profile.avatar.confirmRemove"))) return;
+      closeMenu();
       try {
         const data = await del("/api/profile/avatar");
         renderProfile(data);
@@ -6083,6 +6113,8 @@
         else btn.removeAttribute("aria-current");
       });
       document.querySelectorAll("[data-settings-section]").forEach(node => { node.hidden = node.dataset.settingsSection !== section; });
+      const active = buttons.find(btn => btn.dataset.settingsNav === section);
+      if (active && nav.scrollWidth > nav.clientWidth) nav.scrollLeft = Math.max(0, active.offsetLeft - nav.offsetLeft - 12);
       window.scrollTo({top:0});
     };
     nav.addEventListener("click", event => {

@@ -2613,7 +2613,7 @@ def _get_user_page_html(user: dict | None, *, hub: bool, language: str | None = 
           </label>
 """ if preferences_allowed else ""
     settings_interface = f"""        <section id="settings-interface" class="cw-set-card" data-settings-section="interface" data-cw-autosave hidden>
-          <header class="cw-set-head"><div><h2>[[t:profile.settings.display.title]]</h2><p>[[t:profile.settings.display.intro]]</p></div></header>
+          <div class="cw-set-head"><div><h2>[[t:profile.settings.display.title]]</h2><p>[[t:profile.settings.display.intro]]</p></div></div>
 {settings_interface_controls}          <div class="cw-set-row">
             <label class="cw-set-copy" for="profile-media-card"><strong>[[t:settings.ui.appearance.mediaDetails]]</strong><small>[[t:profile.settings.display.mediaDetailsHint]]</small></label>
             <span class="cw-set-inline"><select id="profile-media-card" class="cw-set-input" data-cw-media-card><option value="full">[[t:settings.ui.appearance.mediaCardFull]]</option><option value="compact">[[t:settings.ui.appearance.mediaCardCompact]]</option></select></span>
@@ -2942,13 +2942,16 @@ def _get_user_page_html(user: dict | None, *, hub: bool, language: str | None = 
     <div class="cw-media-hero-context cw-account-hero-identity">
       <div class="cw-account-picture">
         <span id="profile-settings-avatar" class="cw-account-avatar" aria-hidden="true">{profile_avatar_inner}</span>
-        <button id="profile-avatar-replace" class="cw-account-camera" type="button" aria-label="[[t:profile.account.changePicture]]" title="[[t:profile.account.changePicture]]"><span class="material-symbols-rounded" aria-hidden="true">photo_camera</span></button>
+        <button id="profile-avatar-replace" class="cw-account-camera" type="button" aria-label="[[t:profile.account.changePicture]]" title="[[t:profile.account.changePicture]]" aria-controls="profile-avatar-menu" aria-expanded="false"><span class="material-symbols-rounded" aria-hidden="true">photo_camera</span></button>
         <input id="profile-avatar-input" type="file" accept="image/png,image/jpeg,image/webp" hidden>
+        <div id="profile-avatar-menu" class="cw-account-picture-menu" role="menu" hidden>
+          <button id="profile-avatar-upload" type="button" role="menuitem"><span class="material-symbols-rounded" aria-hidden="true">upload</span><span>[[t:profile.account.changePicture]]</span></button>
+          <button id="profile-avatar-remove" class="cw-danger-confirm" type="button" role="menuitem"><span class="material-symbols-rounded" aria-hidden="true">delete</span><span>[[t:profile.account.removePicture]]</span></button>
+        </div>
       </div>
       <div class="cw-account-copy">
         <span class="cw-media-hero-heading"><strong id="profile-display-name">{display_name}</strong></span>
         <div class="cw-media-hero-details cw-account-meta"><span id="profile-username">@{username}</span><span id="profile-role" class="cw-set-tag">{role_label}</span><span id="profile-member-since" class="cw-account-since hidden"><span class="material-symbols-rounded" aria-hidden="true">event</span><span></span></span></div>
-        <button id="profile-avatar-remove" class="cw-account-remove cw-danger-confirm" type="button">[[t:profile.account.removePicture]]</button>
       </div>
     </div>
     <div class="cw-hub-summary" aria-label="[[t:profile.account.summary]]"><div id="profile-account-metrics" class="cw-hub-summary-metrics"></div></div>
@@ -2969,18 +2972,18 @@ def _get_user_page_html(user: dict | None, *, hub: bool, language: str | None = 
       <div class="cw-set-main">
         <div class="cw-set-col">
         <section id="settings-profile" class="cw-set-card" data-settings-section="profile">
-          <header class="cw-set-head"><div><h2>[[t:profile.account.personal]]</h2></div></header>
+          <div class="cw-set-head"><div><h2>[[t:profile.account.personal]]</h2></div></div>
           <form id="profile-name-form" class="cw-set-row">
             <label class="cw-set-copy" for="profile-display-input"><strong>[[t:profile.account.displayName]]</strong><small>[[t:profile.account.displayNameHint]]</small></label>
             <span class="cw-set-inline"><input id="profile-display-input" class="cw-set-input" maxlength="64" autocomplete="name"><button class="cw-set-btn cw-set-btn--primary" type="submit">[[t:common.actions.save]]</button></span>
           </form>
           <div class="cw-set-row">
-            <label class="cw-set-copy" for="profile-username-input"><strong>[[t:settings.security.username]]</strong></label>
-            <span class="cw-set-inline"><input id="profile-username-input" class="cw-set-input" value="@{username}" readonly aria-readonly="true"></span>
+            <span class="cw-set-copy"><strong>[[t:settings.security.username]]</strong></span>
+            <span id="profile-username-value" class="cw-set-value">@{username}</span>
           </div>
         </section>
         <section id="settings-datetime" class="cw-set-card" data-settings-section="profile">
-          <header class="cw-set-head"><div><h2>[[t:profile.settings.dateTime]]</h2></div></header>
+          <div class="cw-set-head"><div><h2>[[t:profile.settings.dateTime]]</h2></div></div>
           <div class="cw-set-row">
             <label class="cw-set-copy" for="profile-pref-language"><strong>[[t:common.language.label]]</strong><small id="profile-pref-language-hint" data-cw-language-status>[[t:common.language.hintAccount]]</small></label>
             <span class="cw-set-inline"><select id="profile-pref-language" class="cw-set-input" data-cw-language-select aria-describedby="profile-pref-language-hint">__CW_LANGUAGE_OPTIONS__</select></span>
@@ -2999,7 +3002,7 @@ def _get_user_page_html(user: dict | None, *, hub: bool, language: str | None = 
           </div>
         </section>
         <section id="settings-security" class="cw-set-card" data-settings-section="security" hidden>
-          <header class="cw-set-head"><div><h2>[[t:profile.account.sections.security]]</h2><p>[[t:profile.security.intro]]</p></div></header>
+          <div class="cw-set-head"><div><h2>[[t:profile.account.sections.security]]</h2><p>[[t:profile.security.intro]]</p></div></div>
           <div class="cw-set-row">
             <span class="cw-set-copy"><strong>[[t:settings.security.password.title]]</strong><small>[[t:profile.security.passwordHint]]</small></span>
             <span class="cw-set-actions"><button id="profile-password-toggle" class="cw-set-btn" type="button" aria-expanded="false" aria-controls="profile-password-form">[[t:common.actions.change]]</button></span>
@@ -3026,7 +3029,7 @@ def _get_user_page_html(user: dict | None, *, hub: bool, language: str | None = 
           <div id="profile-2fa-setup" class="cw-profile-2fa"></div>
         </section>
         <section id="settings-linked" class="cw-set-card" data-settings-section="linked" hidden>
-          <header class="cw-set-head"><div><h2>[[t:profile.account.sections.linked]]</h2><p>[[t:profile.linked.intro]]</p></div></header>
+          <div class="cw-set-head"><div><h2>[[t:profile.account.sections.linked]]</h2><p>[[t:profile.linked.intro]]</p></div></div>
           <div class="cw-set-row">
             <span class="cw-set-logo"><img id="profile-plex-logo" alt="" hidden><span class="material-symbols-rounded" aria-hidden="true">play_circle</span></span>
             <span class="cw-set-copy"><strong>Plex</strong><small id="profile-plex-summary">[[t:settings.security.plex.notLinked]]</small></span>
@@ -3050,7 +3053,7 @@ def _get_user_page_html(user: dict | None, *, hub: bool, language: str | None = 
         <div class="cw-set-col">
 {settings_interface}
         <section id="settings-sessions" class="cw-set-card" data-settings-section="sessions" hidden>
-          <header class="cw-set-head"><div><h2>[[t:profile.account.sections.devices]]</h2><p>[[t:profile.devices.intro]]</p></div><button id="profile-revoke-sessions" class="cw-set-btn cw-set-btn--danger cw-danger-confirm" type="button" hidden>[[t:profile.devices.signOutOthers]]</button></header>
+          <div class="cw-set-head"><div><h2>[[t:profile.account.sections.devices]]</h2><p>[[t:profile.devices.intro]]</p></div><button id="profile-revoke-sessions" class="cw-set-btn cw-set-btn--danger cw-danger-confirm" type="button" hidden>[[t:profile.devices.signOutOthers]]</button></div>
           <div id="profile-sessions" class="cw-set-sessions"></div>
         </section>
         </div>
