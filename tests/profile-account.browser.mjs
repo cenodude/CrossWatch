@@ -46,7 +46,7 @@ for (const theme of ["original", "flat-dark", "flat-light"]) for (const width of
     await page.locator('#profile-display-input').waitFor();
     await page.waitForFunction(() => document.querySelector('#profile-display-input').value === 'Pascal van den Berg');
     await page.evaluate(() => document.fonts.ready);
-    assert.equal(await page.locator('#profile-hero, .cw-profile-tabs, #profile-panel-overview').count(), 0);
+    assert.equal(await page.locator('#profile-hero, [data-profile-tab], #profile-panel-overview').count(), 0);
     assert.equal(await page.locator('#tab-profile').getAttribute('aria-current'), null);
     assert.equal(await page.locator('#settings-datetime').isVisible(), true);
     await mkdir('.tmp/profile-account', {recursive:true});

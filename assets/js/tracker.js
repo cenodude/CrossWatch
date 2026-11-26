@@ -1718,8 +1718,12 @@
     }
   }
 
+  function playbackView() {
+    return state.view === "overview" || (state.view === "progress" && !state.ref);
+  }
+
   function heroContext() {
-    if ((state.view === "overview" || !state.ref) && heroPlayback) return {data:heroPlayback, record:heroPlayback.title};
+    if (playbackView() && heroPlayback) return {data:heroPlayback, record:heroPlayback.title};
     if (state.view === "overview") return {data:state.overview?.hero ? {title:state.overview.hero, heroMeta:state.overview.heroMeta} : null, record:state.overview?.hero};
     if (!state.ref) {
       const data = state.listHero?.view === state.view && state.listHero.instance === state.instance ? state.listHero : null;
@@ -1738,7 +1742,7 @@
     const host = state.root?.querySelector('.trk-hero-playback');
     const stats = state.root?.querySelector('[data-trk-slot="hero"]');
     if (!host || !stats) return;
-    const available = (state.view === "overview" || !state.ref) && heroPlayback;
+    const available = playbackView() && heroPlayback;
     const live = available && dismissedPlayback !== heroPlayback.session;
     const restore = state.root.querySelector('[data-trk-action="show-playback"]');
     if (restore) restore.hidden = !available || !!live;
