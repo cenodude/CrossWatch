@@ -723,6 +723,27 @@ class JellyfinWatchService(MediaServerMarkPoller):
     def _mark_get(self, path: str, cfg: dict[str, Any]) -> Any:
         return _get_json(self._base, self._tok, path, cfg, timeout=self._request_timeout(cfg))
 
+    def _mark_user_rows(self, cfg: dict[str, Any]) -> tuple[list[Any], Exception | None]:
+        try:
+            own = self._mark_get("/Users/Me", cfg)
+        except requests.HTTPError as exc:
+            if exc.response is None or exc.response.status_code not in {400, 401, 403, 404}:
+                raise
+            return super()._mark_user_rows(cfg)
+        if not isinstance(own, dict) or not own.get("Id"):
+            raise ValueError("invalid current user response")
+        if not (own.get("Policy") or {}).get("IsAdministrator"):
+            return [own], None
+        try:
+            rows, failure = super()._mark_user_rows(cfg)
+        except requests.HTTPError as exc:
+            if exc.response is None or exc.response.status_code != 403:
+                raise
+            return [own], None
+        if isinstance(failure, requests.HTTPError) and failure.response is not None and failure.response.status_code == 403:
+            return [own], None
+        return rows, failure
+
     def _build_mark_event(self, sess: dict[str, Any], cfg: dict[str, Any]) -> ScrobbleEvent | None:
         return self._build_event(sess, "stopped", 100, cfg)
 
