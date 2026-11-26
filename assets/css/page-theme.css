@@ -4,7 +4,6 @@
 @import url("./brand.css");
 .brand .name{background:none;color:var(--cw-theme-text);filter:none}
 .cw-view-status[data-state="error"]{font-size:13px;color:var(--cw-theme-muted);background:var(--cw-theme-surface);border:1px solid var(--cw-theme-border);border-radius:10px}
-#page-tracker .cw-page-loading{color:var(--cw-theme-muted)}
 body.cw-profile-page .cw-profile-hero{border:1px solid var(--cw-theme-border);border-radius:18px;background:var(--cw-theme-surface);box-shadow:none}
 .cw-hub-pull-refresh{border-radius:50%;background:var(--cw-theme-surface);border:1px solid var(--cw-theme-border);color:var(--cw-theme-accent);box-shadow:var(--cw-theme-shadow)}
 .cw-hub-summary .cw-hub-records-stat{border-right:1px solid var(--cw-hero-summary-border,var(--cw-theme-border));color:var(--cw-theme-muted);font-size:12px}
@@ -118,6 +117,13 @@ button.cw-hub-records-stat{cursor:pointer}
 .cw-page-empty-text{color:var(--cw-theme-muted)}
 .cw-page-empty.is-compact{border-radius:12px}
 .cw-page-empty.is-compact::before{content:none}
+.cw-page-empty.is-loading .cw-page-empty-art::after{border:2px solid transparent;border-top-color:color-mix(in srgb,currentColor 55%,transparent);border-right-color:color-mix(in srgb,currentColor 16%,transparent);animation:cw-empty-spin 1.4s linear infinite}
+.cw-page-empty.is-loading .cw-page-empty-art>.material-symbols-rounded{animation:cw-empty-pulse 1.8s ease-in-out infinite}
+.cw-page-empty.is-loading::before{animation:cw-empty-breathe 2.6s ease-in-out infinite}
+@keyframes cw-empty-spin{to{transform:rotate(360deg)}}
+@keyframes cw-empty-pulse{0%,100%{opacity:.45}50%{opacity:.85}}
+@keyframes cw-empty-breathe{0%,100%{opacity:.35}50%{opacity:.65}}
+@media(prefers-reduced-motion:reduce){.cw-page-empty.is-loading .cw-page-empty-art::after,.cw-page-empty.is-loading .cw-page-empty-art>.material-symbols-rounded,.cw-page-empty.is-loading::before{animation:none}}
 .cw-page-empty.is-compact .cw-page-empty-art{box-shadow:0 0 0 1px color-mix(in srgb,currentColor 14%,transparent)}
 .cw-hist-cell,.cw-hist-cell--when strong,.cw-play-cell--progress strong{font-weight:400}
 .cw-hist-cell--title strong,.cw-collection-row--head{font-weight:500}

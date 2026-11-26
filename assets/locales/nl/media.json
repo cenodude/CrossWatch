@@ -946,7 +946,12 @@
       "refresh": "Tracker vernieuwen",
       "selection": "Alles wat je hebt bekeken, beoordeeld en wilt zien",
       "showPlayback": "Afspelen tonen",
-      "stats": "Kijkstatistieken"
+      "stats": "Kijkstatistieken",
+      "last7Days": "laatste 7 dagen",
+      "last30Days": "laatste 30 dagen",
+      "thisYear": "dit jaar",
+      "hours": "uur",
+      "dayStreak": "dagen op rij"
     },
     "month": {
       "open": "Maand in beeld",

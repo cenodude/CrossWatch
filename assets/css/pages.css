@@ -39,7 +39,6 @@
 .cw-view-status[data-state="error"]{position:relative;inset:auto;display:flex;align-items:center;flex-wrap:wrap;gap:8px 12px;padding:10px 14px;pointer-events:auto}
 .cw-view-status[data-state="error"][hidden]{display:none}
 .cw-view-status .cw-btn{margin-left:auto;min-height:32px;padding:4px 12px}
-#page-tracker .cw-page-loading{align-content:center;gap:18px;min-height:160px}
 [data-view-loading] :is([data-trk-action="refresh"],[data-timeline-refresh],[data-collection-refresh])>.material-symbols-rounded,[data-view-loading] .refresh-insights>.material-symbols-rounded{animation:cwRefreshSpin .9s linear infinite}
 @keyframes cwRefreshSpin{to{transform:rotate(360deg)}}
 @media(prefers-reduced-motion:reduce){[data-view-loading] :is([data-trk-action="refresh"],[data-timeline-refresh],[data-collection-refresh])>.material-symbols-rounded,[data-view-loading] .refresh-insights>.material-symbols-rounded{animation:none}}
@@ -1899,7 +1898,8 @@ body.cw-profile-page .cw-profile-tabs button{display:inline-flex;align-items:cen
 .cw-hub-records .cw-play-card .cw-hist-info{padding:12px 14px;gap:6px}
 .cw-page-empty{position:relative;isolation:isolate;grid-column:1/-1;display:grid;justify-items:center;align-content:center;gap:22px;min-height:280px;padding:56px 24px 48px;overflow:hidden;text-align:center}
 .cw-page-empty::before{content:"";position:absolute;inset:0;z-index:-1;pointer-events:none}
-.cw-page-empty-art{display:grid;place-items:center;width:76px;height:76px;margin-bottom:12px}
+.cw-page-empty-art{position:relative;display:grid;place-items:center;width:76px;height:76px;margin-bottom:12px}
+.cw-page-empty.is-loading .cw-page-empty-art::after{content:"";position:absolute;inset:-7px;border-radius:50%;pointer-events:none}
 .cw-page-empty .cw-page-empty-art>.material-symbols-rounded{font-size:36px;line-height:1}
 .cw-page-empty-text{max-width:48ch;line-height:1.5}
 .cw-page-empty.is-compact{grid-auto-flow:column;justify-content:center;gap:12px;min-height:0;padding:16px 18px;text-align:left}
