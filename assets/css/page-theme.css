@@ -2590,7 +2590,6 @@ html[data-cw-theme=flat-light] #page-events.cw-page-events{--ev-color-scheme:lig
 .cw-page-logs .logs-copied{color:var(--cw-theme-good);border-color:var(--cw-theme-good)}
 @media(max-width:760px){.cw-page-logs .logs-sidebar{border-right:0;border-bottom:1px solid var(--cw-theme-border)}.cw-page-logs .logs-message{font-size:13px}}
 
-.cw-account-header{background:var(--cw-theme-surface);border:1px solid var(--cw-theme-border);border-radius:16px}
 .cw-account-avatar{background:var(--cw-theme-surface-raised);color:var(--cw-theme-muted);border:1px solid var(--cw-theme-border)}
 .cw-account-camera{background:var(--cw-theme-surface-raised);border:1px solid var(--cw-theme-border);color:var(--cw-theme-text)}
 .cw-account-camera:hover{color:var(--cw-theme-accent)}
@@ -2599,4 +2598,4 @@ html[data-cw-theme=flat-light] #page-events.cw-page-events{--ev-color-scheme:lig
 .cw-account-remove{background:none;border:0;color:var(--cw-theme-muted)}
 .cw-account-remove:hover{color:var(--cw-theme-text)}
 
-.cw-account-identity h1{color:var(--cw-theme-text);font-weight:650}
+.cw-account-hero .cw-media-hero-heading strong{font-size:clamp(24px,2.4vw,34px);overflow-wrap:anywhere}

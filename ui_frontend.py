@@ -2601,7 +2601,7 @@ def _get_user_page_html(user: dict | None, *, hub: bool, language: str | None = 
     write = "on" if perms.get("write") else "off"
     preferences_allowed = is_admin or bool(perms.get("write"))
     settings_interface_nav = (
-        '        <button type="button" data-settings-nav="interface"><span class="material-symbols-rounded" aria-hidden="true">tune</span><span>[[t:profile.settings.display.title]]</span></button>'
+        '    <button type="button" data-settings-nav="interface"><span class="material-symbols-rounded" aria-hidden="true">tune</span><span>[[t:profile.settings.display.title]]</span></button>'
     )
     settings_interface_controls = """          <label class="cw-set-row cw-set-toggle">
             <span class="cw-set-copy"><strong>[[t:profile.settings.display.playingCard]]</strong><small>[[t:profile.settings.display.playingCardHint]]</small></span>
@@ -2933,31 +2933,39 @@ def _get_user_page_html(user: dict | None, *, hub: bool, language: str | None = 
 {playback_panel}
 {watchlist_panel}
 {remove_dialog}
-""" if hub else f"""  <section class="cw-account-header cw-page-account-header" aria-label="[[t:profile.account.yourProfile]]">
-    <div class="cw-account-picture">
-      <span id="profile-settings-avatar" class="cw-account-avatar" aria-hidden="true">{profile_avatar_inner}</span>
-      <button id="profile-avatar-replace" class="cw-account-camera" type="button" aria-label="[[t:profile.account.changePicture]]" title="[[t:profile.account.changePicture]]"><span class="material-symbols-rounded" aria-hidden="true">photo_camera</span></button>
-      <input id="profile-avatar-input" type="file" accept="image/png,image/jpeg,image/webp" hidden>
+""" if hub else f"""  <section class="cw-profile-hero cw-media-hero cw-account-hero" id="profile-account-hero" aria-label="[[t:profile.account.yourProfile]]">
+    <div class="cw-profile-hero-art" id="profile-hero-art"></div>
+    <div class="cw-profile-hero-shade"></div>
+    <div class="cw-media-hero-topbar">
+      <div class="cw-media-hero-brand"><h1 class="cw-media-hero-kicker">[[t:profile.account.kicker]]</h1></div>
     </div>
-    <div class="cw-account-identity">
-      <h1 id="profile-display-name">{display_name}</h1>
-      <div class="cw-account-meta"><span id="profile-username">@{username}</span><span id="profile-role" class="cw-set-tag">{role_label}</span></div>
-      <button id="profile-avatar-remove" class="cw-account-remove cw-danger-confirm" type="button">[[t:profile.account.removePicture]]</button>
+    <div class="cw-media-hero-context cw-account-hero-identity">
+      <div class="cw-account-picture">
+        <span id="profile-settings-avatar" class="cw-account-avatar" aria-hidden="true">{profile_avatar_inner}</span>
+        <button id="profile-avatar-replace" class="cw-account-camera" type="button" aria-label="[[t:profile.account.changePicture]]" title="[[t:profile.account.changePicture]]"><span class="material-symbols-rounded" aria-hidden="true">photo_camera</span></button>
+        <input id="profile-avatar-input" type="file" accept="image/png,image/jpeg,image/webp" hidden>
+      </div>
+      <div class="cw-account-copy">
+        <span class="cw-media-hero-heading"><strong id="profile-display-name">{display_name}</strong></span>
+        <div class="cw-media-hero-details cw-account-meta"><span id="profile-username">@{username}</span><span id="profile-role" class="cw-set-tag">{role_label}</span><span id="profile-member-since" class="cw-account-since hidden"><span class="material-symbols-rounded" aria-hidden="true">event</span><span></span></span></div>
+        <button id="profile-avatar-remove" class="cw-account-remove cw-danger-confirm" type="button">[[t:profile.account.removePicture]]</button>
+      </div>
     </div>
+    <div class="cw-hub-summary" aria-label="[[t:profile.account.summary]]"><div id="profile-account-metrics" class="cw-hub-summary-metrics"></div></div>
   </section>
-          <div id="profile-avatar-upload-status" class="cw-profile-upload hidden" role="status" aria-live="polite">
-            <div class="cw-profile-upload-head"><span id="profile-avatar-upload-label">[[t:profile.account.uploadingPicture]]</span><strong id="profile-avatar-upload-percent">0%</strong></div>
-            <div class="cw-profile-upload-bar"><span id="profile-avatar-upload-bar"></span></div>
-          </div>
+  <div id="profile-avatar-upload-status" class="cw-profile-upload hidden" role="status" aria-live="polite">
+    <div class="cw-profile-upload-head"><span id="profile-avatar-upload-label">[[t:profile.account.uploadingPicture]]</span><strong id="profile-avatar-upload-percent">0%</strong></div>
+    <div class="cw-profile-upload-bar"><span id="profile-avatar-upload-bar"></span></div>
+  </div>
+  <nav class="cw-profile-tabs" data-account-tabs aria-label="[[t:settings.nav.sections]]">
+    <button type="button" class="active" data-settings-nav="profile"><span class="material-symbols-rounded" aria-hidden="true">person</span><span>[[t:profile.account.sections.profile]]</span></button>
+    <button type="button" data-settings-nav="security"><span class="material-symbols-rounded" aria-hidden="true">lock</span><span>[[t:profile.account.sections.security]]</span></button>
+    <button type="button" data-settings-nav="linked"><span class="material-symbols-rounded" aria-hidden="true">link</span><span>[[t:profile.account.sections.linked]]</span></button>
+    <button type="button" data-settings-nav="sessions"><span class="material-symbols-rounded" aria-hidden="true">devices</span><span>[[t:profile.account.sections.devices]]</span></button>
+{settings_interface_nav}
+  </nav>
   <section id="profile-panel-account" class="cw-profile-panel active">
     <div class="cw-set">
-      <nav class="cw-set-nav" aria-label="[[t:settings.nav.sections]]">
-        <button type="button" class="active" data-settings-nav="profile"><span class="material-symbols-rounded" aria-hidden="true">person</span><span>[[t:profile.account.sections.profile]]</span></button>
-        <button type="button" data-settings-nav="security"><span class="material-symbols-rounded" aria-hidden="true">lock</span><span>[[t:profile.account.sections.security]]</span></button>
-        <button type="button" data-settings-nav="linked"><span class="material-symbols-rounded" aria-hidden="true">link</span><span>[[t:profile.account.sections.linked]]</span></button>
-        <button type="button" data-settings-nav="sessions"><span class="material-symbols-rounded" aria-hidden="true">devices</span><span>[[t:profile.account.sections.devices]]</span></button>
-{settings_interface_nav}
-      </nav>
       <div class="cw-set-main">
         <div class="cw-set-col">
         <section id="settings-profile" class="cw-set-card" data-settings-section="profile">

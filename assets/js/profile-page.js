@@ -1057,6 +1057,7 @@
   }
 
   function renderTwoFactor(enabled) {
+    renderAccountSummary({ twoStep: !!enabled });
     const state = $("#profile-2fa-state");
     if (state) {
       state.textContent = enabled ? T("common.status.on") : T("common.status.off");
@@ -1103,6 +1104,7 @@
       .slice()
       .sort((a, b) => Number(b?.created_at || 0) - Number(a?.created_at || 0));
     const rows = current ? [{ ...current, current: true }, ...others] : others;
+    renderAccountSummary({ devices: rows.length });
     const revokeAll = $("#profile-revoke-sessions");
     if (revokeAll) revokeAll.hidden = !others.length;
     host.innerHTML = rows.length ? rows.map((row) => {
@@ -1351,23 +1353,26 @@
     if (descriptor) void window.CW?.Meta?.get?.(descriptor, "detail", {seriesInfo:true})?.then(apply).catch(() => {});
   }
 
+  function paintHeroArt(item) {
+    const art = item ? heroBackdrop(item) : "";
+    const artHost = $("#profile-hero-art");
+    if (!artHost || artHost.dataset.url === art) return;
+    artHost.dataset.url = art;
+    const paint = (result) => {
+      if (artHost.dataset.url !== art) return;
+      artHost.style.backgroundImage = art && result !== "failed" ? `url("${art.replace(/"/g, "%22")}")` : "";
+    };
+    if (art && window.CW?.HeroSwap) window.CW.HeroSwap.preload(art, 4000).then(paint);
+    else paint("none");
+  }
+
   function renderHero(scrobbleItems, historyItems) {
     const item = newestItem([...(scrobbleItems || []), ...(historyItems || [])]);
     heroLastItem = item;
     renderHeroMedia();
     const hero = $("#profile-hero");
     const last = $(".cw-profile-last");
-    const art = item ? heroBackdrop(item) : "";
-    const artHost = $("#profile-hero-art");
-    if (artHost.dataset.url !== art) {
-      artHost.dataset.url = art;
-      const paint = (result) => {
-        if (artHost.dataset.url !== art) return;
-        artHost.style.backgroundImage = art && result !== "failed" ? `url("${art.replace(/"/g, "%22")}")` : "";
-      };
-      if (art && window.CW?.HeroSwap) window.CW.HeroSwap.preload(art, 4000).then(paint);
-      else paint("none");
-    }
+    paintHeroArt(item);
     hero?.classList.toggle("has-last", !!item);
     hero?.classList.toggle("no-last", !item);
     last?.classList.toggle("hidden", !item);
@@ -1412,12 +1417,16 @@
     return { ...item, _pct: Number.isFinite(pct) ? Math.max(0, Math.min(100, pct)) : 0 };
   }
 
+  const NOW_PLAYING_VIEWS = new Set(["overview", "playback"]);
+  let nowPlayingPayload = null;
+
   function renderNowPlaying(payload) {
+    nowPlayingPayload = payload;
     const hero = $("#profile-hero");
     const layer = $("#profile-hero-now");
     const panel = $("#profile-now");
     if (!hero || !layer || !panel) return;
-    const item = nowPlayingItem(payload);
+    const item = NOW_PLAYING_VIEWS.has(document.body.dataset.profileView || "overview") ? nowPlayingItem(payload) : null;
     heroLiveItem = item;
     renderHeroMedia();
     if (!item) {
@@ -5589,6 +5598,7 @@
       document.querySelectorAll("[data-profile-tab]").forEach((tab) => tab.classList.toggle("active", tab === btn));
       document.querySelectorAll(".cw-profile-panel").forEach((panel) => panel.classList.toggle("active", panel.id === `profile-panel-${key}`));
       document.body.dataset.profileView = key;
+      renderNowPlaying(nowPlayingPayload);
       renderHubSummary();
       if (mobilePaging.matches && tabs) tabs.scrollLeft = Math.max(0, btn.offsetLeft - tabs.offsetLeft - 12);
       if (key === "overview") {
@@ -5767,6 +5777,7 @@
     const link = $("#profile-plex-link");
     const unlink = $("#profile-plex-unlink");
     const linked = !!status?.linked;
+    renderAccountSummary({ plex: linked });
     if (state) {
       state.textContent = linked ? T("settings.security.linked") : T("common.status.off");
       state.classList.toggle("is-enabled", linked);
@@ -5841,6 +5852,7 @@
     const unlink = $("#profile-oidc-unlink");
     const configured = !!status?.configured;
     const linked = !!status?.linked;
+    renderAccountSummary({ oidc: linked });
     if (state) {
       state.textContent = linked ? T("settings.security.linked") : (configured ? T("common.status.off") : T("common.status.unavailable"));
       state.classList.toggle("is-enabled", linked);
@@ -6033,8 +6045,31 @@
     });
   }
 
+  const accountSummary = { devices: 0, plex: false, oidc: false, twoStep: false };
+
+  function renderAccountSummary(changes = {}) {
+    Object.assign(accountSummary, changes);
+    const host = $("#profile-account-metrics");
+    if (!host) return;
+    const tiles = [
+      [numberFmt.format(Number(accountSummary.plex) + Number(accountSummary.oidc)), T("profile.account.sections.linked")],
+      [numberFmt.format(accountSummary.devices), T("profile.account.sections.devices")],
+      [accountSummary.twoStep ? T("common.status.on") : T("common.status.off"), T("profile.account.twoStepTile")],
+    ];
+    host.innerHTML = tiles.map(([value, label]) => `<span class="cw-hub-records-stat"><strong>${esc(value)}</strong><span>${esc(label)}</span></span>`).join("");
+  }
+
+  async function loadAccountBackdrop() {
+    try {
+      const widgets = await api("/api/dashboard/widgets?include=history,scrobble&history_limit=1&scrobble_limit=1&view=hero");
+      const item = newestItem([...(widgets.recent_scrobble?.items || []), ...(widgets.recent_history?.items || [])]);
+      paintHeroArt(item);
+      $("#profile-account-hero")?.classList.toggle("has-last", !!item);
+    } catch {}
+  }
+
   function wireSettingsNav() {
-    const nav = $(".cw-set-nav");
+    const nav = $("[data-account-tabs]");
     if (!nav) return;
     const buttons = [...nav.querySelectorAll("[data-settings-nav]")];
     const select = () => {
@@ -6377,6 +6412,8 @@
 
   async function initAccount() {
     wireSettingsNav();
+    renderAccountSummary();
+    void loadAccountBackdrop();
     wirePreferences();
     wireAvatar();
     wireForms();

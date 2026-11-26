@@ -811,6 +811,9 @@
     },
     "account": {
       "yourProfile": "Your profile",
+      "kicker": "My account",
+      "summary": "Account summary",
+      "twoStepTile": "Two-step",
       "changePicture": "Change profile picture",
       "removePicture": "Remove picture",
       "uploadingPicture": "Uploading picture",

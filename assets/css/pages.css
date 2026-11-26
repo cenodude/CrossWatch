@@ -4692,28 +4692,26 @@ html[data-cw-theme=flat-light] .ev-date input::-webkit-calendar-picker-indicator
 }
 @media(pointer:coarse){.cw-page-logs button,.cw-page-logs summary{min-height:44px}}
 
-body.cw-account-page .cw-profile-shell{max-width:1280px;padding:28px 28px 40px}
-.cw-account-header{display:flex;align-items:center;gap:24px;padding:28px 32px;margin-bottom:28px}
+body.cw-profile-page .cw-account-hero-identity{display:flex;align-items:center;gap:20px}
+.cw-account-copy{display:grid;gap:8px;min-width:0}
+.cw-account-hero .cw-media-hero-heading{max-width:100%}
+.cw-account-since{display:inline-flex;align-items:center;gap:4px}
+.cw-account-since .material-symbols-rounded{font-size:16px;line-height:1}
+.cw-account-since.hidden{display:none}
 .cw-account-picture{position:relative;flex:0 0 88px;width:88px;height:88px}
 .cw-account-avatar{display:grid;place-items:center;width:100%;height:100%;overflow:hidden;border-radius:50%}
 .cw-account-avatar img{width:100%;height:100%;object-fit:cover}
 .cw-account-avatar>.material-symbols-rounded{font-size:48px}
 .cw-account-camera{position:absolute;right:-4px;bottom:-4px;display:grid;place-items:center;width:34px;height:34px;padding:0;border-radius:50%;cursor:pointer}
 .cw-account-camera .material-symbols-rounded{font-size:19px}
-.cw-account-identity{min-width:0}
-.cw-account-identity h1{margin:0 0 10px;font-size:28px;line-height:1.2;overflow-wrap:anywhere}
-.cw-account-meta{display:flex;align-items:center;flex-wrap:wrap;gap:12px}
-.cw-account-remove{display:block;margin-top:10px;padding:0;font:inherit;font-size:12px;cursor:pointer}
+.cw-account-meta{display:flex;align-items:center;flex-wrap:wrap;gap:10px}
+.cw-account-remove{justify-self:start;padding:0;font:inherit;font-size:12px;cursor:pointer}
 .cw-account-remove[hidden]{display:none}
 .cw-account-page .cw-set-main{grid-template-columns:minmax(0,1fr)}
 .cw-account-page .cw-set-col{display:contents}
-.cw-account-page .cw-set-nav{top:100px}
-@media(max-width:900px){.cw-account-page .cw-set-nav{position:static}.cw-account-page .cw-set-nav button{flex:0 0 auto}}
 @media(max-width:600px){
-  body.cw-account-page .cw-profile-shell{padding:16px 12px 32px}
-  .cw-account-header{gap:18px;padding:20px 18px;margin-bottom:20px}
+  body.cw-profile-page .cw-account-hero-identity{gap:14px}
   .cw-account-picture{flex-basis:64px;width:64px;height:64px}
-  .cw-account-identity h1{font-size:21px}
   .cw-account-meta{gap:8px}
 }
 
