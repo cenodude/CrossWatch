@@ -46,6 +46,8 @@ def test_hub_airing_merges_provider_histories_and_excludes_watched_episodes(monk
     assert result["total"] == 1
     assert len(resolutions) == 1
     assert [(r["show_ids"], r["episode"]) for r in result["airing"]] == [({"tmdb": "12"}, 3)]
+    assert "continue" not in result
+    assert [(ep["episode"], ep["status"]) for ep in result["seasons"]["12:1"]["episodes"]] == [(1, "watched"), (2, "watched"), (3, "upcoming"), (4, "upcoming")]
     assert provider.calls == [("12", None), ("12", 1)]
 
 

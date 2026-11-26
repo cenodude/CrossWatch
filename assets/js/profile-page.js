@@ -1212,6 +1212,17 @@
     return out;
   };
 
+  let hubSeasons = {};
+  let hubProgressItems = null;
+
+  function seasonProgressOf(item) {
+    if (!isEpisodeItem(item)) return null;
+    const season = Number(item?.season ?? item?.season_number ?? objectOf(item?.episode).season_number);
+    const tmdb = tmdbId(item);
+    const progress = Number.isInteger(season) && tmdb ? hubSeasons[`${tmdb}:${season}`] : null;
+    return progress?.episodes?.length ? progress : null;
+  }
+
   function progressCard(item) {
     const key = storePosterItem(item);
     const pct = progressOf(item) ?? 0;
@@ -1224,14 +1235,22 @@
       title: routes.filter((ref) => ref.provider === provider).map((ref) => ref.title).join("\n"),
     })).filter(Boolean).join("");
     const providerStrip = providerIcons ? `<span class="cw-cw-providers">${providerIcons}</span>` : "";
-    return `<article class="cw-cw-card" data-profile-poster-key="${esc(key)}"><button class="cw-cw-open" type="button" aria-label="Show details for ${esc(titleOf(item))}">
+    const front = `<button class="cw-cw-open" type="button" aria-label="Show details for ${esc(titleOf(item))}">
       <span class="cw-cw-art"><img src="${esc(art)}" alt="" draggable="false" loading="lazy" onerror="this.onerror=null;this.src='/assets/img/placeholder_poster.svg?v=2'">
         ${remainingLabel ? `<span class="cw-cw-remaining">${esc(remainingLabel)}</span>` : ""}
         <span class="cw-cw-copy"><span class="cw-cw-title">${esc(titleOf(item))}</span><span class="cw-cw-sub">${esc(sub)}</span></span>
       </span>
       <span class="cw-cw-foot">${providerStrip}<span>${esc(pausedLabel(item))}</span></span>
       <span class="cw-cw-track" role="progressbar" aria-label="${TH("profile.playback.watchProgress")}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(pct)}"><i style="width:${pct}%"></i></span>
-    </button>${cardActionsButton("data-overview-progress-menu")}</article>`;
+    </button>${cardActionsButton("data-overview-progress-menu")}`;
+    const seasonProgress = seasonProgressOf(item);
+    if (!seasonProgress) return `<article class="cw-cw-card" data-profile-poster-key="${esc(key)}">${front}</article>`;
+    const seasonNumber = Number(item?.season ?? item?.season_number ?? objectOf(item?.episode).season_number);
+    const episodeNumber = Number(item?.episode ?? item?.episode_number ?? objectOf(item?.episode).number);
+    return window.CW.AiringCard.flip({key:`progress:${tmdbId(item)}:${seasonNumber}`, season:seasonNumber, episode:episodeNumber, season_progress:seasonProgress}, {
+      front, className:"cw-cw-card", attrs:`data-profile-poster-key="${esc(key)}"`, image:art,
+      openAttributes:`data-profile-poster-key="${esc(key)}"`, title:titleOf(item),
+    });
   }
 
   function mediaKindLabel(item) {
@@ -1510,6 +1529,7 @@
   }
 
   function patchOverviewNode(current, next) {
+    if (current.nodeType === Node.ELEMENT_NODE && current.hasAttribute("data-airing-open")) return;
     if (current.nodeType !== next.nodeType || current.nodeName !== next.nodeName) { current.replaceWith(next); return; }
     if (current.nodeType === Node.TEXT_NODE) {
       if (current.textContent !== next.textContent) current.textContent = next.textContent;
@@ -1560,6 +1580,7 @@
   }
 
   function renderProgressItems(progressItems) {
+    hubProgressItems = progressItems;
     renderOverviewCards($("#profile-progress"), progressItems.slice(0, mobilePaging.matches ? 3 : 4), progressCard, T("profile.overview.noProgress"), "play_circle");
   }
 
@@ -1573,6 +1594,11 @@
   function renderAiring(data = {}, day = airingDay()) {
     const host = $("#profile-airing-days");
     if (!host) return;
+    const seasons = data.seasons && typeof data.seasons === "object" ? data.seasons : {};
+    if (JSON.stringify(seasons) !== JSON.stringify(hubSeasons)) {
+      hubSeasons = seasons;
+      if (hubProgressItems) renderProgressItems(hubProgressItems);
+    }
     const signature = JSON.stringify([profileCacheKey("airing"), day, data.airing || [], data.metadata_available, data.unavailable]);
     if (signature === airingSignature) return;
     airingSignature = signature;

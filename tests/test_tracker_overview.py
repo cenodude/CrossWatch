@@ -208,6 +208,7 @@ def test_episode_badge_counts_only_known_aired_unwatched_episodes():
     show = {"key": "tmdb:1", "title": "Show", "last_watched": "2026-11-08"}
     result = show_overview(show, {(1, 1)}, meta, DAY)
     assert result["continue"][0]["aired_episodes_left"] == 2
+    assert [ep["status"] for ep in result["continue"][0]["season_progress"]["episodes"][:3]] == ["watched", "unwatched", "unwatched"]
     assert not any("progress_percent" in row for row in result["continue"])
     assert {call[1] for call in meta.calls} == {None, 1, 2}
 

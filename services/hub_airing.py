@@ -51,6 +51,9 @@ def airing_payload(indices: list[dict[str, Any]], cfg: dict[str, Any], provider:
         else:
             shows[tmdb] = {**show, "key": f"tmdb:{tmdb}"}
     result = episode_payload(((show, show["watched"]) for show in shows.values()), provider, today)
-    result.pop("continue")
+    result["seasons"] = {
+        f"{row['show_ids']['tmdb']}:{row['season']}": row["season_progress"]
+        for row in result.pop("continue") + result["airing"] if row.get("season_progress")
+    }
     result["unavailable"] += unavailable
     return result
