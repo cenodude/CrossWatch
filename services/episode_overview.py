@@ -148,7 +148,7 @@ def show_overview(show: dict[str, Any], watched: set[tuple[int, int]], provider:
                 "art": {"kind": "tv", "tmdb": tmdb}, "has_still": bool(episode.get("still_path")),
             }
             if (season, number) == nxt and aired <= today and show.get("status") != "completed":
-                result["continue"].append(row)
+                result["continue"].append({**row, "season_progress": season_progress})
             if today <= aired <= end and (season, number) not in watched:
                 result["airing"].append({**row, "season_progress": season_progress})
     needed = {season for season, count in seasons.items() if any((season, number) not in watched for number in range(1, count + 1))}

@@ -355,11 +355,14 @@ dialog.cw-page-panel {
 :is(#page-tracker,#profile-airing) .trk-calendar-day{background:var(--cw-theme-surface);color:var(--cw-theme-muted);box-shadow:inset 0 0 0 1px var(--cw-theme-border)}
 :is(#page-tracker,#profile-airing) .trk-calendar-day.is-today{background:var(--cw-theme-surface-raised);color:var(--cw-theme-text)}
 :is(#page-tracker,#profile-airing) .trk-calendar-day.has-releases{background:transparent;box-shadow:none}
-:is(#page-tracker,#profile-airing) .cw-airing-face{background:#101317;color:#fff;text-shadow:0 1px 4px rgba(0,0,0,.6)}
+:is(#page-tracker,#profile-airing,#profile-progress) .cw-airing-face{background:#101317;color:#fff;text-shadow:0 1px 4px rgba(0,0,0,.6)}
+:is(#page-tracker,#profile-progress) .cw-flip-card .cw-airing-front{background:transparent;color:inherit;text-shadow:none}
 :is(#page-tracker,#profile-airing) .cw-airing-front::after{background:linear-gradient(180deg,rgba(0,0,0,.55),rgba(0,0,0,.06) 40%,rgba(0,0,0,.85))}
-:is(#page-tracker,#profile-airing) .cw-airing-back::after{background:linear-gradient(180deg,rgba(8,10,12,.4),rgba(8,10,12,.78) 48%,rgba(8,10,12,.96))}
+:is(#page-tracker,#profile-airing,#profile-progress) .cw-airing-back::after{background:linear-gradient(180deg,rgba(8,10,12,.4),rgba(8,10,12,.78) 48%,rgba(8,10,12,.96))}
 .cw-airing-return{background:transparent;color:#cbd0da}
 .cw-airing-hint{color:rgba(255,255,255,.75)}
+.cw-flip-toggle{border:1px solid #ffffff30;border-radius:999px;background:#080b12cc;color:#fff}
+.cw-flip-toggle:hover{background:#1a1f2bcc;border-color:#ffffff50}
 .cw-airing-return:hover{background:#ffffff14}
 .cw-airing-track{stroke:#ffffff19}
 .cw-airing-value{stroke:#a48aff}

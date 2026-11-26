@@ -2748,7 +2748,7 @@ html.cw-ia-sheet-open,html.cw-ia-sheet-open body{overflow:hidden}
 :is(#page-tracker,#profile-airing) .trk-calendar-release{position:relative;display:block;flex:0 0 auto;width:clamp(240px,calc((100cqw - var(--calendar-empty-days,13)*62px + 10px)/var(--calendar-releases,1) - 10px),960px);height:100%;padding:0;border:0;border-radius:14px;text-align:left;font:inherit;perspective:1400px;container-type:inline-size}
 :is(#page-tracker,#profile-airing) .trk-calendar-release img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:-2}
 :is(#page-tracker,#profile-airing) .trk-calendar-release img[hidden]{display:none}
-:is(#page-tracker,#profile-airing) .cw-airing-face::after{content:"";position:absolute;inset:0;z-index:-1;pointer-events:none}
+:is(#page-tracker,#profile-airing,#profile-progress) .cw-airing-face::after{content:"";position:absolute;inset:0;z-index:-1;pointer-events:none}
 :is(#page-tracker,#profile-airing) .trk-calendar-date{position:absolute;top:14px;left:16px;right:16px;display:flex;align-items:center;gap:10px}
 :is(#page-tracker,#profile-airing) .trk-calendar-date time{display:flex;flex-direction:row-reverse;align-items:center;gap:6px}
 :is(#page-tracker,#profile-airing) .trk-calendar-label{font-size:12px}
@@ -2788,6 +2788,16 @@ html.cw-ia-sheet-open,html.cw-ia-sheet-open body{overflow:hidden}
 @media(max-width:760px){.cw-airing-face{padding:10px}.cw-airing-ring{width:44px;height:44px}.cw-airing-ring>strong{font-size:25px}.cw-airing-ring>strong>span{font-size:14px}.cw-airing-summary{margin-top:5px}.cw-airing-season{margin-top:5px}}
 @media(pointer:coarse){.cw-airing-episodes{display:flex;overflow-x:auto;scrollbar-width:none}.cw-airing-episodes button{flex:0 0 44px;height:44px}.cw-airing-return{width:44px;height:44px;top:0;right:0}.cw-airing-title{padding-right:32px}}
 @media(prefers-reduced-motion:reduce){.cw-airing-turn,.cw-airing-value{transition:none}}
+.cw-flip-card{perspective:1400px;container-type:inline-size}
+.cw-flip-card>.cw-airing-turn{display:flex;flex-direction:column;flex:1;min-height:0;height:auto}
+.cw-flip-card .cw-airing-front{position:relative;inset:auto;display:flex;flex-direction:column;flex:1;height:auto;padding:0;overflow:visible;border-radius:inherit;cursor:auto}
+:is(#page-tracker,#profile-progress) .cw-flip-card .cw-airing-front::after{content:none}
+.cw-flip-card .cw-airing-back{border-radius:inherit}
+.cw-flip-card .cw-airing-back>img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:-2}
+.cw-flip-toggle{position:absolute;z-index:3;top:12px;right:12px;display:grid;place-items:center;width:32px;height:32px;padding:0;cursor:pointer}
+.cw-flip-toggle .material-symbols-rounded{font-size:18px;line-height:1}
+.cw-flip-card .cw-cw-remaining,#page-tracker .cw-flip-card .trk-overview-badge{right:52px}
+@media(pointer:coarse){.cw-flip-toggle{top:8px;right:8px;width:40px;height:40px}.cw-flip-card .cw-cw-remaining,#page-tracker .cw-flip-card .trk-overview-badge{right:56px}}
 #page-tracker .trk-overview-progress{position:absolute;z-index:1;left:0;bottom:0;right:0;height:4px}
 #page-tracker .trk-overview-progress i{display:block;height:100%}
 #page-tracker .trk-overview-more{min-height:44px;padding:0 16px;margin-top:18px;cursor:pointer}
@@ -4709,7 +4719,6 @@ body.cw-profile-page .cw-account-hero-identity{display:flex;align-items:center;g
 .cw-account-camera{position:absolute;right:0;bottom:0;display:grid;place-items:center;width:34px;height:34px;padding:0;border-radius:50%;cursor:pointer}
 .cw-account-camera .material-symbols-rounded{font-size:19px}
 .cw-account-meta{display:flex;align-items:center;flex-wrap:wrap;gap:10px}
-.cw-account-page .cw-set{max-width:1100px}
 .cw-set-value{flex:0 1 340px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:right;font-size:14px}
 .cw-account-page .cw-set-main{grid-template-columns:minmax(0,1fr)}
 .cw-account-page .cw-set-col{display:contents}
