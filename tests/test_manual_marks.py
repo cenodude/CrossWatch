@@ -15,6 +15,7 @@ from cw_platform.played_writes import note_write, written_by_crosswatch
 from providers.scrobble.jellyfin import watch as jellyfin_watch
 from providers.scrobble.manual_marks import (
     MAX_MARKS_PER_POLL,
+    PERMISSION_RETRY_SECONDS,
     MarkTracker,
     interval_seconds,
     log_read_failure,
@@ -573,6 +574,56 @@ def test_jellyfin_api_key_can_enumerate_users_without_current_user(monkeypatch, 
     assert paths == ["/Users/Me", "/Users"]
 
 
+@pytest.mark.parametrize("method", ["password", "quick_connect"])
+@pytest.mark.parametrize("status", [400, 401, 403, 404])
+@pytest.mark.parametrize("is_admin", [True, False])
+def test_jellyfin_user_login_fallback_never_enumerates_users(monkeypatch, method, status, is_admin):
+    played = {"u1": []}
+    service, dispatcher = _service(monkeypatch, played)
+    cfg = service._active_cfg()
+    cfg["jellyfin"].update({"auth_method": method, "user_id": "u1"})
+    good = service._mark_get
+    paths: list[str] = []
+
+    def fake_get(path: str, c: dict[str, Any]) -> Any:
+        paths.append(path)
+        if path == "/Users/Me":
+            response = requests.Response()
+            response.status_code = status
+            raise requests.HTTPError(response=response)
+        if path == "/Users/u1":
+            return {"Id": "u1", "Name": "Pascal", "Policy": {"IsAdministrator": is_admin}}
+        assert path.startswith("/Users/u1/Items?")
+        return good(path, c)
+
+    service._mark_get = fake_get
+    service._poll_manual_marks(cfg, BASE)
+    played["u1"].append(_row("1", "New mark", BASE + 25))
+    service._poll_manual_marks(cfg, BASE + 30)
+    assert paths[:2] == ["/Users/Me", "/Users/u1"]
+    assert "/Users" not in paths
+    assert [ev.title for ev in dispatcher.events] == ["New mark"]
+
+
+@pytest.mark.parametrize("configured_user", ["", "u1"])
+def test_jellyfin_user_login_failed_fallback_never_enumerates_users(monkeypatch, configured_user):
+    service, _ = _service(monkeypatch, {})
+    cfg = service._active_cfg()
+    cfg["jellyfin"].update({"auth_method": "quick_connect", "user_id": configured_user})
+    paths: list[str] = []
+
+    def denied(path: str, c: dict[str, Any]) -> Any:
+        paths.append(path)
+        response = requests.Response()
+        response.status_code = 403
+        raise requests.HTTPError(response=response)
+
+    service._mark_get = denied
+    service._poll_manual_marks(cfg, BASE)
+    service._poll_manual_marks(cfg, BASE + 30)
+    assert paths == (["/Users/Me", "/Users/u1"] if configured_user else ["/Users/Me"])
+
+
 @pytest.mark.parametrize("configured_user", ["", "u1"])
 def test_jellyfin_forbidden_user_list_caches_current_user_fallback(monkeypatch, configured_user):
     service, _ = _service(monkeypatch, {"u1": []})
@@ -600,6 +651,79 @@ def test_jellyfin_forbidden_user_list_caches_current_user_fallback(monkeypatch, 
     assert service._mark_users_cache == (BASE, [("u1", "Pascal")])
     service._mark_users(cfg, BASE + service._MARK_USERS_TTL)
     assert paths.count("/Users") == 2
+
+
+@pytest.mark.parametrize("status", [401, 403])
+@pytest.mark.parametrize("current_user_available", [True, False])
+def test_jellyfin_denied_played_items_back_off_without_blocking_other_users(monkeypatch, status, current_user_available):
+    played = {"u1": [], "u2": []}
+    service, dispatcher = _service(monkeypatch, played)
+    cfg = service._active_cfg()
+    good = service._mark_get
+    denied_reads: list[str] = []
+    logs: list[tuple[str, str]] = []
+    state = {"denied": True}
+    service._log = lambda msg, level="INFO": logs.append((level, msg))
+
+    def restricted(path: str, c: dict[str, Any]) -> Any:
+        if path == "/Users/Me" and not current_user_available:
+            response = requests.Response()
+            response.status_code = 400
+            raise requests.HTTPError(response=response)
+        if path == "/Users":
+            return [{"Id": "u1", "Name": "Pascal"}, {"Id": "u2", "Name": "Other"}]
+        if path.startswith("/Users/u2/Items?"):
+            denied_reads.append(path)
+            if state["denied"]:
+                response = requests.Response()
+                response.status_code = status
+                raise requests.HTTPError(response=response)
+        return good(path, c)
+
+    service._mark_get = restricted
+    service._poll_manual_marks(cfg, BASE)
+    played["u1"].append(_row("1", "Allowed mark", BASE + 25))
+    for offset in range(30, int(PERMISSION_RETRY_SECONDS), 30):
+        service._poll_manual_marks(cfg, BASE + offset)
+    assert len(denied_reads) == 1
+    assert [ev.title for ev in dispatcher.events] == ["Allowed mark"]
+    assert [level for level, _ in logs if level == "WARNING"] == ["WARNING"]
+
+    service._poll_manual_marks(cfg, BASE + PERMISSION_RETRY_SECONDS)
+    assert len(denied_reads) == 2
+    assert [level for level, _ in logs if level == "WARNING"] == ["WARNING"]
+
+    state["denied"] = False
+    service._poll_manual_marks(cfg, BASE + 2 * PERMISSION_RETRY_SECONDS)
+    played["u2"].append(_row("2", "Recovered mark", BASE + 2 * PERMISSION_RETRY_SECONDS + 25))
+    service._poll_manual_marks(cfg, BASE + 2 * PERMISSION_RETRY_SECONDS + 30)
+    assert [ev.title for ev in dispatcher.events] == ["Allowed mark", "Recovered mark"]
+    assert any(level == "INFO" and "works again" in msg for level, msg in logs)
+
+
+@pytest.mark.parametrize("status", [401, 403])
+def test_jellyfin_denied_user_discovery_backs_off_and_recovers(monkeypatch, status):
+    service, _ = _service(monkeypatch, {})
+    cfg = service._active_cfg()
+    good = service._mark_get
+    paths: list[str] = []
+    state = {"denied": True}
+
+    def restricted(path: str, c: dict[str, Any]) -> Any:
+        paths.append(path)
+        if state["denied"]:
+            response = requests.Response()
+            response.status_code = status
+            raise requests.HTTPError(response=response)
+        return good(path, c)
+
+    service._mark_get = restricted
+    for offset in range(0, int(PERMISSION_RETRY_SECONDS), 30):
+        service._poll_manual_marks(cfg, BASE + offset)
+    assert paths == ["/Users/Me", "/Users"]
+    state["denied"] = False
+    service._poll_manual_marks(cfg, BASE + PERMISSION_RETRY_SECONDS)
+    assert service._mark_users_cache[1] == [("u1", "Pascal"), ("u2", "blocked")]
 
 
 def test_jellyfin_current_user_server_error_does_not_enumerate_users(monkeypatch):

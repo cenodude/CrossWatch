@@ -6,6 +6,7 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
+import requests
 
 from providers.scrobble.emby import watch as emby_watch
 from providers.scrobble.jellyfin import watch as jellyfin_watch
@@ -67,3 +68,43 @@ def test_playing_updates_follow_the_progress_step(monkeypatch, module, cls, name
         sessions[:] = [_session(pct)]
         service._tick()
     assert [(e.action, round(e.progress)) for e in dispatcher.events] == [("start", p) for p in expected]
+
+
+@pytest.mark.parametrize("module,cls,name", [(emby_watch, "EmbyWatchService", "emby"), (jellyfin_watch, "JellyfinWatchService", "jellyfin")])
+def test_playback_continues_during_manual_mark_permission_backoff(monkeypatch, module, cls, name) -> None:
+    monkeypatch.setattr(module, "_server_id", lambda *a, **k: "server")
+    monkeypatch.setattr(module, "_cw_update", lambda *a, **k: None)
+    monkeypatch.setattr(module, "_cw_update_payload", lambda *a, **k: None)
+    cfg = {name: {"server": "http://media.local", "access_token": "token"},
+           "scrobble": {"watch": {}, "trakt": {"progress_step": 15}}}
+    dispatcher = FakeDispatcher()
+    monkeypatch.setattr(dispatcher, "wants_manual_marks", lambda: True)
+    service = getattr(module, cls)(dispatcher=dispatcher, cfg_provider=lambda: cfg, quiet_startup=True)
+    service._log = lambda msg, level="INFO": None
+    monkeypatch.setattr(service, "_is_seek_jump", lambda *a, **k: (False, 0, 0.0))
+    sessions: list[dict[str, Any]] = []
+    paths: list[str] = []
+    clock = {"now": 1_793_000_000.0}
+    monkeypatch.setattr(module.time, "time", lambda: clock["now"])
+    monkeypatch.setattr(service, "_current_sessions", lambda _cfg: list(sessions))
+
+    def restricted(path: str, _cfg: dict[str, Any]) -> Any:
+        paths.append(path)
+        user = {"Id": "u1", "Name": "anna", "Policy": {"IsAdministrator": False}}
+        if path == "/Users/Me":
+            return user
+        if path == "/Users":
+            return [user]
+        assert path.startswith("/Users/u1/Items?")
+        response = requests.Response()
+        response.status_code = 403
+        raise requests.HTTPError(response=response)
+
+    monkeypatch.setattr(service, "_mark_get", restricted)
+    for pct in (10, 30, 50):
+        sessions[:] = [_session(pct)]
+        service._tick()
+        clock["now"] += 30
+
+    assert [(ev.action, round(ev.progress)) for ev in dispatcher.events] == [("start", 10), ("start", 30), ("start", 50)]
+    assert sum(path.startswith("/Users/u1/Items?") for path in paths) == 1

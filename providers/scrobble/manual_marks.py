@@ -8,6 +8,8 @@ import threading
 from datetime import datetime, timezone
 from typing import Any, Iterable
 
+import requests
+
 from providers.sync._pagination import PageGuard
 
 from cw_platform.played_writes import written_by_crosswatch
@@ -20,6 +22,7 @@ CLOCK_SLACK_SECONDS = 120.0
 SESSION_TTL_SECONDS = 6 * 3600.0
 MAX_MARKS_PER_POLL = 100
 FAILURE_WARN_AFTER = 3
+PERMISSION_RETRY_SECONDS = 600.0
 USERS_LEDGER = "#users"
 FUTURE_WARN_EVERY_SECONDS = 3600.0
 
@@ -80,7 +83,11 @@ def wants_marks(dispatch: Any) -> bool:
         return False
 
 
-def log_read_failure(tracker: "MarkTracker", user: str, who: str, exc: Exception, log: Any) -> None:
+def log_read_failure(tracker: "MarkTracker", user: str, who: str, exc: Exception, log: Any, now: float | None = None) -> None:
+    if now is not None and isinstance(exc, requests.HTTPError) and exc.response is not None and exc.response.status_code in {401, 403}:
+        if tracker.read_denied(user, now):
+            log(f"manual marks: access denied for {who} (HTTP {exc.response.status_code}); retrying in {int(PERMISSION_RETRY_SECONDS / 60)} minutes; check Jellyfin/Emby account permissions", "WARNING")
+        return
     if tracker.read_failed(user):
         log(f"manual marks: reading played items failed {FAILURE_WARN_AFTER} times in a row for {who}: {exc}", "WARNING")
     else:
@@ -104,6 +111,7 @@ class MarkTracker:
         self._sessions: dict[str, float] = {}
         self._future: dict[str, int] = {}
         self._failures: dict[str, int] = {}
+        self._read_retry_after: dict[str, float] = {}
         self._future_warned: dict[str, float] = {}
         self._lock = threading.Lock()
 
@@ -136,8 +144,17 @@ class MarkTracker:
         self._failures[user] = count
         return count == FAILURE_WARN_AFTER
 
+    def read_due(self, user: str, now: float) -> bool:
+        return now >= self._read_retry_after.get(user, 0.0)
+
+    def read_denied(self, user: str, now: float) -> bool:
+        first = user not in self._read_retry_after
+        self._read_retry_after[user] = now + PERMISSION_RETRY_SECONDS
+        return first
+
     def read_ok(self, user: str) -> bool:
-        return self._failures.pop(user, 0) >= FAILURE_WARN_AFTER
+        denied = self._read_retry_after.pop(user, None) is not None
+        return self._failures.pop(user, 0) >= FAILURE_WARN_AFTER or denied
 
     def future_warning(self, user: str, now: float) -> int:
         count = self._future.get(user, 0)
@@ -233,14 +250,14 @@ class MediaServerMarkPoller:
 
     def _mark_users(self, cfg: dict[str, Any], now: float) -> list[tuple[str, str]]:
         ts, users = self._mark_users_cache
-        if not users or now - ts >= self._MARK_USERS_TTL:
+        if (not users or now - ts >= self._MARK_USERS_TTL) and self._marks.read_due(USERS_LEDGER, now):
             rows: list[Any] | None
             try:
                 rows, failure = self._mark_user_rows(cfg)
             except Exception as exc:
                 rows, failure = None, exc
             if failure is not None:
-                log_read_failure(self._marks, USERS_LEDGER, "the user list", failure, self._log)
+                log_read_failure(self._marks, USERS_LEDGER, "the user list", failure, self._log, now)
             else:
                 log_read_health(self._marks, USERS_LEDGER, "the user list", now, self._log)
             if rows is not None and (failure is None or not users):
@@ -332,11 +349,13 @@ class MediaServerMarkPoller:
             slack = interval_seconds(cfg) + CLOCK_SLACK_SECONDS
             for uid, name in self._mark_users(cfg, now):
                 key = uid.lower()
+                if not self._marks.read_due(key, now):
+                    continue
                 who = f"user={mask_account(name)}"
                 try:
                     rows = self._mark_played_rows(uid, cfg, self._marks.watermark(key))
                 except Exception as exc:
-                    log_read_failure(self._marks, key, who, exc, self._log)
+                    log_read_failure(self._marks, key, who, exc, self._log, now)
                     continue
                 dated = [
                     (str(row.get("Id") or "").strip(), row, parse_epoch((row.get("UserData") or {}).get("LastPlayedDate")))
