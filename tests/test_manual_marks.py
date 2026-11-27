@@ -559,7 +559,7 @@ def test_jellyfin_api_key_can_enumerate_users_without_current_user(monkeypatch, 
     good = service._mark_get
     paths: list[str] = []
 
-    def api_key(path: str, cfg: dict[str, Any]) -> Any:
+    def fake_get(path: str, cfg: dict[str, Any]) -> Any:
         paths.append(path)
         if path == "/Users/Me":
             response = requests.Response()
@@ -567,7 +567,7 @@ def test_jellyfin_api_key_can_enumerate_users_without_current_user(monkeypatch, 
             raise requests.HTTPError(response=response)
         return good(path, cfg)
 
-    service._mark_get = api_key
+    service._mark_get = fake_get
     assert service._mark_users(service._active_cfg(), BASE) == [("u1", "Pascal")]
     assert [uid for uid, _ in service._mark_users_cache[1]] == ["u1", "u2"]
     assert paths == ["/Users/Me", "/Users"]
