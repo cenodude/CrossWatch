@@ -729,7 +729,16 @@ class JellyfinWatchService(MediaServerMarkPoller):
         except requests.HTTPError as exc:
             if exc.response is None or exc.response.status_code not in {400, 401, 403, 404}:
                 raise
-            return super()._mark_user_rows(cfg)
+            connection = cfg.get("jellyfin") or {}
+            if str(connection.get("auth_method") or "").strip().lower() not in {"password", "quick_connect"}:
+                return super()._mark_user_rows(cfg)
+            uid = str(connection.get("user_id") or "").strip()
+            if not uid:
+                raise
+            own = self._mark_get(f"/Users/{uid}", cfg)
+            if not isinstance(own, dict) or str(own.get("Id") or "").casefold() != uid.casefold():
+                raise ValueError("invalid configured user response")
+            return [own], None
         if not isinstance(own, dict) or not own.get("Id"):
             raise ValueError("invalid current user response")
         if not (own.get("Policy") or {}).get("IsAdministrator"):
