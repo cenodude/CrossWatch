@@ -91,6 +91,8 @@ def _load_registry() -> list[dict[str, str]]:
             code = str(row.get("code") or "").strip().lower()
             if not _CODE_RE.match(code) or any(item["code"] == code for item in rows):
                 continue
+            if code != DEFAULT_LANGUAGE and not catalog_paths(code):
+                continue
             rows.append({"code": code, "name": str(row.get("name") or code)})
     except Exception as exc:
         _report(f"language registry unavailable: {exc}")

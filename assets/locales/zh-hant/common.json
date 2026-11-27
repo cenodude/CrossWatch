@@ -1,0 +1,224 @@
+{
+  "common": {
+    "actions": {
+      "viewAll": "檢視全部",
+      "refresh": "重新整理",
+      "scrollLeft": "向左捲動",
+      "scrollRight": "向右捲動",
+      "manage": "管理",
+      "enable": "啟用",
+      "unlink": "取消連結",
+      "logOut": "登出",
+      "copy": "複製",
+      "open": "開啟",
+      "restart": "重新啟動",
+      "close": "關閉",
+      "stickySave": "固定儲存",
+      "back": "返回",
+      "clear": "清除",
+      "remove": "移除",
+      "clearAll": "全部清除",
+      "cancel": "取消",
+      "apply": "套用",
+      "resetDefaults": "恢復預設值",
+      "save": "儲存",
+      "change": "變更",
+      "turnOn": "開啟",
+      "continue": "繼續",
+      "link": "連結",
+      "view": "檢視",
+      "tryAgain": "再試一次",
+      "loadMore": "載入更多",
+      "hide": "隱藏",
+      "delete": "刪除",
+      "confirm": "確認",
+      "edit": "編輯"
+    },
+    "media": {
+      "watchlist": "待看清單",
+      "seasonN": "第 {{n}} 季",
+      "episode": "集",
+      "season": "季",
+      "movie": "電影",
+      "show": "劇集",
+      "unknownTitle": "未知作品",
+      "untitled": "未命名",
+      "watched": "已看",
+      "episodeN": "第 {{n}} 集",
+      "movies": "電影",
+      "episodes": "集數",
+      "anime": "動畫",
+      "shows": "劇集",
+      "seasons": "季"
+    },
+    "status": {
+      "loading": "載入中...",
+      "disabled": "已停用",
+      "enabled": "已啟用",
+      "off": "關閉",
+      "done": "完成",
+      "configured": "已設定",
+      "notConfigured": "未設定",
+      "connected": "已連線",
+      "notConnected": "未連線",
+      "unknown": "未知",
+      "pleaseWait": "請稍候",
+      "on": "開啟",
+      "saving": "儲存中...",
+      "unavailable": "無法使用",
+      "loadingShort": "載入中",
+      "noData": "沒有資料",
+      "failed": "失敗"
+    },
+    "units": {
+      "minutes": "分鐘",
+      "hours": "小時",
+      "secShort": "秒"
+    },
+    "labels": {
+      "advanced": "進階",
+      "other": "其他",
+      "filters": "篩選",
+      "provider": "服務",
+      "sort": "排序",
+      "default": "預設",
+      "rating": "評分",
+      "yes": "是",
+      "no": "否"
+    },
+    "selection": {
+      "label": "已選取項目",
+      "selected": "已選取",
+      "visible": "可見",
+      "allResults": "所有結果",
+      "selectAll": "全選",
+      "selectNone": "全不選",
+      "select": "選取"
+    },
+    "time": {
+      "today": "今天",
+      "last7Days": "過去 7 天",
+      "last30Days": "過去 30 天",
+      "olderThan30Days": "超過 30 天",
+      "justNow": "剛剛",
+      "tomorrow": "明天",
+      "yesterday": "昨天"
+    },
+    "language": {
+      "label": "語言",
+      "hintAccount": "已儲存到你的帳號。頁面會重新載入以套用。",
+      "hintBrowser": "已儲存在此瀏覽器。頁面會重新載入以套用。",
+      "reloadPending": "語言已儲存。請先儲存或捨棄你的變更，再重新載入頁面以套用。",
+      "reloadNow": "立即重新載入",
+      "saving": "正在儲存語言...",
+      "invalid": "無法使用此語言。",
+      "saveFailed": "無法儲存語言。"
+    },
+    "notifications": {
+      "newOne": "新通知",
+      "newCount_one": "{{count}} 則新通知",
+      "newCount_other": "{{count}} 則新通知",
+      "titleWithNew_one": "通知（{{count}} 則新通知）",
+      "titleWithNew_other": "通知（{{count}} 則新通知）",
+      "clearOne": "清除通知：{{title}}",
+      "clear": "清除通知",
+      "title": "通知",
+      "settings": "通知設定",
+      "close": "關閉通知",
+      "banner": "新通知橫幅",
+      "pushDevice": "此裝置的推播通知",
+      "sendTest": "傳送測試通知",
+      "view": "檢視通知",
+      "dismissBanner": "關閉通知橫幅",
+      "new": "新",
+      "caughtUp": "你已看完所有通知",
+      "emptyHint": "新通知會顯示在這裡。",
+      "loading": "正在載入通知…",
+      "viewReviews": "檢視同步審查",
+      "push": {
+        "iosHomeScreen": "在 iPhone 和 iPad 上，請將 CrossWatch 加入主畫面並從那裡開啟，才能使用推播通知。",
+        "iosVersion": "推播通知需要 iOS 或 iPadOS 16.4 以上版本。",
+        "unsupported": "此瀏覽器不支援推播通知。",
+        "needsHttps": "需要 HTTPS。請透過安全的網址開啟 CrossWatch 以使用推播通知。",
+        "blocked": "此網站的通知已被封鎖。請在瀏覽器的網站設定中允許通知。",
+        "on": "即使 CrossWatch 已關閉，此裝置仍會收到新通知。",
+        "offer": "即使 CrossWatch 已關閉，也能在此裝置收到新通知。",
+        "unavailable": "推播通知目前無法使用。",
+        "enableFailed": "無法開啟推播通知。",
+        "notAllowed": "此網站未獲准顯示通知。",
+        "changeFailed": "無法變更推播通知。",
+        "testSent": "測試通知已傳送。若沒有出現，請確認裝置的系統設定已允許此瀏覽器的通知。",
+        "testFailed": "無法傳送測試通知。"
+      },
+      "unavailable": "通知無法使用",
+      "loadFailed": "無法載入通知。"
+    },
+    "copy": {
+      "failed": "複製失敗",
+      "copiedCheck": "已複製 ✓"
+    },
+    "paging": {
+      "previous": "上一頁",
+      "next": "下一頁",
+      "previousShort": "上一頁",
+      "nextShort": "下一頁"
+    },
+    "touchHelp": {
+      "information": "資訊",
+      "close": "關閉",
+      "openSettings": "開啟設定"
+    },
+    "cardActions": {
+      "actions": "動作"
+    },
+    "api": {
+      "busyDelete": "同步或資料庫維護正在執行。請等它完成後再刪除配對。"
+    },
+    "profileSelect": {
+      "default": "預設"
+    },
+    "viewCache": {
+      "refreshFailed": "重新整理失敗。顯示已儲存的結果。",
+      "loadFailed": "無法載入{{label}}。",
+      "notPrepared": "無法準備此檢視。請重試。",
+      "retry": "重試"
+    },
+    "mobile": {
+      "confirmTitle": "確認動作",
+      "continue": "繼續",
+      "filters": "篩選",
+      "done": "完成",
+      "remove": "移除",
+      "cancel": "取消",
+      "ok": "確定",
+      "section": "區段"
+    },
+    "mobileSettings": {
+      "title": "行動裝置設定",
+      "visibility": "顯示",
+      "playingCard": "播放卡片",
+      "showOnDevice": "在此裝置的行動版面顯示",
+      "notifications": "通知",
+      "alerts": "通知提醒",
+      "alertsSub": "開啟時顯示橫幅並在支援時震動",
+      "push": "推播通知",
+      "pushSub": "即使 CrossWatch 已關閉，也能在此裝置收到新通知",
+      "touch": "觸控回饋",
+      "haptics": "觸覺回饋",
+      "hapticsSub": "點選選單時短暫震動",
+      "unsupported": "此瀏覽器不支援",
+      "disabledMain": "已在主設定中停用",
+      "disabledProfile": "已在你的個人檔案設定中停用"
+    },
+    "pwa": {
+      "install": "安裝 CrossWatch",
+      "addHome": "將 CrossWatch 加入主畫面。",
+      "dismiss": "關閉",
+      "installBtn": "安裝",
+      "notNow": "稍後再說",
+      "gotIt": "知道了",
+      "best": "加入主畫面以獲得最佳體驗。",
+      "tapShare": "點選分享（⬆︎）→「加入主畫面」。"
+    }
+  }
+}
