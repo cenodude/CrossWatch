@@ -1,0 +1,224 @@
+{
+  "common": {
+    "actions": {
+      "viewAll": "查看全部",
+      "refresh": "刷新",
+      "scrollLeft": "向左滚动",
+      "scrollRight": "向右滚动",
+      "manage": "管理",
+      "enable": "启用",
+      "unlink": "取消链接",
+      "logOut": "注销",
+      "copy": "拷贝",
+      "open": "打开",
+      "restart": "重新启动",
+      "close": "关闭",
+      "stickySave": "固定保存",
+      "back": "返回",
+      "clear": "清除",
+      "remove": "移除",
+      "clearAll": "全部清除",
+      "cancel": "取消",
+      "apply": "套用",
+      "resetDefaults": "恢复默认值",
+      "save": "保存",
+      "change": "变更",
+      "turnOn": "打开",
+      "continue": "继续",
+      "link": "链接",
+      "view": "查看",
+      "tryAgain": "再试一次",
+      "loadMore": "加载更多",
+      "hide": "隐藏",
+      "delete": "删除",
+      "confirm": "确认",
+      "edit": "编辑"
+    },
+    "media": {
+      "watchlist": "待看清单",
+      "seasonN": "第 {{n}} 季",
+      "episode": "集",
+      "season": "季",
+      "movie": "电影",
+      "show": "剧集",
+      "unknownTitle": "未知作品",
+      "untitled": "未命名",
+      "watched": "已看",
+      "episodeN": "第 {{n}} 集",
+      "movies": "电影",
+      "episodes": "集数",
+      "anime": "动画",
+      "shows": "剧集",
+      "seasons": "季"
+    },
+    "status": {
+      "loading": "加载中...",
+      "disabled": "已禁用",
+      "enabled": "已启用",
+      "off": "关闭",
+      "done": "完成",
+      "configured": "已设置",
+      "notConfigured": "未设置",
+      "connected": "已连接",
+      "notConnected": "未连接",
+      "unknown": "未知",
+      "pleaseWait": "请稍候",
+      "on": "打开",
+      "saving": "保存中...",
+      "unavailable": "无法使用",
+      "loadingShort": "加载中",
+      "noData": "没有数据",
+      "failed": "失败"
+    },
+    "units": {
+      "minutes": "分钟",
+      "hours": "小时",
+      "secShort": "秒"
+    },
+    "labels": {
+      "advanced": "高端",
+      "other": "其他",
+      "filters": "筛选",
+      "provider": "服务",
+      "sort": "排序",
+      "default": "默认",
+      "rating": "评分",
+      "yes": "是",
+      "no": "否"
+    },
+    "selection": {
+      "label": "已选取项目",
+      "selected": "已选取",
+      "visible": "可见",
+      "allResults": "所有结果",
+      "selectAll": "全选",
+      "selectNone": "全不选",
+      "select": "选取"
+    },
+    "time": {
+      "today": "今天",
+      "last7Days": "过去 7 天",
+      "last30Days": "过去 30 天",
+      "olderThan30Days": "超过 30 天",
+      "justNow": "刚刚",
+      "tomorrow": "明天",
+      "yesterday": "昨天"
+    },
+    "language": {
+      "label": "语言",
+      "hintAccount": "已保存到你的账号。页面会重新加载以套用。",
+      "hintBrowser": "已保存在此浏览器。页面会重新加载以套用。",
+      "reloadPending": "语言已保存。请先保存或舍弃你的变更，再重新加载页面以套用。",
+      "reloadNow": "立即重新加载",
+      "saving": "正在保存语言...",
+      "invalid": "无法使用此语言。",
+      "saveFailed": "无法保存语言。"
+    },
+    "notifications": {
+      "newOne": "新通知",
+      "newCount_one": "{{count}} 则新通知",
+      "newCount_other": "{{count}} 则新通知",
+      "titleWithNew_one": "通知（{{count}} 则新通知）",
+      "titleWithNew_other": "通知（{{count}} 则新通知）",
+      "clearOne": "清除通知：{{title}}",
+      "clear": "清除通知",
+      "title": "通知",
+      "settings": "通知设置",
+      "close": "关闭通知",
+      "banner": "新通知横幅",
+      "pushDevice": "此设备的推送通知",
+      "sendTest": "发送测试通知",
+      "view": "查看通知",
+      "dismissBanner": "关闭通知横幅",
+      "new": "新",
+      "caughtUp": "你已看完所有通知",
+      "emptyHint": "新通知会显示在这里。",
+      "loading": "正在加载通知…",
+      "viewReviews": "查看同步审查",
+      "push": {
+        "iosHomeScreen": "在 iPhone 和 iPad 上，请将 CrossWatch 加入主画面并从那里打开，才能使用推送通知。",
+        "iosVersion": "推送通知需要 iOS 或 iPadOS 16.4 以上版本。",
+        "unsupported": "此浏览器不支持推送通知。",
+        "needsHttps": "需要 HTTPS。请通过安全的网址打开 CrossWatch 以使用推送通知。",
+        "blocked": "此网站的通知已被屏蔽。请在浏览器的网站设置中允许通知。",
+        "on": "即使 CrossWatch 已关闭，此设备仍会收到新通知。",
+        "offer": "即使 CrossWatch 已关闭，也能在此设备收到新通知。",
+        "unavailable": "推送通知目前无法使用。",
+        "enableFailed": "无法打开推送通知。",
+        "notAllowed": "此网站未获准显示通知。",
+        "changeFailed": "无法变更推送通知。",
+        "testSent": "测试通知已发送。若没有出现，请确认设备的系统设置已允许此浏览器的通知。",
+        "testFailed": "无法发送测试通知。"
+      },
+      "unavailable": "通知无法使用",
+      "loadFailed": "无法加载通知。"
+    },
+    "copy": {
+      "failed": "拷贝失败",
+      "copiedCheck": "已拷贝 ✓"
+    },
+    "paging": {
+      "previous": "上一页",
+      "next": "下一页",
+      "previousShort": "上一页",
+      "nextShort": "下一页"
+    },
+    "touchHelp": {
+      "information": "信息",
+      "close": "关闭",
+      "openSettings": "打开设置"
+    },
+    "cardActions": {
+      "actions": "动作"
+    },
+    "api": {
+      "busyDelete": "同步或数据库维护正在运行。请等它完成后再删除配对。"
+    },
+    "profileSelect": {
+      "default": "默认"
+    },
+    "viewCache": {
+      "refreshFailed": "刷新失败。显示已保存的结果。",
+      "loadFailed": "无法加载{{label}}。",
+      "notPrepared": "无法准备此查看。请重试。",
+      "retry": "重试"
+    },
+    "mobile": {
+      "confirmTitle": "确认动作",
+      "continue": "继续",
+      "filters": "筛选",
+      "done": "完成",
+      "remove": "移除",
+      "cancel": "取消",
+      "ok": "确定",
+      "section": "区段"
+    },
+    "mobileSettings": {
+      "title": "移动设备设置",
+      "visibility": "显示",
+      "playingCard": "播放卡片",
+      "showOnDevice": "在此设备的移动布局显示",
+      "notifications": "通知",
+      "alerts": "通知提醒",
+      "alertsSub": "打开时显示横幅并在支持时震动",
+      "push": "推送通知",
+      "pushSub": "即使 CrossWatch 已关闭，也能在此设备收到新通知",
+      "touch": "触摸回馈",
+      "haptics": "触觉回馈",
+      "hapticsSub": "点击菜单时短暂震动",
+      "unsupported": "此浏览器不支持",
+      "disabledMain": "已在主设置中禁用",
+      "disabledProfile": "已在你的个人资料设置中禁用"
+    },
+    "pwa": {
+      "install": "安装 CrossWatch",
+      "addHome": "将 CrossWatch 加入主画面。",
+      "dismiss": "关闭",
+      "installBtn": "安装",
+      "notNow": "稍后再说",
+      "gotIt": "知道了",
+      "best": "加入主画面以获得最佳体验。",
+      "tapShare": "点击分享（⬆︎）→「加入主画面」。"
+    }
+  }
+}

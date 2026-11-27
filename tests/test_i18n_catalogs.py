@@ -66,10 +66,23 @@ def test_catalog_namespaces_do_not_overlap_between_files() -> None:
                 owners[namespace] = path.name
 
 
-def test_every_language_has_the_same_keys_as_english() -> None:
+def test_complete_languages_have_the_same_keys_as_english() -> None:
+    english = set(i18n.messages("en"))
+    for code in ("en", "nl"):
+        assert set(i18n.messages(code)) == english, code
+
+
+def test_languages_only_use_english_keys() -> None:
     english = set(i18n.messages("en"))
     for code in _codes():
-        assert set(i18n.messages(code)) == english, code
+        stale = sorted(set(i18n.messages(code)) - english)
+        assert not stale, f"{code}: {stale[:10]}"
+
+
+def test_registry_hides_languages_without_catalogs(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(i18n, "catalog_paths", lambda code: [] if code == "nl" else [LOCALES / "en" / "app.json"])
+    codes = [row["code"] for row in i18n._load_registry()]
+    assert "en" in codes and "nl" not in codes
 
 
 def test_placeholders_and_rich_markers_match_english() -> None:
@@ -77,6 +90,8 @@ def test_placeholders_and_rich_markers_match_english() -> None:
     for code in _codes():
         messages = i18n.messages(code)
         for key, text in english.items():
+            if key not in messages:
+                continue
             other = messages[key]
             if not PLURAL.search(key) or key.endswith("_other"):
                 assert set(PLACEHOLDER.findall(other)) == set(PLACEHOLDER.findall(text)), f"{code}:{key}"

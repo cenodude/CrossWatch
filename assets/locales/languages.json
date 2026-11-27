@@ -2,6 +2,8 @@
   "default": "en",
   "languages": [
     { "code": "en", "name": "English", "plural": "one_other" },
-    { "code": "nl", "name": "Nederlands", "plural": "one_other" }
+    { "code": "nl", "name": "Nederlands", "plural": "one_other" },
+    { "code": "zh-hans", "name": "简体中文", "plural": "other" },
+    { "code": "zh-hant", "name": "繁體中文", "plural": "other" }
   ]
 }
