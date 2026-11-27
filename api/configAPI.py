@@ -14,6 +14,7 @@ from packaging.version import InvalidVersion, Version
 
 from fastapi import APIRouter, Body, Request
 from fastapi.responses import JSONResponse
+from cw_platform.metadata_cache import validate_metadata_locale
 from providers.scrobble.sources import source_enabled
 from _logging import log as BASE_LOG
 
@@ -496,10 +497,16 @@ def api_config() -> JSONResponse:
     cfg = base.redact_config(cfg)  # type: ignore[attr-defined]
     return _nostore(JSONResponse(cfg))
 
-@router.post("/config")
-def api_config_save(request: Request, payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+@router.post("/config", response_model=None)
+def api_config_save(request: Request, payload: dict[str, Any] = Body(...)) -> dict[str, Any] | JSONResponse:
     env = _env()
     incoming = dict(payload or {})
+    metadata = incoming.get("metadata")
+    if isinstance(metadata, dict) and "locale" in metadata:
+        try:
+            incoming["metadata"] = {**metadata, "locale": validate_metadata_locale(metadata["locale"])}
+        except ValueError:
+            return JSONResponse({"ok": False, "error": "Metadata locale must be a valid language tag (for example en-US or nl-NL), or empty."}, status_code=400)
     current  = dict(env["load"]() or {})
 
     try:

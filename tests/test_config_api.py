@@ -4,9 +4,53 @@ import json
 from types import SimpleNamespace
 from typing import Any, cast
 
+import pytest
+
 
 def _loads_body(body: bytes | memoryview[int]) -> Any:
     return json.loads(bytes(body))
+
+
+@pytest.mark.parametrize(("locale", "expected"), [
+    ("", ""), (None, ""), (" \t", ""), (" nl-NL ", "nl-NL"), ("zh-hans", "zh-hans"),
+])
+def test_config_save_metadata_locale_can_be_cleared_and_round_trips(config_base, monkeypatch, locale, expected) -> None:
+    from api import configAPI as cfg_api
+    from cw_platform import config_base as base
+
+    base.save_config({"metadata": {"locale": "en-US", "meta_cache_enable": True}})
+    monkeypatch.setattr(cfg_api, "_env", lambda: {
+        "cfg_base": base,
+        "load": base.load_config,
+        "save": base.save_config,
+        "prune": lambda *_: None,
+        "norm_pair": lambda *_: None,
+    })
+    monkeypatch.setattr(cfg_api, "_after_config_save", lambda *_: None)
+
+    result = cfg_api.api_config_save(cast(Any, SimpleNamespace(app=SimpleNamespace())), {"metadata": {"locale": locale}})
+
+    assert result["ok"] is True
+    saved = base.load_config()
+    assert saved["metadata"]["locale"] == expected
+    assert saved["metadata"]["meta_cache_enable"] is True
+
+
+@pytest.mark.parametrize("locale", ["en_US", "en US", "../en", "en\\US", "en-US\u200b", "abcdefgh-" * 8 + "en", 123, False, {}, []])
+def test_config_rejects_invalid_metadata_locale_before_saving(monkeypatch, locale) -> None:
+    from api import configAPI as cfg_api
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    monkeypatch.setattr(cfg_api, "_env", lambda: {})
+    app = FastAPI()
+    app.include_router(cfg_api.router)
+    with TestClient(app) as client:
+        response = client.post("/api/config", json={"metadata": {"locale": locale}})
+
+    assert response.status_code == 400
+    assert response.json()["ok"] is False
+    assert "valid language tag" in response.json()["error"]
 
 
 def test_config_migrate_clears_pending_upgrade_marker(monkeypatch) -> None:

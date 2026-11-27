@@ -541,6 +541,7 @@
         "addKey": "新增 TMDb API 金鑰以啟用中繼資料查詢。",
         "locale": "語言／地區",
         "localeHint": "選用。範例：en-US、zh-TW。",
+        "localeInvalid": "中繼資料的語言標籤必須有效（例如 en-US 或 zh-TW），也可以留空。",
         "checkFailedShort": "TMDb 金鑰檢查失敗",
         "configuredCheck": "已設定；點選「檢查」以驗證",
         "connectedLocked": "已連線 — 刪除金鑰以重新連線。",

@@ -560,6 +560,18 @@ async function saveSettings() {
     const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
     const ensureObj = (root, key) => root[key] && typeof root[key] === "object" ? root[key] : (root[key] = {});
 
+    const prevMetaLocale = _cwNorm(serverCfg?.metadata?.locale);
+    const metaLocaleEl = _cwEl("metadata_locale");
+    const uiMetaLocale = _cwNorm(metaLocaleEl?.value);
+    if (metaLocaleEl && uiMetaLocale && (uiMetaLocale.length > 64 || !/^[a-zA-Z0-9]{1,8}(-[a-zA-Z0-9]{1,8})*$/.test(uiMetaLocale))) {
+      throw new Error(T("settings.meta.tmdb.localeInvalid"));
+    }
+    if (metaLocaleEl && uiMetaLocale !== prevMetaLocale) {
+      const meta = ensureObj(cfg, "metadata");
+      meta.locale = uiMetaLocale;
+      mark();
+    }
+
     try { delete cfg.app_auth; } catch {}
 
     let oidcDraft = null;
@@ -638,15 +650,6 @@ async function saveSettings() {
         Object.assign(ensureObj(cfg, "runtime"), { debug: wantDebug, debug_mods: wantMods, debug_http: wantHttp });
         mark();
       }
-    }
-
-    const prevMetaLocale = _cwNorm(serverCfg?.metadata?.locale);
-    const metaLocaleEl = _cwEl("metadata_locale");
-    const uiMetaLocale = _cwNorm(metaLocaleEl?.value);
-    if (metaLocaleEl && uiMetaLocale !== prevMetaLocale) {
-      const meta = ensureObj(cfg, "metadata");
-      uiMetaLocale ? (meta.locale = uiMetaLocale) : delete meta.locale;
-      mark();
     }
 
     const normalizeUiDisplay = (value, fallbackLimit) => {

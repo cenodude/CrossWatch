@@ -541,6 +541,7 @@
         "addKey": "Add a TMDb API key to enable metadata lookups.",
         "locale": "Language / locale",
         "localeHint": "Optional. Example: en-US, nl-NL.",
+        "localeInvalid": "Metadata locale must be a valid language tag (for example en-US or nl-NL), or empty.",
         "checkFailedShort": "TMDb key check failed",
         "configuredCheck": "Configured; click Check to validate",
         "connectedLocked": "Connected — delete the key to reconnect.",

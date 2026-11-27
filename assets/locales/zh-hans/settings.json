@@ -541,6 +541,7 @@
         "addKey": "添加 TMDb API 密钥以启用元数据查找。",
         "locale": "语言／地区",
         "localeHint": "选用。范例：en-US、zh-TW。",
+        "localeInvalid": "元数据的语言标签必须有效（例如 en-US 或 zh-CN），也可以留空。",
         "checkFailedShort": "TMDb 密钥检查失败",
         "configuredCheck": "已设置；点击「检查」以验证",
         "connectedLocked": "已连接 — 删除密钥以重新连接。",

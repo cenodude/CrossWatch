@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from api import metaAPI
 from cw_platform.config_base import DEFAULT_CFG
 from cw_platform.metadata_cache import (
@@ -14,6 +16,21 @@ from cw_platform.metadata_cache import (
 
 def test_metadata_cache_has_no_expiry_setting() -> None:
     assert "ttl_hours" not in DEFAULT_CFG["metadata"]
+
+
+def test_metadata_locale_default_stays_english() -> None:
+    assert DEFAULT_CFG["metadata"]["locale"] == "en-US"
+
+
+@pytest.mark.parametrize("locale", [None, "", " \t\n"])
+def test_blank_cache_locale_uses_english(tmp_path, locale) -> None:
+    assert metadata_cache_path(tmp_path, "movie", 123, locale).name == "123.en-US.json"
+
+
+@pytest.mark.parametrize("locale", ["en_US", "en US", "../en", "en\\US", "en-US\u200b", "abcdefgh-" * 8 + "en", 123])
+def test_invalid_cache_locale_is_still_rejected(tmp_path, locale) -> None:
+    with pytest.raises(ValueError, match="valid language tag"):
+        metadata_cache_path(tmp_path, "movie", 123, locale)
 
 
 def test_shared_metadata_cache_round_trip_and_expiry(tmp_path, monkeypatch) -> None:
