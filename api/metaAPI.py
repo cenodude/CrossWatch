@@ -31,6 +31,7 @@ from pydantic import BaseModel
 
 from cw_platform.config_base import CONFIG, load_config, save_config
 from cw_platform.metadata_cache import (
+    configured_metadata_locale,
     merge_metadata_cache_payload,
     metadata_cache_path,
     prune_metadata_cache,
@@ -187,10 +188,7 @@ def _meta_cache_path(entity: str, tmdb_id: str | int, locale: str | None) -> Pat
 def _cfg_ui_locale() -> str | None:
     try:
         cfg = load_config() or {}
-        md = cfg.get("metadata") or {}
-        loc = md.get("locale") or (cfg.get("ui") or {}).get("locale") or None
-        loc = str(loc).strip() if loc else None
-        return loc or None
+        return configured_metadata_locale(cfg)
     except Exception:
         return None
 

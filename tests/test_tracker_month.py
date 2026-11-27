@@ -330,6 +330,39 @@ def test_cached_metadata_and_locale_are_revalidated_without_expiring_metadata(tm
     assert third["generated"] > second["generated"]
 
 
+@pytest.mark.parametrize(("metadata_locale", "ui_locale", "expected"), [
+    ("", "nl-NL", "nl-NL"),
+    (None, "zh-hans", "zh-hans"),
+    (" \t", "nl-NL", "nl-NL"),
+    ("en_US", "nl-NL", "nl-NL"),
+    ("en-US\u200b", "", "en-US"),
+    ("", "en_US", "en-US"),
+    ("", "", "en-US"),
+    ("nl-NL", "en-US", "nl-NL"),
+    (" en-US ", "nl-NL", "en-US"),
+    (42, "nl-NL", "nl-NL"),
+])
+def test_review_uses_validated_locale_and_cached_metadata(tmp_path, monkeypatch, metadata_locale, ui_locale, expected):
+    from api import metaAPI
+    from cw_platform.metadata_cache import write_metadata_cache
+
+    store = TrackerStore(tmp_path / "tracker")
+    store.write_state("history", {"one": movie("2026-08-01T12:00:00Z")})
+    cfg = {"metadata": {"locale": metadata_locale}, "ui": {"locale": ui_locale}}
+    monkeypatch.setattr(metaAPI, "load_config", lambda: cfg)
+    monkeypatch.setattr(metaAPI, "_meta_cache_dir", lambda: tmp_path / "meta")
+    assert write_metadata_cache(tmp_path / "meta", "movie", "1", expected, {"runtime_minutes": 120})
+
+    result = wait_report(store, cfg, "2026-08")
+
+    assert result["error"] is None
+    assert result["report"]["minutes"] == 120
+    assert metaAPI._cfg_ui_locale() == expected
+    _, state = month._decode(month._saved(store, "2026-08", month.review_timezone(cfg)))
+    assert state["locale"] == expected
+    assert not month.get_report(store, cfg, "2026-08")["stale"]
+
+
 def test_corrupt_cache_recovers_without_starving_other_trackers(tmp_path, monkeypatch):
     roots = [tmp_path / "ann", tmp_path / "bob"]
     for root in roots:

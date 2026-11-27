@@ -541,6 +541,7 @@
         "addKey": "Thêm khóa API TMDb để bật tra cứu metadata.",
         "locale": "Ngôn ngữ / khu vực",
         "localeHint": "Tùy chọn. Ví dụ: en-US, vi-VN.",
+        "localeInvalid": "Mã ngôn ngữ cho siêu dữ liệu phải hợp lệ (ví dụ: en-US hoặc vi-VN) hoặc để trống.",
         "checkFailedShort": "Kiểm tra khóa TMDb thất bại",
         "configuredCheck": "Đã cấu hình; nhấn Kiểm tra để xác thực",
         "connectedLocked": "Đã kết nối — xóa khóa để kết nối lại.",

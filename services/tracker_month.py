@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any, Callable, Mapping
 
 from cw_platform.tracker_store import TrackerStore, tracker_roots
+from cw_platform.metadata_cache import configured_metadata_locale
 from cw_platform.tracker_automation import root_options, instance_options
 
 _VERSION = 3
@@ -436,7 +437,7 @@ def get_report(store: TrackerStore, cfg: Mapping[str, Any], month: str = "", *, 
     if month > _current(month, now):
         raise ValueError("future_month")
     period_bounds(month, tz)
-    locale = str((cfg.get("metadata") or {}).get("locale") or (cfg.get("ui") or {}).get("locale") or "en-US").strip() or "en-US"
+    locale = configured_metadata_locale(cfg)
     key = (str(store.root.resolve()), month, str(tz))
     saved, revision, unavailable, recovering = None, None, False, False
     try:

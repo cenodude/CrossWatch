@@ -541,6 +541,7 @@
         "addKey": "Voeg een TMDb API-sleutel toe om metadata op te zoeken.",
         "locale": "Taal / landinstelling",
         "localeHint": "Optioneel. Voorbeeld: en-US, nl-NL.",
+        "localeInvalid": "De taalcode voor metadata moet geldig zijn (bijvoorbeeld en-US of nl-NL) of leeg blijven.",
         "checkFailedShort": "Controle van TMDb-sleutel mislukt",
         "configuredCheck": "Geconfigureerd; klik op Controleren om te valideren",
         "connectedLocked": "Verbonden — verwijder de sleutel om opnieuw te koppelen.",

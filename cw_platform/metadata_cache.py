@@ -50,8 +50,12 @@ def _cache_tmdb_id(value: Any) -> str:
     return normalized
 
 
-def _cache_locale(value: Any) -> str:
-    text = str(value or "en-US").strip()
+def validate_metadata_locale(value: Any) -> str:
+    if value is not None and not isinstance(value, str):
+        raise ValueError("Locale must be a valid language tag")
+    text = (value or "").strip()
+    if not text:
+        return ""
     if (
         "/" in text
         or "\\" in text
@@ -60,6 +64,21 @@ def _cache_locale(value: Any) -> str:
     ):
         raise ValueError("Locale must be a valid language tag")
     return text
+
+
+def configured_metadata_locale(cfg: Mapping[str, Any]) -> str:
+    for section in ("metadata", "ui"):
+        try:
+            locale = validate_metadata_locale((cfg.get(section) or {}).get("locale"))
+        except ValueError:
+            continue
+        if locale:
+            return locale
+    return "en-US"
+
+
+def _cache_locale(value: Any) -> str:
+    return validate_metadata_locale(value) or "en-US"
 
 
 def metadata_cache_path(
