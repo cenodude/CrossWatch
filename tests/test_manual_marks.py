@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from typing import Any, cast
 
 import pytest
+import requests
 
 from cw_platform.played_writes import note_write, written_by_crosswatch
 from providers.scrobble.jellyfin import watch as jellyfin_watch
@@ -72,6 +73,8 @@ def _service(monkeypatch, played: dict[str, list[dict[str, Any]]], dispatcher: F
     service._log = lambda msg, level="INFO": None  # type: ignore[method-assign]
 
     def fake_get(path: str, _cfg: dict[str, Any]) -> Any:
+        if path == "/Users/Me":
+            return {"Id": "u1", "Name": "Pascal", "Policy": {"IsAdministrator": True}}
         if path == "/Users":
             return [
                 {"Id": "u1", "Name": "Pascal", "Policy": {}},
@@ -516,6 +519,102 @@ def test_plex_reconnects_and_resumes_marks_after_account_change(monkeypatch):
     assert service._item_cache == {}
     assert polled_as[0] == "ownerA"
     assert polled_as[-1] == "ownerB"
+
+
+@pytest.mark.parametrize(("whitelist", "allowed"), [([], True), (["Pascal"], True), (["id:u1"], True), (["another-user"], False), (["id:u2"], False)])
+def test_jellyfin_regular_account_only_polls_authenticated_user(monkeypatch, whitelist, allowed):
+    played = {"u1": []}
+    service, dispatcher = _service(monkeypatch, played)
+    cfg = service._active_cfg()
+    cfg["jellyfin"]["user_id"] = "another-user"
+    cfg["scrobble"]["watch"].update({"route_provider": "jellyfin", "filters": {"username_whitelist": whitelist}})
+    identity_dispatcher = Dispatcher([], cfg_provider=lambda: cfg)
+    monkeypatch.setattr(dispatcher, "accepts_user", identity_dispatcher.accepts_user)
+    good = service._mark_get
+    paths: list[str] = []
+
+    def scoped(path: str, c: dict[str, Any]) -> Any:
+        paths.append(path)
+        if path == "/Users/Me":
+            return {"Id": "u1", "Name": "Pascal", "Policy": {"IsAdministrator": False}}
+        if path.startswith("/Users/u1/Items?"):
+            return good(path, c)
+        raise AssertionError(f"Unexpected request: {path}")
+
+    service._mark_get = scoped
+    service._poll_manual_marks(cfg, BASE)
+    played["u1"].append(_row("1", "New mark", BASE + 25))
+    service._poll_manual_marks(cfg, BASE + 31)
+    service._poll_manual_marks(cfg, BASE + 62)
+
+    assert paths.count("/Users/Me") == 1
+    assert "/Users" not in paths
+    assert [ev.title for ev in dispatcher.events] == (["New mark"] if allowed else [])
+    assert any(path.startswith("/Users/u1/Items?") for path in paths) is allowed
+
+
+@pytest.mark.parametrize("status", [400, 401, 403, 404])
+def test_jellyfin_api_key_can_enumerate_users_without_current_user(monkeypatch, status):
+    service, _ = _service(monkeypatch, {"u1": []})
+    good = service._mark_get
+    paths: list[str] = []
+
+    def fake_get(path: str, cfg: dict[str, Any]) -> Any:
+        paths.append(path)
+        if path == "/Users/Me":
+            response = requests.Response()
+            response.status_code = status
+            raise requests.HTTPError(response=response)
+        return good(path, cfg)
+
+    service._mark_get = fake_get
+    assert service._mark_users(service._active_cfg(), BASE) == [("u1", "Pascal")]
+    assert [uid for uid, _ in service._mark_users_cache[1]] == ["u1", "u2"]
+    assert paths == ["/Users/Me", "/Users"]
+
+
+@pytest.mark.parametrize("configured_user", ["", "u1"])
+def test_jellyfin_forbidden_user_list_caches_current_user_fallback(monkeypatch, configured_user):
+    service, _ = _service(monkeypatch, {"u1": []})
+    cfg = service._active_cfg()
+    cfg["jellyfin"]["user_id"] = configured_user
+    good = service._mark_get
+    paths: list[str] = []
+
+    def forbidden(path: str, c: dict[str, Any]) -> Any:
+        paths.append(path)
+        if path == "/Users":
+            response = requests.Response()
+            response.status_code = 403
+            raise requests.HTTPError(response=response)
+        if path == "/Users/u1":
+            return good("/Users/Me", c)
+        return good(path, c)
+
+    service._mark_get = forbidden
+    service._poll_manual_marks(cfg, BASE)
+    service._poll_manual_marks(cfg, BASE + 31)
+    service._poll_manual_marks(cfg, BASE + 62)
+
+    assert paths.count("/Users") == 1
+    assert service._mark_users_cache == (BASE, [("u1", "Pascal")])
+    service._mark_users(cfg, BASE + service._MARK_USERS_TTL)
+    assert paths.count("/Users") == 2
+
+
+def test_jellyfin_current_user_server_error_does_not_enumerate_users(monkeypatch):
+    service, _ = _service(monkeypatch, {})
+    paths: list[str] = []
+
+    def unavailable(path: str, cfg: dict[str, Any]) -> Any:
+        paths.append(path)
+        response = requests.Response()
+        response.status_code = 500
+        raise requests.HTTPError(response=response)
+
+    service._mark_get = unavailable
+    assert service._mark_users(service._active_cfg(), BASE) == []
+    assert paths == ["/Users/Me"]
 
 
 def test_user_list_fallback_keeps_cached_household_and_counts_failure(monkeypatch):
