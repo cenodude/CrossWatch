@@ -1,0 +1,224 @@
+{
+  "common": {
+    "actions": {
+      "viewAll": "Xem tất cả",
+      "refresh": "Làm mới",
+      "scrollLeft": "Cuộn sang trái",
+      "scrollRight": "Cuộn sang phải",
+      "manage": "Quản lý",
+      "enable": "Bật",
+      "unlink": "Hủy liên kết",
+      "logOut": "Đăng xuất",
+      "copy": "Sao chép",
+      "open": "Mở",
+      "restart": "Khởi động lại",
+      "close": "Đóng",
+      "stickySave": "Lưu cố định",
+      "back": "Quay lại",
+      "clear": "Xóa",
+      "remove": "Gỡ",
+      "clearAll": "Xóa tất cả",
+      "cancel": "Hủy",
+      "apply": "Áp dụng",
+      "resetDefaults": "Khôi phục mặc định",
+      "save": "Lưu",
+      "change": "Thay đổi",
+      "turnOn": "Bật",
+      "continue": "Tiếp tục",
+      "link": "Liên kết",
+      "view": "Xem",
+      "tryAgain": "Thử lại",
+      "loadMore": "Tải thêm",
+      "hide": "Ẩn",
+      "delete": "Xóa",
+      "confirm": "Xác nhận",
+      "edit": "Sửa"
+    },
+    "media": {
+      "watchlist": "Danh sách xem",
+      "seasonN": "Mùa {{n}}",
+      "episode": "Tập",
+      "season": "Mùa",
+      "movie": "Phim",
+      "show": "Phim bộ",
+      "unknownTitle": "Tựa không rõ",
+      "untitled": "Không có tên",
+      "watched": "Đã xem",
+      "episodeN": "Tập {{n}}",
+      "movies": "Phim",
+      "episodes": "Tập",
+      "anime": "Anime",
+      "shows": "Phim bộ",
+      "seasons": "Mùa"
+    },
+    "status": {
+      "loading": "Đang tải...",
+      "disabled": "Đã tắt",
+      "enabled": "Đã bật",
+      "off": "Tắt",
+      "done": "Xong",
+      "configured": "Đã cấu hình",
+      "notConfigured": "Chưa cấu hình",
+      "connected": "Đã kết nối",
+      "notConnected": "Chưa kết nối",
+      "unknown": "Không rõ",
+      "pleaseWait": "Vui lòng chờ",
+      "on": "Bật",
+      "saving": "Đang lưu...",
+      "unavailable": "Không khả dụng",
+      "loadingShort": "Đang tải",
+      "noData": "Không có dữ liệu",
+      "failed": "Thất bại"
+    },
+    "units": {
+      "minutes": "Phút",
+      "hours": "Giờ",
+      "secShort": "giây"
+    },
+    "labels": {
+      "advanced": "Nâng cao",
+      "other": "Khác",
+      "filters": "Bộ lọc",
+      "provider": "Dịch vụ",
+      "sort": "Sắp xếp",
+      "default": "Mặc định",
+      "rating": "Đánh giá",
+      "yes": "Có",
+      "no": "Không"
+    },
+    "selection": {
+      "label": "Mục đã chọn",
+      "selected": "đã chọn",
+      "visible": "Hiển thị",
+      "allResults": "Tất cả kết quả",
+      "selectAll": "Chọn tất cả",
+      "selectNone": "Bỏ chọn tất cả",
+      "select": "Chọn"
+    },
+    "time": {
+      "today": "Hôm nay",
+      "last7Days": "7 ngày qua",
+      "last30Days": "30 ngày qua",
+      "olderThan30Days": "Cũ hơn 30 ngày",
+      "justNow": "vừa xong",
+      "tomorrow": "Ngày mai",
+      "yesterday": "Hôm qua"
+    },
+    "language": {
+      "label": "Ngôn ngữ",
+      "hintAccount": "Đã lưu vào tài khoản của bạn. Trang sẽ tải lại để áp dụng.",
+      "hintBrowser": "Đã lưu trong trình duyệt này. Trang sẽ tải lại để áp dụng.",
+      "reloadPending": "Đã lưu ngôn ngữ. Hãy lưu hoặc hủy các thay đổi của bạn, rồi tải lại trang để áp dụng.",
+      "reloadNow": "Tải lại ngay",
+      "saving": "Đang lưu ngôn ngữ...",
+      "invalid": "Ngôn ngữ này không khả dụng.",
+      "saveFailed": "Không thể lưu ngôn ngữ."
+    },
+    "notifications": {
+      "newOne": "Thông báo mới",
+      "newCount_one": "{{count}} thông báo mới",
+      "newCount_other": "{{count}} thông báo mới",
+      "titleWithNew_one": "Thông báo ({{count}} mới)",
+      "titleWithNew_other": "Thông báo ({{count}} mới)",
+      "clearOne": "Xóa thông báo: {{title}}",
+      "clear": "Xóa thông báo",
+      "title": "Thông báo",
+      "settings": "Cài đặt thông báo",
+      "close": "Đóng thông báo",
+      "banner": "Biểu ngữ cho thông báo mới",
+      "pushDevice": "Thông báo đẩy trên thiết bị này",
+      "sendTest": "Gửi thông báo thử",
+      "view": "Xem thông báo",
+      "dismissBanner": "Đóng biểu ngữ thông báo",
+      "new": "Mới",
+      "caughtUp": "Bạn đã xem hết rồi",
+      "emptyHint": "Thông báo mới sẽ xuất hiện ở đây.",
+      "loading": "Đang tải thông báo…",
+      "viewReviews": "Xem đánh giá đồng bộ",
+      "push": {
+        "iosHomeScreen": "Trên iPhone và iPad, hãy thêm CrossWatch vào Màn hình chính và mở từ đó để dùng thông báo đẩy.",
+        "iosVersion": "Thông báo đẩy cần iOS hoặc iPadOS 16.4 trở lên.",
+        "unsupported": "Trình duyệt này không hỗ trợ thông báo đẩy.",
+        "needsHttps": "Cần HTTPS. Hãy mở CrossWatch qua địa chỉ bảo mật để dùng thông báo đẩy.",
+        "blocked": "Thông báo đã bị chặn cho trang này. Hãy cho phép trong cài đặt trang của trình duyệt.",
+        "on": "Thiết bị này nhận thông báo mới ngay cả khi CrossWatch đã đóng.",
+        "offer": "Nhận thông báo mới trên thiết bị này ngay cả khi CrossWatch đã đóng.",
+        "unavailable": "Thông báo đẩy hiện không khả dụng.",
+        "enableFailed": "Không thể bật thông báo đẩy.",
+        "notAllowed": "Trang này không được phép gửi thông báo.",
+        "changeFailed": "Không thể thay đổi thông báo đẩy.",
+        "testSent": "Đã gửi thông báo thử. Nếu không thấy gì, hãy kiểm tra xem trình duyệt này có được phép gửi thông báo trong cài đặt hệ thống của thiết bị không.",
+        "testFailed": "Không thể gửi thông báo thử."
+      },
+      "unavailable": "Thông báo không khả dụng",
+      "loadFailed": "Không thể tải thông báo."
+    },
+    "copy": {
+      "failed": "Sao chép thất bại",
+      "copiedCheck": "Đã sao chép ✓"
+    },
+    "paging": {
+      "previous": "Trang trước",
+      "next": "Trang sau",
+      "previousShort": "Trước",
+      "nextShort": "Sau"
+    },
+    "touchHelp": {
+      "information": "Thông tin",
+      "close": "Đóng",
+      "openSettings": "Mở cài đặt"
+    },
+    "cardActions": {
+      "actions": "Thao tác"
+    },
+    "api": {
+      "busyDelete": "Đang có tác vụ đồng bộ hoặc bảo trì cơ sở dữ liệu. Hãy chờ hoàn tất rồi xóa cặp lại."
+    },
+    "profileSelect": {
+      "default": "Mặc định"
+    },
+    "viewCache": {
+      "refreshFailed": "Làm mới thất bại. Đang hiển thị kết quả đã lưu.",
+      "loadFailed": "Không thể tải {{label}}.",
+      "notPrepared": "Không thể chuẩn bị chế độ xem. Vui lòng thử lại.",
+      "retry": "Thử lại"
+    },
+    "mobile": {
+      "confirmTitle": "Xác nhận thao tác",
+      "continue": "Tiếp tục",
+      "filters": "Bộ lọc",
+      "done": "Xong",
+      "remove": "Gỡ",
+      "cancel": "Hủy",
+      "ok": "OK",
+      "section": "Mục"
+    },
+    "mobileSettings": {
+      "title": "Cài đặt di động",
+      "visibility": "Hiển thị",
+      "playingCard": "Thẻ đang phát",
+      "showOnDevice": "Hiển thị trên giao diện di động của thiết bị này",
+      "notifications": "Thông báo",
+      "alerts": "Cảnh báo thông báo",
+      "alertsSub": "Biểu ngữ và rung khi được hỗ trợ, trong lúc đang mở",
+      "push": "Thông báo đẩy",
+      "pushSub": "Nhận thông báo mới trên thiết bị này ngay cả khi CrossWatch đã đóng",
+      "touch": "Phản hồi chạm",
+      "haptics": "Phản hồi rung",
+      "hapticsSub": "Rung ngắn khi chạm menu",
+      "unsupported": "Trình duyệt này không hỗ trợ",
+      "disabledMain": "Đã tắt trong cài đặt chính",
+      "disabledProfile": "Đã tắt trong cài đặt hồ sơ của bạn"
+    },
+    "pwa": {
+      "install": "Cài đặt CrossWatch",
+      "addHome": "Thêm CrossWatch vào Màn hình chính.",
+      "dismiss": "Bỏ qua",
+      "installBtn": "Cài đặt",
+      "notNow": "Để sau",
+      "gotIt": "Đã hiểu",
+      "best": "Thêm vào Màn hình chính để có trải nghiệm tốt nhất.",
+      "tapShare": "Nhấn Chia sẻ (⬆︎) → “Thêm vào MH chính”."
+    }
+  }
+}
