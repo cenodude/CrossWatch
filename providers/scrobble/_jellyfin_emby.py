@@ -203,9 +203,10 @@ class JellyfinEmbySink(MediaServerSink):
             if ticks <= 0:
                 return {"ok": True, "skipped": True, "reason": "no_progress"}
         ticks_changed = int(data.get("PlaybackPositionTicks") or 0) != ticks
-        date_stale = marked and _epoch(data.get("LastPlayedDate")) != played_at
+        last_played = _epoch(data.get("LastPlayedDate"))
+        date_stale = (marked and last_played != played_at) or (not complete and (last_played is None or last_played < played_at))
         if ticks_changed or date_stale:
-            if ticks_changed and self.name == "jellyfin" and not adapter.client.progress_write_supported()[0]:
+            if self.name == "jellyfin" and (ticks_changed or not complete) and not adapter.client.progress_write_supported()[0]:
                 raise DeliveryError("jellyfin_progress_write_unsupported")
             payload: dict[str, Any] = {"PlaybackPositionTicks": ticks}
             if date_stale:

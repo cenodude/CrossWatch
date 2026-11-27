@@ -155,6 +155,68 @@ def test_media_server_partial_ignores_stale_play_count_on_unwatched_item(media_s
     assert not http.rows["10"]["UserData"]["Played"]
 
 
+@pytest.mark.parametrize("previous,expected", [
+    (None, "2023-11-14T22:13:20.0000000Z"),
+    ("invalid", "2023-11-14T22:13:20.0000000Z"),
+    ("2020-01-01T00:00:00Z", "2023-11-14T22:13:20.0000000Z"),
+    ("2023-11-14T22:13:20Z", "2023-11-14T22:13:20Z"),
+    ("2024-01-01T00:00:00Z", "2024-01-01T00:00:00Z"),
+])
+@pytest.mark.parametrize("previous_ticks", [0, 300_000_000])
+def test_media_server_partial_updates_only_missing_or_older_date(media_server, previous, expected, previous_ticks):
+    provider, cls, http, _ = media_server
+    data = http.rows["10"]["UserData"]
+    data.update(PlaybackPositionTicks=previous_ticks, PlayCount=3)
+    if previous is None:
+        data.pop("LastPlayedDate")
+    else:
+        data["LastPlayedDate"] = previous
+    result = cls().send(event(action="pause", progress=30, raw={"_cw_watched_at": 1_700_000_000}), config(provider))
+    assert result["ok"]
+    assert data["LastPlayedDate"] == expected
+    assert data["PlaybackPositionTicks"] == 300_000_000
+    assert data["Played"] is False and data["PlayCount"] == 3
+    assert data["IsFavorite"] is True and data["Rating"] == 8
+    writes = [c for c in http.calls if c[0] == "POST"]
+    assert len(writes) == int(previous_ticks != 300_000_000 or previous != expected)
+    assert all(c[1].endswith("/UserData") for c in writes)
+
+
+def test_media_server_partial_date_only_obeys_jellyfin_version_gate(media_server):
+    provider, cls, http, _ = media_server
+    if provider != "jellyfin":
+        pytest.skip("Jellyfin version gate")
+    http.supported = False
+    http.rows["10"]["UserData"]["PlaybackPositionTicks"] = 300_000_000
+    result = cls().send(event(action="pause", progress=30), config(provider))
+    assert result["error"] == "jellyfin_progress_write_unsupported"
+    assert not any(c[0] == "POST" for c in http.calls)
+
+
+def test_silo_partial_event_updates_media_server_resume_and_date(media_server, monkeypatch):
+    from providers.scrobble.silo.watch import SiloWatchService
+
+    provider, cls, http, _ = media_server
+    cfg = config(provider)
+    cfg["scrobble"]["watch"]["route_provider"] = "silo"
+    monkeypatch.setattr(common.time, "time", lambda: 1_700_000_000)
+    http.rows["10"] = row(kind="Episode", RunTimeTicks=24_000_000_000)
+    http.rows["10"]["UserData"].pop("LastPlayedDate")
+    watcher = SiloWatchService(cfg_provider=lambda: cfg)
+    ev = watcher._event({
+        "session_key": "silo:default:session", "source_session_key": "session",
+        "profile_id": "profile", "account": "Silo user", "server_uuid": "silo:server",
+        "content_id": "episode-tmdb-42", "position_ms": 146_000, "duration_ms": 2_400_000,
+        "meta": {"media_type": "episode", "ids": {"tmdb": "42"}, "title": "Movie", "season": 1, "number": 1},
+    }, "stop", 146 / 2400 * 100)
+    assert ev.raw["provider"] == "silo"
+    assert cls().send(ev, cfg)["ok"]
+    data = http.rows["10"]["UserData"]
+    assert data["PlaybackPositionTicks"] == 1_460_000_000
+    assert data["LastPlayedDate"] == "2023-11-14T22:13:20.0000000Z"
+    assert data["Played"] is False and data["PlayCount"] == 0
+
+
 @pytest.mark.parametrize("source,target", [("default", "P01"), ("P01", "default"), ("default", "default"), ("P01", "P01")])
 def test_media_server_instance_isolation(media_server, source, target):
     provider, cls, http, configs = media_server
