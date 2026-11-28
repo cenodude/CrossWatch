@@ -1640,9 +1640,9 @@
       "stopped": "Gestopt",
       "watched": "Bekeken",
       "rated": "Beoordeeld",
-      "capture": "Momentopname",
-      "captureFailed": "Momentopname mislukt",
-      "capturesRemoved": "Momentopnamen verwijderd",
+      "capture": "Capture",
+      "captureFailed": "Capture mislukt",
+      "capturesRemoved": "Captures verwijderd",
       "backup": "Back-up",
       "backupFailed": "Back-up mislukt",
       "backupCopied": "Back-up gekopieerd",
@@ -1728,7 +1728,7 @@
       "showUnreviewed": "Onbekeken tonen",
       "archive": "Geen gebeurtenissen in het archief.",
       "audit": "Aanmeldingen en gebruikersacties verschijnen hier.",
-      "capture": "Geplande en handmatige momentopnamen verschijnen hier.",
+      "capture": "Geplande en handmatige captures verschijnen hier.",
       "backup": "Geplande, handmatige en automatische back-ups verschijnen hier.",
       "scrobble": "Begin met kijken om hier kijkactiviteit te zien.",
       "sync": "Voer een synchronisatie uit om hier gebeurtenissen vast te leggen."
@@ -1816,7 +1816,7 @@
     "titlesReviewed_other": "{{count}} titels als bekeken gemarkeerd.",
     "kinds": {
       "audit": "audit",
-      "capture": "momentopname",
+      "capture": "capture",
       "backup": "back-up",
       "scrobble": "scrobble",
       "sync": "synchronisatie"
@@ -1927,7 +1927,7 @@
     "tabs": {
       "sync": "Synchronisatie",
       "scrobble": "Kijken en beoordelingen",
-      "captures": "Momentopnamen",
+      "captures": "Captures",
       "backups": "Back-ups",
       "audits": "Audits",
       "statistics": "Statistieken"
@@ -2942,7 +2942,7 @@
     "currentState": "Huidige status",
     "list": "Lijst",
     "pair": "Paar",
-    "snapshot": "Momentopname",
+    "snapshot": "Capture",
     "latest": "Laatste",
     "instance": "Instantie",
     "default": "Standaard",
@@ -2967,7 +2967,7 @@
     "totalRows": "Totaal aantal rijen",
     "rowsVisible": "Zichtbare rijen",
     "stateFiles": "Statusbestanden",
-    "snapshots": "Momentopnamen",
+    "snapshots": "Captures",
     "archive": "Archief",
     "exportImport": "Exporteren / importeren",
     "downloadZip": "ZIP downloaden",

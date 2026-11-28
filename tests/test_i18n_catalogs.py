@@ -47,7 +47,7 @@ def test_registry_lists_english_first_and_dutch() -> None:
     assert i18n.DEFAULT_LANGUAGE == "en"
 
 
-@pytest.mark.parametrize("code", ["en", "nl"])
+@pytest.mark.parametrize("code", _codes())
 def test_catalog_files_are_valid_json_without_duplicate_keys(code: str) -> None:
     files = sorted((LOCALES / code).glob("*.json"))
     assert [path.stem for path in files] == ["app", "common", "media", "settings"]
@@ -68,7 +68,7 @@ def test_catalog_namespaces_do_not_overlap_between_files() -> None:
 
 def test_complete_languages_have_the_same_keys_as_english() -> None:
     english = set(i18n.messages("en"))
-    for code in ("en", "nl"):
+    for code in _codes():
         assert set(i18n.messages(code)) == english, code
 
 

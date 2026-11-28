@@ -9,7 +9,7 @@
       "main": "Start",
       "tracker": "Tracker",
       "hub": "Hub",
-      "captures": "Momentopnamen",
+      "captures": "Captures",
       "playlists": "Afspeellijsten",
       "settings": "Instellingen",
       "tools": "Hulpmiddelen"
@@ -31,7 +31,7 @@
       "logs": "Logboeken",
       "editor": "Editor",
       "backups": "Back-up en herstel",
-      "captureCompare": "Momentopnamen vergelijken",
+      "captureCompare": "Captures vergelijken",
       "interactiveSync": "Interactieve synchronisatie",
       "editorKicker": "EDITOR"
     },
@@ -325,9 +325,9 @@
       "maintenanceFailed": "Onderhoudshulpmiddelen konden niet worden geladen. Vernieuw de pagina en probeer het opnieuw.",
       "importExportFailed": "Importeren / exporteren kon niet worden geladen. Vernieuw de pagina en probeer het opnieuw.",
       "logsFailed": "Logboeken konden niet worden geladen. Vernieuw de pagina en probeer het opnieuw.",
-      "compareLoading": "Momentopnamen vergelijken laden...",
-      "compareFailed": "Momentopnamen vergelijken kon niet worden geladen.",
-      "backToCaptures": "Terug naar Momentopnamen",
+      "compareLoading": "Captures vergelijken laden...",
+      "compareFailed": "Captures vergelijken kon niet worden geladen.",
+      "backToCaptures": "Terug naar Captures",
       "eventsLoading": "Gebeurtenissen laden…",
       "eventsFailed": "Gebeurtenissen konden niet worden geladen. Vernieuw de pagina en probeer het opnieuw.",
       "analyzerFailed": "Analyse kon niet worden geladen. Vernieuw de pagina en probeer het opnieuw."
@@ -370,7 +370,7 @@
     "insights": {
       "latest": "Nieuwste",
       "latestLower": "nieuwste",
-      "latestSnapshot": "Nieuwste momentopname",
+      "latestSnapshot": "Nieuwste capture",
       "active": "Actief",
       "saved": "Opgeslagen",
       "changesAdded_one": "{{count}} toegevoegd",
@@ -388,20 +388,20 @@
       "thisWeek": "{{diff}} deze week",
       "noChangeWeek": "Geen wijziging in de afgelopen 7 dagen",
       "weekChanges": "{{added}} toegevoegd, {{removed}} verwijderd in de afgelopen 7 dagen",
-      "snapshotSet": "Momentopname ingesteld voor {{profile}}: {{name}}",
+      "snapshotSet": "Capture ingesteld voor {{profile}}: {{name}}",
       "backendFailed": "Server meldde een fout",
       "mobileFeature": "Functie voor dienststatistieken",
       "settings": "Instellingen voor inzichten",
       "features": "Functies voor inzichten",
       "snap": {
-        "kicker": "Momentopname kiezen",
-        "titleFor": "Momentopname kiezen voor",
-        "close": "Momentopnamekiezer sluiten",
-        "setFailed": "Momentopname instellen mislukt. Controleer de serverlogboeken.",
+        "kicker": "Capture kiezen",
+        "titleFor": "Capture kiezen voor",
+        "close": "Capturekiezer sluiten",
+        "setFailed": "Capture instellen mislukt. Controleer de serverlogboeken.",
         "instance": "Instantie",
-        "loading": "Momentopnamen laden...",
-        "none": "Nog geen momentopnamen gevonden voor deze functie.",
-        "loadFailed": "Momentopnamen laden mislukt. Controleer de serverlogboeken of configuratie."
+        "loading": "Captures laden...",
+        "none": "Nog geen captures gevonden voor deze functie.",
+        "loadFailed": "Captures laden mislukt. Controleer de serverlogboeken of configuratie."
       },
       "justNow": "Zojuist",
       "minAgo": "{{n}}m geleden"
@@ -506,8 +506,8 @@
         "next": "volgende {{time}}",
         "bothPlans": "standaard- en geavanceerde plannen",
         "advancedMode": "geavanceerde modus",
-        "captures_one": "{{count}} planning voor momentopnamen",
-        "captures_other": "{{count}} planningen voor momentopnamen",
+        "captures_one": "{{count}} planning voor captures",
+        "captures_other": "{{count}} planningen voor captures",
         "events_one": "{{count}} gebeurtenistrigger",
         "events_other": "{{count}} gebeurtenistriggers"
       },
@@ -933,7 +933,7 @@
         "webhook": "Webhook",
         "watcher": "Watcher",
         "playlist": "Afspeellijst",
-        "capture": "Momentopname",
+        "capture": "Capture",
         "backup": "Back-up",
         "sync": "Sync"
       },
