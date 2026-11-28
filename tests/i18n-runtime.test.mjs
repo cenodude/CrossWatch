@@ -23,6 +23,27 @@ test('Dutch text is used when the Dutch catalog loaded', () => {
   assert.notEqual(I18n.t('common.actions.save'), en['common.actions.save']);
 });
 
+for (const lang of ['vi', 'zh-hans', 'zh-hant']) {
+  test(`${lang} translates navigation and common settings without English fallback`, () => {
+    const {I18n, context} = loadRuntime(lang);
+    const messages = catalog(lang);
+    assert.equal(I18n.lang, lang);
+    assert.equal(context.document.documentElement.lang, lang);
+    for (const key of [
+      'navigation.tabs.tracker', 'navigation.tabs.hub', 'navigation.settingsMenu.scrobbler',
+      'dashboard.syncHub.title', 'dashboard.details.tabs.watcher',
+      'settings.ui.appearance.flatDark', 'settings.ui.appearance.flatLight',
+      'settings.security.oidc.clientSecret', 'settings.security.oidc.scopes',
+      'profile.manager.claim.subject', 'editor.pulse',
+    ]) {
+      assert.equal(I18n.t(key), messages[key], key);
+      assert.notEqual(I18n.t(key), en[key], key);
+    }
+    assert.deepEqual([...I18n.report().fallbacks], []);
+    assert.deepEqual([...I18n.report().missing], []);
+  });
+}
+
 test('named interpolation replaces known values and keeps unknown placeholders', () => {
   const {I18n} = loadRuntime('en');
   assert.equal(I18n.t('profile.records.refresh', {title: 'History'}), 'Refresh History');

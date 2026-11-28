@@ -190,7 +190,7 @@
       "done": "Xong",
       "remove": "Gỡ",
       "cancel": "Hủy",
-      "ok": "OK",
+      "ok": "Đồng ý",
       "section": "Mục"
     },
     "mobileSettings": {
@@ -205,7 +205,7 @@
       "pushSub": "Nhận thông báo mới trên thiết bị này ngay cả khi CrossWatch đã đóng",
       "touch": "Phản hồi chạm",
       "haptics": "Phản hồi rung",
-      "hapticsSub": "Rung ngắn khi chạm menu",
+      "hapticsSub": "Rung ngắn khi chạm trình đơn",
       "unsupported": "Trình duyệt này không hỗ trợ",
       "disabledMain": "Đã tắt trong cài đặt chính",
       "disabledProfile": "Đã tắt trong cài đặt hồ sơ của bạn"
